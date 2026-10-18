@@ -1,0 +1,285 @@
+# Business Platform — Master Implementation Prompt for Claude Code
+
+Act as a principal software engineer, solution architect and security-focused technical lead. Build a maintainable internal business platform in my existing private GitHub repository, business-platform. Deliver working software incrementally, not just plans, architecture diagrams or disconnected UI mockups.
+
+Read this entire brief before implementation. Treat it as the product direction across multiple development sessions. Inspect the repository and its instructions first; preserve existing work and adapt this brief to what is already implemented. Keep a durable backlog and implementation status so future sessions can continue reliably.
+
+## 1. My context and objectives
+
+I am an experienced developer familiar with TypeScript, Angular, NestJS, Nx, SQL, Docker and cloud infrastructure. I will maintain this project using Claude Code and Cursor.
+
+Initially, the platform serves Nutbox and a small team of approximately 2–3 employees, but it must support additional companies, brands, shops and employees without redesigning its permission model. This is initially an internal platform for businesses I operate, not a public SaaS product.
+
+Required modules:
+- Nutbox Hub: orders, fulfilment, gift messages, packing documents and courier preparation.
+- Xero-inspired invoicing and client management, with company setup and employee administration.
+- Shopify and PrestaShop integrations for multiple stores.
+- Brevo contacts, campaigns and email integration.
+- Meta Facebook/Instagram and LinkedIn integration.
+- PrintNode printing.
+- Microsoft 365 Outlook email and shared mailboxes.
+- A common approval centre, automation activity, audit history and integration health dashboard.
+- Extension points for later AI-assisted content, product management, supplier purchasing and reporting.
+
+n8n Community Edition will orchestrate automations. The platform must run on a provider-neutral Linux VPS; I have not selected Hetzner, DigitalOcean, OVHcloud, Hostinger or another provider. Keep recurring costs modest. Do not assume a specific hosting vendor or paid n8n features.
+
+Default locale: Cyprus, EUR, Asia/Nicosia. Support Greek and English text, including PDFs and gift messages. Store timestamps in UTC and display them in the company's timezone, handling daylight-saving changes.
+
+Use fictional data until I explicitly connect a real account. Never infer legal-company details, VAT numbers, store ownership or production credentials from examples.
+
+## 2. Architecture and stack
+
+Start with a modular monolith and clearly separated modules. Avoid premature microservices, Kubernetes, Kafka and unnecessary infrastructure.
+
+Preferred baseline, using currently supported compatible versions:
+- TypeScript throughout; Nx and pnpm if suitable for the repository.
+- Angular with PrimeNG for the staff application, matching my background. Use only appropriately licensed components/assets.
+- NestJS for the backend and narrowly scoped background workers where needed.
+- PostgreSQL with versioned migrations and a maintained ORM such as Prisma.
+- Docker Compose and Caddy for deployment and HTTPS.
+- n8n Community using PostgreSQL, with its own database and least-privileged database user.
+- Durable application jobs/inbox/outbox in PostgreSQL initially; add Redis only for a demonstrated requirement.
+- Private document storage behind a storage adapter; allow later S3-compatible storage without changing business logic.
+
+Respect a compatible existing stack rather than rewriting it. Explain material deviations in a short architecture decision record. Do not add a large authentication server solely for this small deployment when an appropriate maintained authentication integration suffices.
+
+The application backend owns business state, validation, money calculations, permissions, approvals, invoice numbering and audit records. n8n owns orchestration: triggers, schedules, connector calls, notifications and workflow branching. n8n must call authenticated application APIs for business changes rather than writing directly into business database tables.
+
+Employees use the platform UI. Only trusted technical administrators access the n8n editor. Do not embed the editor as an employee interface or assume n8n Community provides company isolation, shared projects, SSO, shared workflows/credentials or built-in Git environments. Verify current Community features and licence terms before implementation; reassess licensing before any future external SaaS use. Do not bypass paid feature restrictions.
+
+Keep domain rules in tested backend services rather than duplicating them across workflow Code nodes. Document where each integration credential lives and which component makes provider calls. Use narrowly scoped automation service identities; avoid one unrestricted token for every company and action.
+
+## 3. Companies, employees and access control
+
+Distinguish legal companies, brands, shops, locations, customer organisations and individual contacts. A brand or shop is not automatically a separate legal entity.
+
+Implement:
+- Owner-controlled legal-company onboarding and configuration.
+- A company switcher showing only authorised companies.
+- Per-company memberships; a person may have different roles in different companies.
+- Invitation, activation, suspension, removal and session revocation for employees.
+- Separate customer registration from staff login. No public employee self-registration.
+- Permissions scoped by action, company and, where relevant, store, location, mailbox or integration account.
+
+Initial role templates: platform owner, company administrator, operations manager, fulfilment staff, finance/accountant, marketing, customer support and read-only auditor. Produce an explicit permission matrix. Roles are configurable permission bundles, not scattered hard-coded UI checks.
+
+Examples: fulfilment staff can view assigned orders and print packing documents but cannot access every mailbox, edit bank details or issue refunds. Marketing can prepare campaigns but sending requires separate permission. Finance can manage invoices without receiving infrastructure credentials. Company administrators cannot grant platform-owner privileges or access another company.
+
+Enforce deny-by-default authorisation on every backend request, file download, export, search, job, workflow callback and state-changing action. Derive company context from authenticated membership; never trust a supplied company ID alone. Scope cache entries, document storage and uniqueness constraints appropriately. Add PostgreSQL row-level security where it materially improves protection, with a documented runtime role that cannot bypass it and safe connection-pool context handling.
+
+Prefer a maintained authentication solution. Microsoft Entra ID/OIDC is a strong candidate for staff already using Microsoft 365, but document provisioning for staff without those accounts. Require MFA for privileged accounts and make MFA available/enforceable for all staff. Use secure server-managed sessions and a tested recovery process. A mock development login must never be enabled in production.
+
+## 4. Nutbox Hub and order operations
+
+Build a responsive, practical staff interface with searchable tables, pagination, filters, bulk operations where safe, clear error states and an activity timeline.
+
+Include:
+- A unified order list across authorised Shopify and PrestaShop stores.
+- Original store/order identifiers, customer and recipient details, items, quantities, payment status, delivery method, gift message and staff notes.
+- Separate payment, fulfilment and integration states; do not collapse them into one status.
+- Validated operational transitions such as new, review required, preparing, ready, handed to courier, completed and cancelled; preserve source-platform statuses separately.
+- Order assignment and safe handling of simultaneous employee edits.
+- Packing slips, gift-message PDFs, invoice links, print status and an explicit reprint action.
+- Gift messages preserving customer wording, line breaks, Greek characters and punctuation; no automatic AI rewriting.
+- Configurable gift-message templates and actual print-size previews.
+
+Prepare the delivery workflows previously discussed: Svelta/EasyCourier for Cyprus orders, Cyprus Post ePost for international orders, plus collection. Confirm current services, account access and integration methods. Do not invent courier APIs. Where an API is unavailable, provide an honest manual/export workflow and record tracking numbers without claiming a shipment has been booked.
+
+Keep creating a label, handing over a parcel and completing an order distinct. Validate necessary customs information for international shipments before export; do not fabricate customs declarations or product classifications.
+
+## 5. Xero-inspired invoicing and customer management
+
+Build an original interface inspired by the usefulness of Xero, not a copy of its branding or assets. Deliver invoicing and receivables first. Do not represent that as a complete accounting system or a full Xero replacement. Put general ledger, bank feeds/reconciliation, payroll and statutory reporting in separately scoped later work.
+
+Core functions:
+- Company profiles: legal name, registration/VAT details, address, logo, invoice series, payment terms, bank details, tax settings, currency and document language.
+- Business clients and individual contacts, multiple billing/shipping addresses, tax details, notes, attachments, duplicate detection, CSV import/export and searchable history.
+- Product/service catalogue, unit prices, units, configurable tax codes, discounts and shipping charges.
+- Quotes and conversion to invoices; draft and issued invoices; credit notes; recorded payments, partial payments and outstanding balances.
+- Due dates, overdue views, customer statements and reminders with controlled sending.
+- Professional Greek/English PDFs, previews, downloads, email delivery and PrintNode printing.
+- Reports for issued amounts, amounts collected, unpaid balances and ageing. Label cash and invoiced metrics accurately.
+
+Financial integrity is mandatory:
+- Calculate amounts deterministically on the backend using fixed-precision decimal arithmetic; never binary floating-point money calculations or LLM-generated totals.
+- Document rounding rules, tax-inclusive/exclusive prices, discounts and currency precision; test difficult combinations.
+- Assign invoice numbers atomically at issuance, with company/series uniqueness and concurrent-request protection. Never reuse issued numbers or silently reset numbering.
+- Preserve immutable snapshots of seller/client details, invoice lines, tax rates, totals and issued document version. Later edits to a client or template must not rewrite an issued invoice.
+- Correct issued documents through an auditable credit/correction process. Do not allow silent editing or deletion of issued financial history.
+- Link payments, credits and refunds correctly and prevent over-allocation. Recording a payment is distinct from initiating a bank transfer or refund.
+- Decide per store whether its existing invoice is authoritative or the platform issues the invoice. Prevent issuing a second tax invoice for the same sale.
+- Review applicable Cyprus/EU invoice fields, tax treatments, retention and correction requirements using current official sources. Keep rules configurable and require accountant validation before enabling real issuance. Do not claim compliance based on a PDF template alone.
+
+Persist draft creation separately from issuance and email delivery; a failed email must not create another invoice number. Offer an accountant export before considering full accounting features.
+
+## 6. Shopify and PrestaShop
+
+Support multiple connections, each bound to its authorised company/store. Build read-only product/order/customer import first; enable write-back only after explicit configuration and acceptance testing.
+
+Shopify: use a supported, explicitly versioned GraphQL Admin API where appropriate. Verify the current application creation/authentication flow, scopes, protected customer data requirements and access to historical orders. Handle pagination, throttling, token changes and webhook verification.
+
+PrestaShop: detect the installed version and use its supported Webservice API with resource-specific permissions over HTTPS. Never assume the available API matches the latest documentation. Verify event capabilities; if polling is necessary, use durable checkpoints, overlap/deduplication, pagination and rate limits. Do not assume built-in Shopify-style webhooks.
+
+Store external IDs alongside internal IDs. Deduplicate by connection plus external object/event identifier. Handle delayed, duplicate and out-of-order events. Add periodic reconciliation to recover missed updates.
+
+Write a source-of-truth matrix for product descriptions, prices, inventory, customer details, order statuses and invoices. Do not turn on bidirectional stock synchronisation without explicit ownership, SKU/location mapping, reservation rules and conflict handling. Keep it off initially.
+
+## 7. Brevo, Meta and LinkedIn
+
+Brevo:
+- Contact/list synchronisation with company boundaries, consent provenance and suppression handling.
+- Campaign drafting, preview, approved test sends, scheduling, approved sending and available delivery/reporting events.
+- Preserve unsubscribe, bounce and complaint suppression; do not automatically subscribe everyone who places an order or undo an unsubscribe during synchronisation.
+- Distinguish transactional correspondence from marketing campaigns. Document sender/domain setup and deliverability prerequisites.
+
+Social media:
+- Connect approved Facebook Pages, Instagram professional accounts and LinkedIn accounts/organisation pages where official APIs permit.
+- Build a content calendar, media library, channel-specific previews, draft/review/approve/schedule/publish states and publish-result history.
+- Retrieve comments, messages and analytics only where approved APIs and account permissions support them. Do not promise unrestricted LinkedIn inbox access or access to personal social profiles.
+- Identify required developer applications, account roles, permissions, app review, verification, access tiers, quotas and token renewal. Confirm these against current official documentation for the chosen authentication path.
+- If access is unavailable, mark the feature as awaiting approval or unsupported; provide a manual publishing/export path. Never fake successful posting.
+- Treat ads and ad spending as later, separately authorised features with budgets and explicit approval.
+
+AI-generated captions, campaign drafts, images or video requests may be added through provider adapters later. They require cost limits and human approval before publication. Normal synchronisation and financial calculations must not require AI calls.
+
+## 8. Outlook Microsoft 365 and shared mailboxes
+
+Use Microsoft Graph and supported OAuth flows; never store mailbox passwords or use an employee's interactive browser session as the integration.
+
+Support authorised company mailboxes and shared mailboxes with:
+- Inbox/sent/thread views, search, attachment handling, assignment, notes and links to relevant clients/orders.
+- Draft, review, reply, forward and send actions according to employee permissions.
+- A prominent sender-mailbox selector, company-specific signatures and safeguards against sending from the wrong company.
+- Independent permission for reading a mailbox and sending from it.
+- Sanitised email HTML, safe attachment handling and no automatic loading of remote tracking images.
+
+Explain delegated versus application permissions and choose the narrowest workable approach. Shared delegated read permissions do not automatically support change-notification subscriptions. For unattended shared-mailbox subscriptions, verify the required application permissions and implement appropriate Exchange Online application scoping. Do not grant tenant-wide mailbox access by default, and test that broader parallel grants do not defeat restrictions.
+
+Verify Send As/Send on Behalf requirements and actual sender identity for the chosen auth mode. Implement webhook validation, subscription renewal, missed-event recovery, pagination/delta synchronisation where supported and deduplication. Provide a documented polling fallback where needed.
+
+Do not synchronise all employees' private mailboxes. Configure an explicit authorised mailbox set and enforce platform mailbox permissions even when a service credential can technically access more.
+
+## 9. PrintNode
+
+My shop has a Windows PC and HP LaserJet M209dw. Use PrintNode's supported client/API; document that the PC/client must stay running and connected while printing is required. Do not build a custom Windows print agent for the first release.
+
+Implement printer discovery, company/location-to-printer mapping, an approved test print, document previews, queued jobs, status history, offline/expiry handling and explicit reprints. Support invoices, packing slips and gift messages; allow a future dedicated shipping-label printer with separate paper settings.
+
+Use server-side credentials and private PDF delivery through a suitable supported mechanism. Avoid permanent public URLs for customer documents. Validate copies, paper size and printer selection.
+
+Persist job intent before submitting it. Use durable platform deduplication plus PrintNode idempotency keys. Account for the provider's finite deduplication window, and do not blindly resubmit uncertain old jobs. Reprints must be intentional and audited.
+
+Distinguish provider acceptance, delivery to the operating-system print queue and physical printing. PrintNode's done state does not prove paper came out. Show honest statuses and allow staff confirmation when necessary.
+
+## 10. n8n workflow requirements
+
+Deliver importable workflow JSON for the pinned n8n version, setup instructions, credential mappings and mock fixtures. A diagram alone is insufficient. Mark untested exports honestly.
+
+Prioritise these workflows:
+1. Store event/poll -> verify and deduplicate -> import/update order -> notify authorised staff.
+2. Order ready -> authorised document generation -> PrintNode submission -> status update.
+3. Invoice issued -> approved sender/recipient resolution -> send invoice -> delivery result.
+4. Incoming authorised mailbox event -> sync -> match client/order -> assignment/notification.
+5. Selected products -> optional AI draft -> approval -> Brevo campaign or social publish.
+6. Scheduled reconciliation, expiring-credential alerts and failed-job notifications.
+
+Each workflow needs a trigger contract, company-scoped service identity, input/output validation, correlation ID, bounded retries, timeout, rate-limit handling, failure path and a safe manual replay procedure.
+
+Design for at-least-once delivery, not imaginary exactly-once external side effects. Persist action IDs and provider references. Use a transactional outbox/inbox where appropriate. After a timeout with an uncertain result, reconcile or request review rather than blindly repeat a send, publish, shipment or print.
+
+Approvals live in the application database and UI. Bind approval to the exact content version, company, recipients/audience, destination and relevant amount. Changes invalidate approval. Authenticate the approver, check permissions and recheck approval/action status immediately before execution. Do not use an unauthenticated GET link that an email security scanner could activate.
+
+Limit n8n execution retention and redact sensitive payloads. Back up its database and encryption key securely. Keep sanitised workflow exports in Git; never export decrypted credentials or real pinned customer data. Use script-based import/export compatible with Community Edition rather than assuming paid Git integration. Avoid storing large videos or PDFs in execution history; pass private references when practical.
+
+## 11. Security, privacy and operating controls
+
+Treat security as an implementation and testing requirement. Do not claim that any application is fully secure. Produce a threat model, a current OWASP ASVS Level 2-oriented checklist with evidence, remaining risks and a pre-production review plan.
+
+Required controls:
+- TLS, secure HttpOnly/SameSite cookies, CSRF protection where applicable, restrictive CORS, appropriate security headers/CSP and validated session lifecycle.
+- Input validation, output encoding, parameterised queries, safe file uploads, attachment size/type limits and protection against path traversal, malicious HTML and spreadsheet formula injection in exports.
+- SSRF protection for store URLs, remote media and PDF retrieval, including redirect/DNS/private-network checks. Do not let configurable integrations become arbitrary internal-network proxies.
+- OAuth state/nonce/PKCE as appropriate; secure token refresh/revocation and encrypted credential storage using maintained cryptographic libraries. Keep master keys outside the encrypted database.
+- Credentials never in frontend bundles, URLs, Git, screenshots, ordinary logs or documentation. Supply placeholder-only configuration templates.
+- Rate limits, login abuse protection, session revocation, invitation expiry and audited privilege changes. Use maintained identity/authentication components, not homemade cryptography.
+- Audit actor, company, action, object, timestamp, outcome and correlation ID. Restrict modification/deletion of audit records and provide an independent integrity/backup strategy; do not claim a database table is tamper-proof.
+- Dependency/container/secret scanning, supported versions, reproducible builds and a scheduled patch process. Do not auto-upgrade production major versions without validation.
+- Least-privileged non-root containers where supported; no Docker socket mounted into the app or n8n. Block unnecessary execution/file-system nodes and review community nodes before installation.
+- Private database and n8n editor access; expose only required HTTPS app/OAuth/webhook routes. Restrict SSH, use keys and test effective firewall exposure, including Docker port publishing.
+- Data minimisation, retention and deletion/export procedures, with financial retention exceptions assessed appropriately. Record subprocessors and actual data flows; EU VPS location alone does not establish GDPR compliance.
+- Emails, customer text, attachments and retrieved content are untrusted input. Optional AI features must not turn their instructions into tool permissions or access secrets. Require structured outputs, data minimisation, tool allowlists and approval for external effects.
+
+Put integration pause switches and a global outbound-action stop control in the admin UI. External writes, sends, publishing, shipments, printing and real invoice issuance are disabled by default until deliberately configured. These switches must work at execution time, including for already queued actions.
+
+## 12. VPS deployment, backups and recovery
+
+Provide local-development and production Compose configuration, health checks, persistent volumes, resource limits, database migrations, graceful shutdown and documented startup ordering. Use separate credentials/data for development, testing and production; do not clone production customer data into development by default.
+
+Estimate resource needs for the selected stack under light use; consider an approximately 8 GB RAM VPS as an initial sizing candidate, not a capacity guarantee. Limit simultaneous PDF/AI/media jobs. Build images locally or in CI rather than overloading the small production VPS. Heavy video generation/composition must be separately bounded or offloaded.
+
+Document DNS, subdomains, HTTPS, firewall, SSH, deployment, rollback, certificate renewal and moving to another VPS. Keep provider-specific provisioning optional until I select a provider. A single VPS has downtime risk; do not describe it as highly available.
+
+Implement encrypted off-site backups with an independent destination and separate recovery access. Cover business databases, n8n state, private documents, essential configuration and securely recoverable encryption keys. Set explicit retention and proposed RPO/RTO targets, then validate them with a restore drill on a clean environment. Snapshots alone are insufficient.
+
+Include uptime, disk/memory, job queue, failed workflows, token expiry and backup-failure monitoring with actionable notifications. Provide recovery procedures for a lost VPS, compromised credential, broken deployment and unavailable PrintNode PC. Record actual restore results rather than only providing a backup script.
+
+## 13. Repository, verification and acceptance
+
+Organise the repository clearly, for example: apps/web, apps/api, packages/domain, packages/integrations, workflows/n8n, infra and docs. Keep feature modules coherent and maintain OpenAPI documentation. Commit code/configuration/templates and sanitised workflow definitions; exclude secrets, production data, dependencies, backups and generated customer documents.
+
+Deliver README/setup instructions, .env.example, migrations, synthetic seed data for two separate companies, architecture decisions, permission matrix, integration setup guides, source-of-truth matrix, workflow catalogue, operational runbooks and a prioritised backlog.
+
+Add meaningful tests for the actual risks:
+- Cross-company/role/mailbox access, including guessed IDs, downloads, exports, jobs and callbacks.
+- Concurrent invoice issuance, decimal calculations, credits, partial payments and immutable documents.
+- Duplicate/out-of-order webhooks, retries, token expiry and uncertain provider responses.
+- Approval edits/replay, disabled automation switches and revoked employee access.
+- Duplicate printing, failed/offline jobs and authorised reprints.
+- Greek/English PDF layouts and long gift-message text.
+
+Use unit/integration tests plus a few end-to-end flows. Verify workflow imports against the selected n8n version. Use mocks and official test environments where available; clearly distinguish mock-tested, sandbox-tested and live-tested capabilities. Keep CI focused on lint/typecheck, meaningful tests, build and security checks. Deployment must be a deliberate release action.
+
+The first working milestone must demonstrate: authorised login, two isolated companies, company-scoped roles, client registration, a persisted draft invoice with correct totals/PDF, a realistic imported mock order, preserved gift message, ready-state transition, queued simulated print and audit history. Restart services and confirm persistence. Prove an unauthorised employee cannot access the other company's data.
+
+Later acceptance must include each real connector's permission checks, read-only synchronisation first, separately approved outbound tests, monitored failure recovery and a successful clean restore. No fake success responses or placeholder integrations presented as finished.
+
+## 14. Delivery sequence and working style
+
+Phase 0: inspect the repository; record assumptions, essential unknowns, architecture, threat model, permission matrix, provider constraints and prioritised milestones. Create CLAUDE.md and durable project-status documentation if appropriate, preserving existing instructions.
+
+Phase 1: implement the runnable foundation and complete first milestone described above using synthetic data and mock providers.
+
+Phase 2: connect Shopify/PrestaShop read-only, then PrintNode and the Nutbox operational workflows after controlled tests.
+
+Phase 3: finish invoicing/receivables, accountant review items, Microsoft 365 shared mailbox integration and approved invoice sending.
+
+Phase 4: Brevo, Meta/LinkedIn, content approvals and optional AI assistance; complete only capabilities available to the authorised accounts.
+
+Phase 5: deployment hardening, restore drill, performance checks, production review and staged rollout. Security and correctness are requirements in every earlier phase, not work postponed until Phase 5.
+
+Later backlog: supplier purchasing, inventory synchronisation, expenses, recurring billing, customer portal, additional couriers, WhatsApp Business, advanced reports and other business modules. Keep extension points practical; do not let optional modules prevent the core release.
+
+Work autonomously on local, reversible implementation and tests. Ask only questions that block a meaningful decision; use documented defaults otherwise. Missing credentials must not stop work on mocks, contracts and independent modules. Do not ask me to paste secrets into the conversation; tell me how to configure them securely.
+
+Do not purchase services, deploy publicly, connect live accounts, send messages, issue real invoices, publish posts, book shipments, print physical documents, modify live stores or change external permissions without explicit authorisation for that action. Prepare a concrete reviewable result before asking. Previously authorised actions do not need repetitive confirmation.
+
+For each milestone report what works, what was tested, what remains mocked/blocked, important risks and the next step. Never mark the whole platform complete because the first dashboard looks finished. Keep documentation current so a new Claude Code session can resume from the actual repository state.
+
+Start now: inspect the repository, state your recommended architecture and essential assumptions briefly, create the persistent implementation plan, and proceed with Phase 1 wherever unblocked. Do not stop after writing the plan.
+
+## Official references to re-check during implementation
+
+Provider features and API requirements change. Verify against current official sources and record the versions/check date in integration documentation.
+- n8n editions: https://docs.n8n.io/hosting/community-edition-features/
+- n8n pricing/features: https://n8n.io/pricing/
+- Shopify Admin GraphQL: https://shopify.dev/docs/api/admin-graphql/latest
+- PrestaShop Webservice (select installed version): https://devdocs.prestashop-project.org/9/webservice/
+- Brevo APIs: https://developers.brevo.com/
+- Meta developer documentation: https://developers.facebook.com/docs/
+- LinkedIn API access: https://learn.microsoft.com/en-us/linkedin/marketing/increasing-access
+- Graph shared mailboxes: https://learn.microsoft.com/en-us/graph/outlook-share-messages-folders
+- Graph sending as another mailbox: https://learn.microsoft.com/en-us/graph/outlook-send-mail-from-other-user
+- Exchange application scoping: https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac
+- PrintNode API: https://www.printnode.com/en/docs/api/curl
+- EU VAT invoicing: https://taxation-customs.ec.europa.eu/taxation/vat/vat-businesses/invoicing_en
+- OWASP ASVS: https://owasp.org/projects/asvs
