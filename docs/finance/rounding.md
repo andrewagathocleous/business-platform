@@ -46,7 +46,7 @@ taxTotal      = Σ groupTax
 total         = netTotal + taxTotal
 ```
 
-Tax is rounded **once per tax-rate group**, not per line.
+Tax is rounded **once per tax-code group**, not per line and not per rate. Two different codes with the same rate are separate groups, each rounded on its own, and each gets its own line in the invoice tax summary. That's because codes can differ in kind or legal note even when the rate matches. See E12.
 
 ## Tax-inclusive pricing (`pricesIncludeTax = true`)
 
@@ -97,6 +97,7 @@ netTotal = total − taxTotal
 | E9 | excl | 1 × 50.00, 100% discount @19% | net 0.00, tax 0.00, total 0.00 |
 | E10 | excl | 1000000 × 9999999.9999 @19% | subtotal 9999999999900.00, tax 1899999999981.00, total 11899999999881.00 (fits `numeric(19,2)`; exact) |
 | E11 | either | quantity 0, negative price, discount 101, 5-dp quantity | validation errors |
+| E12 | excl | 1 × 0.03 with code `STD19` (19%) and 1 × 0.03 with code `ALT19` (also 19%) | two groups: tax 0.01 + 0.01 = 0.02, total 0.08 (grouping by rate would give 0.07; that's wrong under this rule) |
 
 The tax rates in these examples are test inputs only. The seeded tax codes are labelled *example configuration — verify with accountant*.
 

@@ -47,6 +47,10 @@ Version 0.1, 2026-10-19 (Phase 0). Reviewed at every phase end and before produc
 | T19 | Loss of the VPS or data (D) | encrypted off-site backups with separate credentials; restore drill; RPO/RTO targets | 5 | backlog |
 | T20 | Dependency or container vulnerabilities (T/E) | lockfile; CI audit, secret scanning (gitleaks) and image scanning (Trivy, later); pinned images; patch schedule | 1 / 5 | planned |
 | T21 | Login abuse or brute force (S/D) | rate limits on auth routes; Entra handles credentials and MFA; invitation expiry | 1 | planned |
+| T23 | Login CSRF: victim's browser completes the attacker's OIDC flow (S) | flow bound to a browser cookie (hash in `auth_flow`); atomic single-use consumption; tests with a foreign cookie jar | 1 | planned |
+| T24 | Privilege use from a non-MFA session after a mid-session promotion (E) | MFA evaluated per request; privileged permissions withheld from sessions with `mfa_satisfied = false` | 1 | planned |
+| T25 | Queued action runs after the requester lost access (E) | the worker re-validates the requester's membership, permission and scope at execution | 1 | planned |
+| T26 | Races that break invariants: last-admin lockout, stale import overwrite, cancel vs submit (T) | company row lock for membership changes; advisory lock per source object plus conditional updates; atomic state-claim updates; concurrency tests | 1 | planned |
 | T22 | Wrong-company email sending (T) | prominent sender selector; per-mailbox send permission; server-side check that the sender belongs to the current company | 3 | backlog |
 
 ## Residual risks (accepted for now)

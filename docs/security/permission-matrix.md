@@ -4,6 +4,8 @@ Source of truth in code: `packages/domain/src/authz/permissions.ts` (catalogue) 
 
 - Roles are **configurable permission bundles per company**. When a company is created, the templates below are copied into it as editable roles.
 - An assignment is `(membership, role, scope)`, where scope is `company` (everything in the company) or `store:<id>`, `location:<id>`, `mailbox:<id>` or `integration_account:<id>`. A scoped assignment grants a permission only for resources carrying that scope. For example, a store-scoped `order.view` covers only that store's orders and grants nothing for invoices.
+- **Scope semantics:** each catalogue entry declares which scope types it supports (`scopableBy`). For example, `order.*`, `document.download`, `print.*` and `shipment.manage` are scopable by store and location, and `mailbox.*` by mailbox. A scoped assignment grants **only** the role's permissions that are scopable by that assignment's scope type, limited to that scope. The role's other permissions are not granted through a scoped assignment, so a store-scoped admin role can never grant company-wide `member.manage`. Company-wide basics for scoped staff come from a separate company-wide assignment of the **BASE** template.
+- **BASE ("staff baseline")** is a template with `company.view` and `catalog.view` only. Seed users with scoped operational roles also get BASE company-wide.
 - Platform-owner capabilities are **not** permissions. They come from `user_account.is_platform_owner`, which only the seed or CLI can set. A platform owner has every company permission in every company, and their actions are still audited.
 
 Legend:

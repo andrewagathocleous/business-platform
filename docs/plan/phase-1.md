@@ -137,7 +137,7 @@ Identity, tenancy and infrastructure tables (**no RLS**; only their owning servi
 - `user_account`: id, email (citext, unique), display_name, locale (`en`/`el`), is_platform_owner (default false), status (`active`/`disabled`), timestamps.
 - `user_identity`: id, user_id, provider (`entra`/`dev`), issuer, subject, tenant_id, email_at_link, last_login_at; unique (provider, issuer, subject).
 - `user_session`: id, user_id, token_hash (unique), auth_method, mfa_satisfied, created_at, last_seen_at, idle_expires_at, absolute_expires_at, revoked_at, revoked_reason, ip, user_agent.
-- `auth_flow`: id, state_hash, nonce, code_verifier (encrypted with the vault), redirect_after, invitation_token_hash, expires_at (10 min), consumed_at. Holds OIDC transaction state.
+- `auth_flow`: id, state_hash, browser_binding_hash, nonce, code_verifier (encrypted with the vault), redirect_after, invitation_token_hash, expires_at (10 min), consumed_at. Holds OIDC transaction state, bound to the browser that started it (see B2).
 - `company`: id, legal_name, trading_name, country_code (default `CY`), registration_number, vat_number, tax_office, address (jsonb), default_currency (`EUR`), timezone (`Asia/Nicosia`), default_locale, document_language, payment_terms_days (30), status, is_fictional, timestamps.
 - `membership`: id, user_id, company_id, status (`invited`/`active`/`suspended`/`removed`), suspended_at, removed_at, timestamps; unique (user_id, company_id).
 - `role`: id, company_id, key, name, description, template_key, timestamps; unique (company_id, key).
@@ -166,7 +166,7 @@ Company-scoped tables. Every one has a non-null `company_id` FK and **RLS ENABLE
 - `invoice`: document_type, status (`draft`/`issued`/`cancelled`), client_id, currency, language, prices_include_tax, issue_date (date), due_date (date), series_id, number, number_seq, subtotal, discount_total, net_total, tax_total, total, reference, notes, terms, source_order_id, created_by, updated_by, issued_by, issued_at, version, timestamps; partial unique (company_id, series_id, number_seq) where number_seq is not null.
 - `invoice_line`: invoice_id, position, kind (`item`/`shipping`), product_id, description, quantity, unit, unit_price, discount_percent (`Decimal(5,2)`), tax_code_id, tax_rate_percent (snapshot), line_subtotal, line_discount, line_net, line_gross.
 - `invoice_tax_summary`: invoice_id, tax_code_id, tax_rate_percent, net, tax, gross.
-- `sales_order`: store_id, connection_id, external_id, external_number, source_platform, source_status (jsonb, raw), source_created_at, source_updated_at, payment_status (`pending`/`authorized`/`paid`/`partially_paid`/`refunded`/`partially_refunded`/`voided`/`unknown`), fulfilment_status (`new`/`review_required`/`preparing`/`ready`/`handed_to_courier`/`completed`/`cancelled`), integration_status (`synced`/`stale`/`error`), review_reason, customer (jsonb), recipient (jsonb), billing_address (jsonb), delivery_method (`courier_cy`/`post_international`/`collection`/`unknown`), shipping_line (jsonb), gift_message (text, exact), gift_message_meta (jsonb), customer_note, currency, subtotal, shipping_total, tax_total, total, assigned_to_user_id, version, timestamps; unique (company_id, connection_id, external_id).
+- `sales_order`: store_id, connection_id, external_id, external_number, source_platform, source_status (jsonb, raw), source_created_at, source_updated_at, payment_status (`pending`/`authorized`/`paid`/`partially_paid`/`refunded`/`partially_refunded`/`voided`/`unknown`), fulfilment_status (`new`/`review_required`/`preparing`/`ready`/`handed_to_courier`/`completed`/`cancelled`), integration_status (`synced`/`stale`/`error`), review_reason, attention_reasons (text[], default `{}`; records source changes that arrive after an order is already `completed` or `cancelled` without reopening it), customer (jsonb), recipient (jsonb), billing_address (jsonb), delivery_method (`courier_cy`/`post_international`/`collection`/`unknown`), shipping_line (jsonb), gift_message (text, exact), gift_message_meta (jsonb), customer_note, currency, subtotal, shipping_total, tax_total, total, assigned_to_user_id, version, timestamps; unique (company_id, connection_id, external_id).
 - `sales_order_line`: order_id, external_line_id, sku, title, variant_title, quantity, unit_price, total.
 - `order_note`: order_id, author_user_id, body, created_at.
 - `stored_file`: kind (`invoice_pdf`/`packing_slip`/`gift_message`/`test_print`), storage_key (unique), content_type, size_bytes, sha256, source_type, source_id, source_version, created_by, created_at.
@@ -175,7 +175,7 @@ Company-scoped tables. Every one has a non-null `company_id` FK and **RLS ENABLE
 - `printer_mapping`: location_id, document_type (`invoice`/`packing_slip`/`gift_message`/`shipping_label`), printer_id, paper_size, copies (default 1); unique (company_id, location_id, document_type).
 - `print_job`: printer_id, document_type, source_type (`order`/`invoice`/`test`), source_id, source_version, file_id, copies, paper_size, status (below), is_reprint, reprint_of_id, reprint_reason, idempotency_key, provider_job_id, provider_state, requested_by, queue_job_id, attempts, last_error, correlation_id, submitted_at, completed_at, confirmed_by, confirmed_at, timestamps.
   - unique (company_id, idempotency_key)
-  - **partial unique index** (company_id, source_type, source_id, document_type, source_version) where `is_reprint = false and status not in ('failed','cancelled','not_printed')`, which stops concurrent duplicate first prints
+  - **partial unique index** (company_id, source_type, source_id, document_type) where `is_reprint = false and status not in ('failed','cancelled','not_printed')`, which stops concurrent duplicate first prints. The index deliberately leaves out `source_version`: an unrelated order change (such as a new phone number) must not allow a second "first" print. Any later output for the same document goes through the explicit reprint path, with permission and a reason. `source_version` is still recorded on the job for information.
   - statuses: `queued`, `held`, `submitting`, `submitted`, `delivered_to_printer`, `done_reported`, `confirmed_printed`, `not_printed`, `failed`, `uncertain`, `cancelled`
 - `audit_event`: id, company_id (nullable for platform events), occurred_at, actor_type (`user`/`service`/`system`), actor_id, actor_label, action, object_type, object_id, outcome (`success`/`denied`/`failure`), correlation_id, ip, user_agent, details (jsonb, redacted).
   - RLS policies:
@@ -190,7 +190,12 @@ Company-scoped tables. Every one has a non-null `company_id` FK and **RLS ENABLE
   - `ALTER TABLE … ENABLE ROW LEVEL SECURITY; ALTER TABLE … FORCE ROW LEVEL SECURITY;`
   - `CREATE POLICY tenant_isolation ON … USING (company_id = app_current_company()) WITH CHECK (company_id = app_current_company());`
 - Grants: re-grant DML to `bp_app` on all tables, then `REVOKE UPDATE, DELETE ON audit_event FROM bp_app`.
-- Trigger `invoice_issued_immutable`: blocks UPDATE or DELETE of an `invoice` (and its lines and tax summary) once `status = 'issued'`, except the receivables columns that Phase 3 will name. Write it now and test that issued rows can't be edited. A test can set `status = 'issued'` directly as bp_owner to set this up.
+- Trigger `invoice_issued_immutable`: once an invoice's `status = 'issued'`, it blocks UPDATE or DELETE of the `invoice` row (except the receivables columns that Phase 3 will name). For `invoice_line` and `invoice_tax_summary` it blocks:
+  - **INSERT** where the target invoice is issued
+  - **UPDATE** where the old *or* new parent invoice is issued, which also blocks moving a child row between invoices
+  - **DELETE** where the parent invoice is issued
+
+  Write it now and test it. A test can set `status = 'issued'` directly as bp_owner to set this up.
 - A schema test (integration) lists every table with a `company_id` column, asserts that RLS is enabled and forced on all of them except the documented exceptions, and fails if a new table is missing it.
 
 ### A4. Domain package (`packages/domain`)
@@ -201,7 +206,7 @@ Pure TypeScript with no Nest or Prisma imports.
   - `Money` helpers over decimal.js (precision 40, `ROUND_HALF_UP`)
   - `parseAmount(string)`, which rejects numbers, more than 4 decimal places for prices and quantities, and non-finite input
   - `round2`
-  - `calculateDocumentTotals(input)`, which implements `docs/finance/rounding.md` exactly, including largest-remainder allocation in inclusive mode
+  - `calculateDocumentTotals(input)`, which implements `docs/finance/rounding.md` exactly, including largest-remainder allocation in inclusive mode. Groups are keyed by **tax code id**, not by rate (E12).
 - `orders/state-machine.ts`: the allowed transitions and their guards:
   - `new` → `review_required`, `preparing`, `cancelled`
   - `review_required` → `new`, `preparing`, `cancelled`
@@ -212,16 +217,17 @@ Pure TypeScript with no Nest or Prisma imports.
   - Guard: `→ ready` requires payment status `paid`; anything else returns the error `payment_not_settled`.
   - Guard: `→ cancelled` requires the separate `order.cancel` permission, checked by the API.
   - Export `allowedTransitions(order)` for the UI.
-- `authz/permissions.ts`: the permission catalogue (keys exactly as in `docs/security/permission-matrix.md`), with each key's phase.
-- `authz/role-templates.ts`: the 7 role templates.
-- `authz/evaluate.ts`: `can(grants, permission, resourceScope?)`, which implements the scope semantics in the matrix, plus `canGrant(actorGrants, targetRole, scope)`, which implements the escalation rules.
+- `authz/permissions.ts`: the permission catalogue (keys exactly as in `docs/security/permission-matrix.md`). Each entry has its phase, `scopableBy` (`[]`, `['store','location']` or `['mailbox']`, and so on) and `automationOnly`.
+- `authz/role-templates.ts`: the 7 role templates plus `BASE` (staff baseline: `company.view`, `catalog.view`). Templates never include automation-only permissions.
+- `authz/evaluate.ts`: `can(grants, permission, resourceScope?)`, which implements the matrix's scope semantics. A scoped assignment yields only the role permissions whose `scopableBy` includes that scope type, limited to the scope id. Non-scopable permissions from a scoped assignment are **not** granted. There's also `canGrant(actorGrants, targetRole, scope)`, which implements the escalation rules.
 - `contracts/`: zod schemas for the API DTOs shared with web (money as decimal strings).
 - `text/`: `normalizeForDuplicateCheck` (NFKC, lower-case, collapse whitespace, strip legal suffixes such as `ltd`/`limited`/`ltd.`). This is used **only** for duplicate detection and never for stored customer text.
 - `time/`: `businessDateInZone(instant, tz)` (Intl based) and `addDaysToBusinessDate`.
 
 Unit tests must include:
 
-- E1–E11 from `docs/finance/rounding.md`
+- E1–E12 from `docs/finance/rounding.md`
+- scope semantics: a store-scoped FS assignment grants `order.view` for that store only, and grants neither `catalog.view` nor `company.view`; a store-scoped CA assignment grants no `member.manage`; BASE company-wide gives `catalog.view`
 - every allowed and disallowed state transition
 - the permission-matrix doc and code staying in sync (the test parses the markdown tables)
 - `canGrant` escalation cases
@@ -253,7 +259,7 @@ Fictional data only, with `is_fictional = true` and `.test` emails. Idempotent, 
   | owner@example.test | platform owner, no memberships needed |
   | admin.a@example.test | CA in A |
   | ops.a@example.test | OM in A |
-  | fulfil.a@example.test | FS in A, scoped to `store:Nutbox Demo Shopify` only |
+  | fulfil.a@example.test | FS in A scoped to `store:Nutbox Demo Shopify`, plus BASE in A company-wide |
   | finance.a@example.test | FIN in A |
   | marketing.a@example.test | MKT in A |
   | support.a@example.test | CS in A |
@@ -273,7 +279,7 @@ Fictional data only, with `is_fictional = true` and `.test` emails. Idempotent, 
   2. In A's context, B's rows are invisible.
   3. Inserting a row with B's company_id in A's context fails.
   4. Running `UPDATE` or `DELETE` on `audit_event` fails.
-  5. Updating an issued invoice fails.
+  5. Updating an issued invoice fails. So does inserting, updating, moving or deleting its lines or tax-summary rows.
 - n8n opens on `http://127.0.0.1:5678` with its runner connected (check the runner logs). Port checks show that only 127.0.0.1 bindings exist.
 - CI (`.github/workflows/ci.yml`) runs:
   - install with `--frozen-lockfile`
@@ -320,11 +326,27 @@ Fictional data only, with `is_fictional = true` and `.test` emails. Idempotent, 
 - **OIDC** (openid-client 6):
   - `GET /api/auth/oidc/start?redirect=/...` (the redirect must be a relative path, so there are no open redirects) and `GET /api/auth/oidc/callback`
   - PKCE S256, state and nonce kept in `auth_flow`; validate issuer, audience, nonce and expiry
+  - **browser binding, against login CSRF:**
+    - `start` sets a random 32-byte cookie `bp_oidc_flow` (HttpOnly, Secure per config, SameSite=Lax, Path=`/api/auth/oidc`, Max-Age 600) and stores its SHA-256 as `browser_binding_hash`
+    - `callback` rejects the request unless that cookie is present and matches the flow found by `state` (constant-time compare)
+    - consuming the flow is atomic: `UPDATE … SET consumed_at = now() WHERE id = $1 AND consumed_at IS NULL AND expires_at > now()`, which must return 1 row
+    - the cookie is cleared after the callback
   - map users by `(provider='entra', issuer, sub)`, also storing `tid` and `oid`
   - an unknown identity without a valid invitation is denied with "account not provisioned", and the denial is audited
   - with an invitation token from `auth_flow`, the invitation's email must match the token's verified `email` or `preferred_username` (case-insensitive); then link the identity, activate the membership and apply the invitation's role assignments
-  - MFA: if `AUTH_REQUIRE_MFA_FOR_PRIVILEGED=true` and the user is a platform owner or holds `member.manage` in any company, require the `amr` claim to include `mfa`; otherwise deny with `mfa_required`. Document in STATUS that the Entra v2 claim behaviour is still to verify (U2).
-  - tests run against `oauth2-mock-server` (npm) started inside the integration test, and cover: happy path, wrong state, wrong nonce, replayed callback (`auth_flow` already consumed), an unprovisioned identity, and the MFA-required denial
+  - MFA is recorded at login: `user_session.mfa_satisfied = (amr includes 'mfa')`. Dev-login sessions always have `mfa_satisfied = false`.
+  - MFA is enforced **per request, not just at login**. When `AUTH_REQUIRE_MFA_FOR_PRIVILEGED=true` (default `true` in uat and production, `false` in development and test), a session with `mfa_satisfied = false` doesn't get the **privileged permissions**: `member.invite`, `member.manage`, `member.sessions.revoke`, `role.manage`, `company.bank.manage`, `automation.manage`, `service_identity.manage`, `store.manage` and `integration.manage`. It also doesn't get platform-owner capabilities.
+    - These permissions are removed when the request context is built, so a user promoted mid-session can't use the new privileges until they sign in again with MFA.
+    - `/context` returns `mfaStepUpRequired: true` with the withheld permissions so the UI can prompt for re-authentication.
+    - Document in STATUS that the Entra v2 claim behaviour is still to verify (U2).
+  - tests run against `oauth2-mock-server` (npm) started inside the integration test, and cover:
+    - happy path
+    - wrong state
+    - wrong nonce
+    - replayed callback (`auth_flow` already consumed)
+    - **callback opened with a different cookie jar or with no `bp_oidc_flow` cookie fails**
+    - an unprovisioned identity
+    - a non-MFA session whose user is promoted to company admin can't use `member.manage` until they log in again with `amr: ['mfa']`
 - `POST /api/auth/logout` revokes the session and clears the cookies.
 - `GET /api/me` returns the user, their **authorised companies** (active memberships; platform owners get all active companies) and the session's expiry.
 
@@ -350,10 +372,11 @@ Fictional data only, with `is_fictional = true` and `.test` emails. Idempotent, 
   - `GET /api/c/:companyId/members` (`member.view`)
   - `POST /api/c/:companyId/invitations` (`member.invite` plus `canGrant` for every role assignment); returns the invitation link **once**; there is no email sending in Phase 1, so the link is shown to the admin
   - `PATCH /api/c/:companyId/members/:membershipId` (`member.manage`): roles and status, applying the escalation rules (no self-modification, no targeting platform owners, no last-admin lockout); suspending a membership revokes that user's sessions **if they have no other active membership**, otherwise only access to this company stops (on the next request, automatically)
+    - **Serialisation:** every membership, role-assignment or invitation-acceptance change runs in one transaction that first takes `SELECT … FROM company WHERE id = $1 FOR UPDATE`. Under that lock it re-checks that the **acting** membership is still active and still has the permission, then checks the last-`member.manage` invariant, then writes. Two admins suspending each other concurrently must leave at least one active admin.
   - `POST /api/c/:companyId/members/:membershipId/revoke-sessions` (`member.sessions.revoke`)
   - `GET /api/c/:companyId/roles` (`member.view`)
   - `GET /api/c/:companyId/audit-events` (`audit.view`): filters for object type/id, action, actor, outcome and date range; paginated
-  - `GET /api/c/:companyId/service-identities`, `POST` (`service_identity.manage`; permissions must be a subset of the creator's; returns the token once), `DELETE /:id` (revoke)
+  - `GET /api/c/:companyId/service-identities`, `POST` (`service_identity.manage`; automation-only permissions such as `store.events.ingest` are grantable by any holder of `service_identity.manage`; ordinary permissions must be held by the creator; returns the token once), `DELETE /:id` (revoke)
   - Platform, owner only: `GET /api/platform/companies`, `POST /api/platform/companies` (creates the company, copies role templates, adds example tax codes, sets switches false), `PUT /api/platform/switches/outbound.all`
 - `AuditService.record(...)` is called inside the same transaction as the change wherever possible. Denials are recorded in their own transaction. `details` passes through a redactor.
 
@@ -362,11 +385,11 @@ Fictional data only, with `is_fictional = true` and `.test` emails. Idempotent, 
 1. The full dev-login flow, `/me` and company list. multi@example.test sees A and B; admin.b sees only B.
 2. admin.b requesting `/api/c/<A>/members` gets 404 and an audited denial. Guessed member ids of A under `/api/c/<B>/members/<A-member-id>` give 404.
 3. A suspended membership is denied at once, while the same session still works for that user's other company. A revoked session gives 401.
-4. Escalation: admin.a can't grant platform owner (no such permission), can't modify their own roles, and can't remove the last member holding `member.manage`. An ops manager can't invite anyone.
+4. Escalation: admin.a can't grant platform owner (no such permission), can't modify their own roles, and can't remove the last member holding `member.manage`. An ops manager can't invite anyone. With exactly two admins, **concurrent** mutual suspension (`Promise.all`) leaves at least one active admin, and one request fails.
 5. CSRF: an unsafe request without or with a wrong `X-XSRF-TOKEN` gets 403.
 6. `APP_ENV=production` with `AUTH_DEV_LOGIN_ENABLED=true` makes startup throw. A missing `APP_ENV` makes startup throw.
 7. The route self-check: a test controller without a permission decorator makes boot fail.
-8. Service tokens: A's token on B's URL gets 404; an expired or revoked token gets 401; a token can't do anything outside its permission list (403); a token can't be used on staff routes.
+8. Service tokens: admin.a can create a token with `store.events.ingest`, but not one with an ordinary permission admin.a lacks. A's token on B's URL gets 404; an expired or revoked token gets 401; a token can't do anything outside its permission list (403); a token can't be used on staff routes.
 9. OIDC tests against the mock server (B2).
 10. Audit events exist for logins, denials, invitations, role changes, suspensions and token creation, each with a correlation id.
 
@@ -425,11 +448,15 @@ Fictional data only, with `is_fictional = true` and `.test` emails. Idempotent, 
   - Body: `{ eventId, topic: 'orders/create'|'orders/updated', occurredAt, payload }`.
   - Verify the connection belongs to the URL company (404 otherwise) and is active and `mock` (live mode is Phase 2).
   - Insert `integration_inbox` with `ON CONFLICT (company_id, connection_id, external_event_id) DO UPDATE SET duplicate_count = duplicate_count + 1`.
-  - Return `202 { inboxId, status: 'accepted' | 'duplicate' }`. On accept, enqueue job `inbox.process`.
+  - Return `202 { inboxId, status: 'accepted' | 'duplicate' }`.
+  - The inbox insert and its `inbox.process` job (idempotency key `inbox:<inboxId>`) are written in **one transaction**, so a crash can never leave an accepted event with no job. A duplicate whose inbox row is still `received` and has no job (defensive check) gets its job re-enqueued, using the same idempotency key.
 - Worker handler `inbox.process`, run inside TenantDb:
+  - **Serialise per source object.** First, inside the transaction, call `pg_advisory_xact_lock(hashtextextended(connection_id || ':' || external_object_id, 0))`. Every read-compare-write below happens under that lock. Order creation uses `INSERT … ON CONFLICT (company_id, connection_id, external_id) DO NOTHING`, followed by a locked re-read. The source-field update also carries the predicate `WHERE source_updated_at < $incoming`, as a second line of defence.
   - Map the payload. If no order exists, create it with `fulfilment_status = new`, or `review_required` with a reason when `delivery_method = unknown`, the gift message has unsupported glyphs, or the payment status is unknown.
   - If the order exists and the incoming `source_updated_at` is not newer, mark the inbox row `stale` and don't touch the order.
-  - If the order exists and the update is newer, update the source fields only: never `fulfilment_status`, assignment or notes. A source `cancelledAt` on an order that isn't completed moves it to `review_required` with reason `cancelled_at_source`. A changed gift message on an order that already has a printed gift message sets `review_required` with reason `gift_message_changed_after_print`.
+  - If the order exists and the update is newer, update the source fields only: never `fulfilment_status`, assignment or notes.
+    - A source `cancelledAt`, or a gift-message change on an order whose gift message was already printed, moves a **non-terminal** order to `review_required`, with reason `cancelled_at_source` or `gift_message_changed_after_print`.
+    - **Terminal orders (`completed`, `cancelled`) never change fulfilment status on import.** The reason is appended to `attention_reasons` instead, and audited, so it's visible without reopening the order.
   - Bump `version`, audit `order.imported` or `order.source_updated`, and mark the inbox row `processed`.
 - `pnpm demo:import-fixtures --company A|B`:
   1. creates (or reuses from a local gitignored file) a service identity through the API as the company admin
@@ -479,20 +506,22 @@ Fictional data only, with `is_fictional = true` and `.test` emails. Idempotent, 
   - check the order is in scope
   - resolve the printer from the mapping and validate copies (1–5) and paper size against the printer
   - render the document now, store it as a `stored_file`, and record `source_version = order.version`
-  - in one transaction, insert the `print_job` (status `queued`, idempotency key = `print:<companyId>:<documentType>:<sourceId>:v<version>` for first prints, or `reprint:<uuid>`) and a `job` (`print.submit`)
+  - in one transaction, insert the `print_job` (status `queued`, `idempotency_key = 'pj_' || print_job.id`, which is sent to the provider as its idempotency key) and a `job` (`print.submit`, idempotency key `print.submit:<printJobId>`). Duplicate first prints are blocked by the partial unique index, not by the idempotency key.
   - a first print that would break the partial unique index gives 409 `already_printed` with the existing job id
   - the gift-message document is refused if `fits = false` or `unsupportedChars` is not empty: 422 `gift_message_needs_review`
 - Worker `print.submit`:
   1. **Re-check switches at execution time**: global `outbound.all` and the company's `printing`. If either is off, set the print job to `held` and the job to `held`, and audit it.
-  2. Set `submitting`, then call the provider under the job timeout.
+  2. **Re-validate the requester at execution time.** The requesting user must still be active with an active membership. They must still hold `print.submit` (or `print.reprint` for reprints) covering the order's store, and the order must still exist. If not, set the print job to `failed`, with `last_error = 'requester_no_longer_authorised'`, and audit it. Held jobs released later are re-validated against the **releaser** as well as the requester.
+  3. **Claim atomically:** `UPDATE print_job SET status = 'submitting' WHERE id = $1 AND status = 'queued' RETURNING …`. If no row comes back (for example, it was cancelled meanwhile), stop without calling the provider and mark the queue job `cancelled`. The provider is called only after winning this transition.
+  4. Call the provider under the job timeout.
      - success: `submitted`, store `provider_job_id`, enqueue `print.refresh_status` after 2 s
      - `PrinterOffline` or `ProviderRejected`: `failed`
      - `ProviderTimeout` or an unknown error after the request was sent: `uncertain`, **with no retry**
-  3. Audit every outcome.
+  5. Audit every outcome.
 - Worker `print.refresh_status` maps the provider state to `delivered_to_printer` or `done_reported`. **`done_reported` is never shown as "printed".**
 - `POST /print-jobs/:id/confirm {outcome:'printed'|'not_printed'}` (`print.confirm`).
 - `POST /print-jobs/:id/release` (`automation.replay`): held → queued, re-enqueued, audited.
-- `POST /print-jobs/:id/cancel`: only from queued, held or uncertain.
+- `POST /print-jobs/:id/cancel`: only from queued, held or uncertain, as one atomic conditional update (`… WHERE status IN ('queued','held','uncertain')`). Because the worker can only call the provider after winning `queued → submitting`, a successful cancel guarantees no submission. If the job is already `submitting` or later, the cancel returns 409.
 - `GET /print-jobs?sourceId=&status=` (`print.submit` or `automation.view`).
 - `GET /printers`, `POST /printers/discover` (`printer.manage`; for mock, it upserts the mock printers), `PUT /printer-mappings` (`printer.manage`).
 - Job runner (`automation` module):
@@ -524,6 +553,9 @@ Fictional data only, with `is_fictional = true` and `.test` emails. Idempotent, 
    - A source cancellation moves the order to `review_required`.
    - A stored gift message equals the fixture string byte-for-byte (compare UTF-8 buffers).
    - Unknown delivery gives `review_required`.
+   - **Concurrency:** process the create, T2 and T3 events for the same order concurrently, in every arrival order. The result is always exactly one order holding T3's data, with the older events marked `stale` or processed in order.
+   - **Atomic enqueue:** a failure injected after the inbox insert rolls back the inbox row too, so redelivery is `accepted`, not `duplicate`.
+   - **Terminal orders:** a source cancellation or gift-message change on a `completed` or `cancelled` order leaves `fulfilment_status` unchanged and appends to `attention_reasons`.
 6. **Transitions.** new → preparing → ready works for a paid order. Ready on a pending order gives 422 `payment_not_settled`. A stale `expectedVersion` gives 409. Two concurrent transitions: exactly one succeeds.
 7. **Printing.**
    - The first print is queued → submitted → done_reported, and the mock output file exists.
@@ -534,6 +566,9 @@ Fictional data only, with `is_fictional = true` and `.test` emails. Idempotent, 
    - The flaky printer gives `uncertain` with exactly one provider submit call and no auto-retry.
    - If the switch is turned off **after** queueing and before the worker runs, the job ends up `held` and the provider is never called. Release after re-enabling then prints.
    - Company B's printing is off, so B's jobs go to `held`.
+   - **First-print identity:** print the gift message, then import a newer event that changes only the recipient phone (bumping the order version), then request another first print. The result is 409 `already_printed`.
+   - **Requester revoked:** queue a print as fulfil.a, suspend fulfil.a's membership, then run the worker. The job is `failed` with `requester_no_longer_authorised`, and the provider is never called.
+   - **Cancel race:** run cancel and worker claim concurrently, repeated many times. Either the cancel succeeds and the provider is never called, or the worker wins and the cancel returns 409. Never both.
 8. **Audit.** Every action above has an audit event with a correlation id. The order activity endpoint shows import, transitions, notes and prints.
 
 ---
