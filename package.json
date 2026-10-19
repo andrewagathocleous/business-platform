@@ -1,0 +1,50 @@
+{
+  "name": "business-platform",
+  "private": true,
+  "packageManager": "pnpm@12.14.0",
+  "engines": {
+    "node": ">=24.22.0 <25"
+  },
+  "scripts": {
+    "dev:infra": "docker compose --env-file .env -f infra/compose/compose.dev.yml up -d",
+    "dev:infra:down": "docker compose --env-file .env -f infra/compose/compose.dev.yml down",
+    "db:migrate": "pnpm --filter @bp/db migrate:dev",
+    "db:deploy": "pnpm --filter @bp/db migrate:deploy",
+    "db:reset:test": "node tools/reset-test-db.mjs",
+    "db:seed": "pnpm --filter @bp/db seed",
+    "dev": "node -e \"console.error('pnpm dev starts the API, worker and web app together. The web app is Step D.'); process.exit(1)\"",
+    "dev:api": "pnpm --filter @bp/api dev",
+    "dev:worker": "pnpm --filter @bp/api dev:worker",
+    "dev:web": "node -e \"console.error('apps/web is generated in Step D.'); process.exit(1)\"",
+    "lint": "nx run-many -t lint",
+    "typecheck": "nx run-many -t typecheck",
+    "test": "nx run-many -t test",
+    "test:integration": "node tools/test-integration.mjs",
+    "test:e2e": "node -e \"console.error('Playwright e2e is Step D.'); process.exit(1)\"",
+    "build": "nx run-many -t build",
+    "postinstall": "pnpm --filter @bp/db generate",
+    "setup:env": "node tools/setup-env.mjs",
+    "openapi:export": "node -e \"console.error('OpenAPI export is Step B.'); process.exit(1)\""
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@nx/eslint": "23.3.0",
+    "@nx/eslint-plugin": "23.3.0",
+    "@nx/js": "23.3.0",
+    "@nx/nest": "23.3.0",
+    "@swc/core": "1.16.18",
+    "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "dotenv": "18.0.8",
+    "eslint": "9.39.5",
+    "eslint-config-prettier": "10.1.8",
+    "nx": "23.3.0",
+    "pg": "8.23.1",
+    "prettier": "3.9.10",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.2",
+    "unplugin-swc": "2.0.0",
+    "vitest": "5.0.5"
+  }
+}

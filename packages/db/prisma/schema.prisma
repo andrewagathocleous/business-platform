@@ -1,0 +1,1131 @@
+// Phase 1 step A. Company-scoped tables get RLS in the following SQL migration.
+// Identity, tenancy and infrastructure tables are not RLS-scoped.
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "cjs"
+  runtime             = "nodejs"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Locale {
+  en
+  el
+
+  @@map("locale")
+}
+
+enum UserStatus {
+  active
+  disabled
+
+  @@map("user_status")
+}
+
+enum IdentityProvider {
+  entra
+  dev
+
+  @@map("identity_provider")
+}
+
+enum MembershipStatus {
+  invited
+  active
+  suspended
+  removed
+
+  @@map("membership_status")
+}
+
+enum ScopeType {
+  company
+  store
+  location
+  mailbox
+  integration_account
+
+  @@map("scope_type")
+}
+
+enum StorePlatform {
+  shopify
+  prestashop
+  manual
+
+  @@map("store_platform")
+}
+
+enum InvoiceAuthority {
+  undecided
+  store
+  platform
+
+  @@map("invoice_authority")
+}
+
+enum ConnectionMode {
+  mock
+  live
+
+  @@map("connection_mode")
+}
+
+enum ClientKind {
+  organisation
+  individual
+
+  @@map("client_kind")
+}
+
+enum AddressKind {
+  billing
+  shipping
+
+  @@map("address_kind")
+}
+
+enum TaxKind {
+  standard
+  reduced
+  zero
+  exempt
+  reverse_charge
+  out_of_scope
+
+  @@map("tax_kind")
+}
+
+enum ProductKind {
+  product
+  service
+  shipping
+
+  @@map("product_kind")
+}
+
+enum InvoiceDocumentType {
+  quote
+  invoice
+  credit_note
+
+  @@map("invoice_document_type")
+}
+
+enum InvoiceStatus {
+  draft
+  issued
+  cancelled
+
+  @@map("invoice_status")
+}
+
+enum InvoiceLineKind {
+  item
+  shipping
+
+  @@map("invoice_line_kind")
+}
+
+enum PaymentStatus {
+  pending
+  authorized
+  paid
+  partially_paid
+  refunded
+  partially_refunded
+  voided
+  unknown
+
+  @@map("payment_status")
+}
+
+enum FulfilmentStatus {
+  new
+  review_required
+  preparing
+  ready
+  handed_to_courier
+  completed
+  cancelled
+
+  @@map("fulfilment_status")
+}
+
+enum IntegrationStatus {
+  synced
+  stale
+  error
+
+  @@map("integration_status")
+}
+
+enum DeliveryMethod {
+  courier_cy
+  post_international
+  collection
+  unknown
+
+  @@map("delivery_method")
+}
+
+enum InboxStatus {
+  received
+  processed
+  stale
+  failed
+
+  @@map("inbox_status")
+}
+
+enum StoredFileKind {
+  invoice_pdf
+  packing_slip
+  gift_message
+  test_print
+
+  @@map("stored_file_kind")
+}
+
+enum GiftAlign {
+  left
+  center
+
+  @@map("gift_align")
+}
+
+enum GiftVerticalAlign {
+  top
+  middle
+
+  @@map("gift_vertical_align")
+}
+
+enum PrinterProvider {
+  mock
+  printnode
+
+  @@map("printer_provider")
+}
+
+enum PrinterStatus {
+  online
+  offline
+  unknown
+
+  @@map("printer_status")
+}
+
+enum PrintDocumentType {
+  invoice
+  packing_slip
+  gift_message
+  shipping_label
+
+  @@map("print_document_type")
+}
+
+enum PrintSourceType {
+  order
+  invoice
+  test
+
+  @@map("print_source_type")
+}
+
+enum PrintJobStatus {
+  queued
+  held
+  submitting
+  submitted
+  delivered_to_printer
+  done_reported
+  confirmed_printed
+  not_printed
+  failed
+  uncertain
+  cancelled
+
+  @@map("print_job_status")
+}
+
+enum JobStatus {
+  queued
+  running
+  succeeded
+  failed
+  held
+  uncertain
+  cancelled
+
+  @@map("job_status")
+}
+
+enum ActorType {
+  user
+  service
+  system
+
+  @@map("actor_type")
+}
+
+enum AuditOutcome {
+  success
+  denied
+  failure
+
+  @@map("audit_outcome")
+}
+
+model UserAccount {
+  id              String     @id @default(uuid(7)) @db.Uuid
+  email           String     @unique @db.Citext
+  displayName     String     @map("display_name")
+  locale          Locale     @default(en)
+  isPlatformOwner Boolean    @default(false) @map("is_platform_owner")
+  status          UserStatus @default(active)
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  identities             UserIdentity[]
+  sessions               UserSession[]
+  memberships            Membership[]
+  grantedMembershipRoles MembershipRole[]   @relation("MembershipRoleGrantedBy")
+  invitationsSent        Invitation[]       @relation("InvitationInvitedBy")
+  invitationsAccepted    Invitation[]       @relation("InvitationAcceptedBy")
+  serviceIdentities      ServiceIdentity[]  @relation("ServiceIdentityCreatedBy")
+  switchesUpdated        AutomationSwitch[] @relation("SwitchUpdatedBy")
+  clientsCreated         Client[]           @relation("ClientCreatedBy")
+  invoicesCreated        Invoice[]          @relation("InvoiceCreatedBy")
+  invoicesUpdated        Invoice[]          @relation("InvoiceUpdatedBy")
+  invoicesIssued         Invoice[]          @relation("InvoiceIssuedBy")
+  ordersAssigned         SalesOrder[]       @relation("OrderAssignedTo")
+  orderNotes             OrderNote[]
+  filesCreated           StoredFile[]       @relation("FileCreatedBy")
+  credentialsCreated     IntegrationCredential[] @relation("CredentialCreatedBy")
+  printJobsRequested     PrintJob[]         @relation("PrintRequestedBy")
+  printJobsConfirmed     PrintJob[]         @relation("PrintConfirmedBy")
+
+  @@map("user_account")
+}
+
+model UserIdentity {
+  id           String           @id @default(uuid(7)) @db.Uuid
+  userId       String           @map("user_id") @db.Uuid
+  user         UserAccount      @relation(fields: [userId], references: [id])
+  provider     IdentityProvider
+  issuer       String
+  subject      String
+  tenantId     String?          @map("tenant_id")
+  emailAtLink  String?          @map("email_at_link") @db.Citext
+  lastLoginAt  DateTime?        @map("last_login_at") @db.Timestamptz(6)
+
+  @@unique([provider, issuer, subject])
+  @@map("user_identity")
+}
+
+model UserSession {
+  id                String      @id @default(uuid(7)) @db.Uuid
+  userId            String      @map("user_id") @db.Uuid
+  user              UserAccount @relation(fields: [userId], references: [id])
+  tokenHash         String      @unique @map("token_hash")
+  authMethod        String      @map("auth_method")
+  mfaSatisfied      Boolean     @map("mfa_satisfied")
+  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt        DateTime    @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  idleExpiresAt     DateTime    @map("idle_expires_at") @db.Timestamptz(6)
+  absoluteExpiresAt DateTime    @map("absolute_expires_at") @db.Timestamptz(6)
+  revokedAt         DateTime?   @map("revoked_at") @db.Timestamptz(6)
+  revokedReason     String?     @map("revoked_reason")
+  ip                String?     @db.Inet
+  userAgent         String?     @map("user_agent")
+
+  @@map("user_session")
+}
+
+/// OIDC transaction state. code_verifier is stored only after the vault encrypts it (Step B).
+model AuthFlow {
+  id                  String    @id @default(uuid(7)) @db.Uuid
+  stateHash           String    @map("state_hash")
+  browserBindingHash  String    @map("browser_binding_hash")
+  nonce               String
+  codeVerifier        String    @map("code_verifier")
+  redirectAfter       String?   @map("redirect_after")
+  invitationTokenHash String?   @map("invitation_token_hash")
+  expiresAt           DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt          DateTime? @map("consumed_at") @db.Timestamptz(6)
+
+  @@map("auth_flow")
+}
+
+/// status is not enumerated in the plan. The seed uses "active".
+model Company {
+  id                 String   @id @default(uuid(7)) @db.Uuid
+  legalName          String   @map("legal_name")
+  tradingName        String   @map("trading_name")
+  countryCode        String   @default("CY") @map("country_code")
+  registrationNumber String?  @map("registration_number")
+  vatNumber          String?  @map("vat_number")
+  taxOffice          String?  @map("tax_office")
+  address            Json     @db.JsonB
+  defaultCurrency    String   @default("EUR") @map("default_currency")
+  timezone           String   @default("Asia/Nicosia")
+  defaultLocale      Locale   @default(en) @map("default_locale")
+  documentLanguage   Locale   @default(en) @map("document_language")
+  paymentTermsDays   Int      @default(30) @map("payment_terms_days")
+  status             String   @default("active")
+  isFictional        Boolean  @default(false) @map("is_fictional")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships        Membership[]
+  roles              Role[]
+  invitations        Invitation[]
+  serviceIdentities  ServiceIdentity[]
+  switches           AutomationSwitch[]
+  jobs               Job[]
+  bankAccounts       CompanyBankAccount[]
+  brands             Brand[]
+  locations          Location[]
+  stores             Store[]
+  credentials        IntegrationCredential[]
+  connections        StoreConnection[]
+  inboxEvents        IntegrationInbox[]
+  clients            Client[]
+  contacts           ClientContact[]
+  addresses          ClientAddress[]
+  taxCodes           TaxCode[]
+  products           Product[]
+  invoiceSeries      InvoiceSeries[]
+  invoices           Invoice[]
+  invoiceLines       InvoiceLine[]
+  invoiceTaxSummaries InvoiceTaxSummary[]
+  salesOrders        SalesOrder[]
+  salesOrderLines    SalesOrderLine[]
+  orderNotes         OrderNote[]
+  storedFiles        StoredFile[]
+  giftTemplates      GiftMessageTemplate[]
+  printers           Printer[]
+  printerMappings    PrinterMapping[]
+  printJobs          PrintJob[]
+  auditEvents        AuditEvent[]
+
+  @@map("company")
+}
+
+model Membership {
+  id          String           @id @default(uuid(7)) @db.Uuid
+  userId      String           @map("user_id") @db.Uuid
+  user        UserAccount      @relation(fields: [userId], references: [id])
+  companyId   String           @map("company_id") @db.Uuid
+  company     Company          @relation(fields: [companyId], references: [id])
+  status      MembershipStatus @default(invited)
+  suspendedAt DateTime?        @map("suspended_at") @db.Timestamptz(6)
+  removedAt   DateTime?        @map("removed_at") @db.Timestamptz(6)
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  roles MembershipRole[]
+
+  @@unique([userId, companyId])
+  @@map("membership")
+}
+
+model Role {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  companyId   String   @map("company_id") @db.Uuid
+  company     Company  @relation(fields: [companyId], references: [id])
+  key         String
+  name        String
+  description String?
+  templateKey String?  @map("template_key")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  permissions RolePermission[]
+  assignments MembershipRole[]
+
+  @@unique([companyId, key])
+  @@map("role")
+}
+
+model RolePermission {
+  roleId     String @map("role_id") @db.Uuid
+  role       Role   @relation(fields: [roleId], references: [id])
+  permission String
+
+  @@id([roleId, permission])
+  @@map("role_permission")
+}
+
+model MembershipRole {
+  id           String      @id @default(uuid(7)) @db.Uuid
+  membershipId String      @map("membership_id") @db.Uuid
+  membership   Membership  @relation(fields: [membershipId], references: [id])
+  roleId       String      @map("role_id") @db.Uuid
+  role         Role        @relation(fields: [roleId], references: [id])
+  scopeType    ScopeType   @map("scope_type")
+  scopeId      String?     @map("scope_id") @db.Uuid
+  grantedById  String      @map("granted_by") @db.Uuid
+  grantedBy    UserAccount @relation("MembershipRoleGrantedBy", fields: [grantedById], references: [id])
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("membership_role")
+}
+
+model Invitation {
+  id               String    @id @default(uuid(7)) @db.Uuid
+  companyId        String    @map("company_id") @db.Uuid
+  company          Company   @relation(fields: [companyId], references: [id])
+  email            String    @db.Citext
+  roleAssignments  Json      @map("role_assignments") @db.JsonB
+  tokenHash        String    @unique @map("token_hash")
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
+  invitedById      String    @map("invited_by") @db.Uuid
+  invitedBy        UserAccount @relation("InvitationInvitedBy", fields: [invitedById], references: [id])
+  acceptedAt       DateTime? @map("accepted_at") @db.Timestamptz(6)
+  acceptedUserId   String?   @map("accepted_user_id") @db.Uuid
+  acceptedUser     UserAccount? @relation("InvitationAcceptedBy", fields: [acceptedUserId], references: [id])
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("invitation")
+}
+
+/// status is not enumerated in the plan. Callers use "active" or "revoked".
+model ServiceIdentity {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  companyId   String    @map("company_id") @db.Uuid
+  company     Company   @relation(fields: [companyId], references: [id])
+  name        String
+  purpose     String
+  secretHash  String    @map("secret_hash")
+  permissions String[]
+  status      String    @default("active")
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(6)
+  createdById String    @map("created_by") @db.Uuid
+  createdBy   UserAccount @relation("ServiceIdentityCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastUsedAt  DateTime? @map("last_used_at") @db.Timestamptz(6)
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  @@map("service_identity")
+}
+
+model AutomationSwitch {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  companyId   String?   @map("company_id") @db.Uuid
+  company     Company?  @relation(fields: [companyId], references: [id])
+  key         String
+  enabled     Boolean   @default(false)
+  reason      String?
+  updatedById String?   @map("updated_by") @db.Uuid
+  updatedBy   UserAccount? @relation("SwitchUpdatedBy", fields: [updatedById], references: [id])
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("automation_switch")
+}
+
+model Job {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  companyId      String    @map("company_id") @db.Uuid
+  company        Company   @relation(fields: [companyId], references: [id])
+  type           String
+  payload        Json      @db.JsonB
+  status         JobStatus @default(queued)
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(1) @map("max_attempts")
+  runAfter       DateTime  @default(now()) @map("run_after") @db.Timestamptz(6)
+  lockedBy       String?   @map("locked_by")
+  lockedUntil    DateTime? @map("locked_until") @db.Timestamptz(6)
+  timeoutMs      Int?      @map("timeout_ms")
+  lastError      String?   @map("last_error")
+  correlationId  String    @map("correlation_id")
+  idempotencyKey String    @unique @map("idempotency_key")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  finishedAt     DateTime? @map("finished_at") @db.Timestamptz(6)
+
+  printJobs PrintJob[]
+
+  @@index([status, runAfter])
+  @@map("job")
+}
+
+model CompanyBankAccount {
+  id            String  @id @default(uuid(7)) @db.Uuid
+  companyId     String  @map("company_id") @db.Uuid
+  company       Company @relation(fields: [companyId], references: [id])
+  bankName      String  @map("bank_name")
+  iban          String
+  bic           String?
+  accountHolder String  @map("account_holder")
+  isDefault     Boolean @default(false) @map("is_default")
+
+  @@map("company_bank_account")
+}
+
+model Brand {
+  id        String  @id @default(uuid(7)) @db.Uuid
+  companyId String  @map("company_id") @db.Uuid
+  company   Company @relation(fields: [companyId], references: [id])
+  name      String
+
+  stores Store[]
+
+  @@unique([companyId, id])
+  @@map("brand")
+}
+
+model Location {
+  id        String  @id @default(uuid(7)) @db.Uuid
+  companyId String  @map("company_id") @db.Uuid
+  company   Company @relation(fields: [companyId], references: [id])
+  name      String
+  address   Json    @db.JsonB
+  timezone  String?
+
+  stores   Store[]
+  printers Printer[]
+  mappings PrinterMapping[]
+
+  @@unique([companyId, id])
+  @@map("location")
+}
+
+/// status is not enumerated in the plan. The seed uses "active".
+model Store {
+  id                 String           @id @default(uuid(7)) @db.Uuid
+  companyId          String           @map("company_id") @db.Uuid
+  company            Company          @relation(fields: [companyId], references: [id])
+  brandId            String           @map("brand_id") @db.Uuid
+  brand              Brand            @relation(fields: [companyId, brandId], references: [companyId, id])
+  locationId         String           @map("location_id") @db.Uuid
+  location           Location         @relation(fields: [companyId, locationId], references: [companyId, id])
+  platform           StorePlatform
+  name               String
+  domain             String?
+  invoiceAuthority   InvoiceAuthority @default(undecided) @map("invoice_authority")
+  giftMessageKeys    String[]         @default(["Gift Message", "gift_message", "Gift message"]) @map("gift_message_keys")
+  deliveryMethodMap  Json             @default("{}") @map("delivery_method_map") @db.JsonB
+  status             String           @default("active")
+
+  connections StoreConnection[]
+  orders      SalesOrder[]
+
+  @@unique([companyId, id])
+  @@map("store")
+}
+
+/// status is not enumerated in the plan. The seed uses "active".
+model StoreConnection {
+  id               String         @id @default(uuid(7)) @db.Uuid
+  companyId        String         @map("company_id") @db.Uuid
+  company          Company        @relation(fields: [companyId], references: [id])
+  storeId          String         @map("store_id") @db.Uuid
+  store            Store          @relation(fields: [companyId, storeId], references: [companyId, id])
+  mode             ConnectionMode @default(mock)
+  status           String         @default("active")
+  credentialId     String?        @map("credential_id") @db.Uuid
+  credential       IntegrationCredential? @relation(fields: [companyId, credentialId], references: [companyId, id])
+  readOnly         Boolean        @default(true) @map("read_only")
+  writeBackEnabled Boolean        @default(false) @map("write_back_enabled")
+  lastEventAt      DateTime?      @map("last_event_at") @db.Timestamptz(6)
+  lastSyncAt       DateTime?      @map("last_sync_at") @db.Timestamptz(6)
+  syncCheckpoint   Json?          @map("sync_checkpoint") @db.JsonB
+
+  inboxEvents IntegrationInbox[]
+  orders      SalesOrder[]
+
+  @@unique([companyId, id])
+  @@map("store_connection")
+}
+
+model IntegrationCredential {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  companyId   String    @map("company_id") @db.Uuid
+  company     Company   @relation(fields: [companyId], references: [id])
+  provider    String
+  label       String
+  keyId       String    @map("key_id")
+  nonce       Bytes
+  ciphertext  Bytes
+  authTag     Bytes     @map("auth_tag")
+  hint        String?
+  createdById String      @map("created_by") @db.Uuid
+  createdBy   UserAccount @relation("CredentialCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  rotatedAt   DateTime? @map("rotated_at") @db.Timestamptz(6)
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  connections StoreConnection[]
+
+  @@unique([companyId, id])
+  @@map("integration_credential")
+}
+
+model IntegrationInbox {
+  id                String      @id @default(uuid(7)) @db.Uuid
+  companyId         String      @map("company_id") @db.Uuid
+  company           Company     @relation(fields: [companyId], references: [id])
+  connectionId      String      @map("connection_id") @db.Uuid
+  connection        StoreConnection @relation(fields: [companyId, connectionId], references: [companyId, id])
+  provider          String
+  externalEventId   String      @map("external_event_id")
+  topic             String
+  externalObjectId  String?     @map("external_object_id")
+  sourceUpdatedAt   DateTime?   @map("source_updated_at") @db.Timestamptz(6)
+  payload           Json        @db.JsonB
+  receivedAt        DateTime    @default(now()) @map("received_at") @db.Timestamptz(6)
+  status            InboxStatus @default(received)
+  duplicateCount    Int         @default(0) @map("duplicate_count")
+  processedAt       DateTime?   @map("processed_at") @db.Timestamptz(6)
+  error             String?
+  correlationId     String?     @map("correlation_id")
+
+  @@unique([companyId, connectionId, externalEventId])
+  @@map("integration_inbox")
+}
+
+model Client {
+  id                 String     @id @default(uuid(7)) @db.Uuid
+  companyId          String     @map("company_id") @db.Uuid
+  company            Company    @relation(fields: [companyId], references: [id])
+  kind               ClientKind
+  displayName        String     @map("display_name")
+  legalName          String?    @map("legal_name")
+  vatNumber          String?    @map("vat_number")
+  taxId              String?    @map("tax_id")
+  email              String?    @db.Citext
+  phone              String?
+  website            String?
+  notes              String?
+  defaultCurrency    String?    @map("default_currency")
+  defaultLanguage    String?    @map("default_language")
+  paymentTermsDays   Int?       @map("payment_terms_days")
+  nameNormalized     String?    @map("name_normalized")
+  emailNormalized    String?    @map("email_normalized")
+  vatNormalized      String?    @map("vat_normalized")
+  archivedAt         DateTime?  @map("archived_at") @db.Timestamptz(6)
+  createdById        String     @map("created_by") @db.Uuid
+  createdBy          UserAccount @relation("ClientCreatedBy", fields: [createdById], references: [id])
+  version            Int        @default(0)
+  createdAt          DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  contacts  ClientContact[]
+  addresses ClientAddress[]
+  invoices  Invoice[]
+
+  @@unique([companyId, id])
+  @@map("client")
+}
+
+model ClientContact {
+  id        String  @id @default(uuid(7)) @db.Uuid
+  companyId String  @map("company_id") @db.Uuid
+  company   Company @relation(fields: [companyId], references: [id])
+  clientId  String  @map("client_id") @db.Uuid
+  client    Client  @relation(fields: [companyId, clientId], references: [companyId, id])
+  name      String
+  email     String? @db.Citext
+  phone     String?
+  position  String?
+  isPrimary Boolean @default(false) @map("is_primary")
+
+  @@map("client_contact")
+}
+
+model ClientAddress {
+  id          String      @id @default(uuid(7)) @db.Uuid
+  companyId   String      @map("company_id") @db.Uuid
+  company     Company     @relation(fields: [companyId], references: [id])
+  clientId    String      @map("client_id") @db.Uuid
+  client      Client      @relation(fields: [companyId, clientId], references: [companyId, id])
+  kind        AddressKind
+  label       String?
+  line1       String
+  line2       String?
+  city        String
+  region      String?
+  postalCode  String?     @map("postal_code")
+  countryCode String      @map("country_code")
+  isDefault   Boolean     @default(false) @map("is_default")
+
+  @@map("client_address")
+}
+
+model TaxCode {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  companyId   String   @map("company_id") @db.Uuid
+  company     Company  @relation(fields: [companyId], references: [id])
+  code        String
+  name        String
+  ratePercent Decimal  @map("rate_percent") @db.Decimal(7, 4)
+  kind        TaxKind
+  noteEn      String?  @map("note_en")
+  noteEl      String?  @map("note_el")
+  isExample   Boolean  @default(false) @map("is_example")
+  active      Boolean  @default(true)
+
+  products      Product[]
+  invoiceLines  InvoiceLine[]
+  taxSummaries  InvoiceTaxSummary[]
+
+  @@unique([companyId, id])
+  @@unique([companyId, code])
+  @@map("tax_code")
+}
+
+model Product {
+  id               String      @id @default(uuid(7)) @db.Uuid
+  companyId        String      @map("company_id") @db.Uuid
+  company          Company     @relation(fields: [companyId], references: [id])
+  sku              String?
+  name             String
+  description      String?
+  kind             ProductKind
+  unit             String
+  unitPrice        Decimal     @map("unit_price") @db.Decimal(19, 4)
+  pricesIncludeTax Boolean     @map("prices_include_tax")
+  taxCodeId        String      @map("tax_code_id") @db.Uuid
+  taxCode          TaxCode     @relation(fields: [companyId, taxCodeId], references: [companyId, id])
+  active           Boolean     @default(true)
+
+  invoiceLines InvoiceLine[]
+
+  @@unique([companyId, id])
+  @@map("product")
+}
+
+model InvoiceSeries {
+  id           String              @id @default(uuid(7)) @db.Uuid
+  companyId    String              @map("company_id") @db.Uuid
+  company      Company             @relation(fields: [companyId], references: [id])
+  documentType InvoiceDocumentType @map("document_type")
+  code         String
+  prefix       String
+  nextNumber   Int                 @default(1) @map("next_number")
+  padding      Int                 @default(4)
+  active       Boolean             @default(true)
+
+  invoices Invoice[]
+
+  @@unique([companyId, id])
+  @@unique([companyId, code])
+  @@map("invoice_series")
+}
+
+model Invoice {
+  id               String              @id @default(uuid(7)) @db.Uuid
+  companyId        String              @map("company_id") @db.Uuid
+  company          Company             @relation(fields: [companyId], references: [id])
+  documentType     InvoiceDocumentType @map("document_type")
+  status           InvoiceStatus       @default(draft)
+  clientId         String              @map("client_id") @db.Uuid
+  client           Client              @relation(fields: [companyId, clientId], references: [companyId, id])
+  currency         String
+  language         String
+  pricesIncludeTax Boolean             @map("prices_include_tax")
+  issueDate        DateTime?           @map("issue_date") @db.Date
+  dueDate          DateTime?           @map("due_date") @db.Date
+  seriesId         String?             @map("series_id") @db.Uuid
+  series           InvoiceSeries?      @relation(fields: [companyId, seriesId], references: [companyId, id])
+  number           String?
+  numberSeq        Int?                @map("number_seq")
+  subtotal         Decimal             @db.Decimal(19, 2)
+  discountTotal    Decimal             @map("discount_total") @db.Decimal(19, 2)
+  netTotal         Decimal             @map("net_total") @db.Decimal(19, 2)
+  taxTotal         Decimal             @map("tax_total") @db.Decimal(19, 2)
+  total            Decimal             @db.Decimal(19, 2)
+  reference        String?
+  notes            String?
+  terms            String?
+  sourceOrderId    String?             @map("source_order_id") @db.Uuid
+  sourceOrder      SalesOrder?         @relation(fields: [companyId, sourceOrderId], references: [companyId, id])
+  createdById      String              @map("created_by") @db.Uuid
+  createdBy        UserAccount         @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
+  updatedById      String?             @map("updated_by") @db.Uuid
+  updatedBy        UserAccount?        @relation("InvoiceUpdatedBy", fields: [updatedById], references: [id])
+  issuedById       String?             @map("issued_by") @db.Uuid
+  issuedBy         UserAccount?        @relation("InvoiceIssuedBy", fields: [issuedById], references: [id])
+  issuedAt         DateTime?           @map("issued_at") @db.Timestamptz(6)
+  version          Int                 @default(0)
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  lines      InvoiceLine[]
+  taxSummary InvoiceTaxSummary[]
+
+  @@unique([companyId, id])
+  @@map("invoice")
+}
+
+model InvoiceLine {
+  id              String          @id @default(uuid(7)) @db.Uuid
+  companyId       String          @map("company_id") @db.Uuid
+  company         Company         @relation(fields: [companyId], references: [id])
+  invoiceId       String          @map("invoice_id") @db.Uuid
+  invoice         Invoice         @relation(fields: [companyId, invoiceId], references: [companyId, id])
+  position        Int
+  kind            InvoiceLineKind
+  productId       String?         @map("product_id") @db.Uuid
+  product         Product?        @relation(fields: [companyId, productId], references: [companyId, id])
+  description     String
+  quantity        Decimal         @db.Decimal(19, 4)
+  unit            String
+  unitPrice       Decimal         @map("unit_price") @db.Decimal(19, 4)
+  discountPercent Decimal         @map("discount_percent") @db.Decimal(5, 2)
+  taxCodeId       String          @map("tax_code_id") @db.Uuid
+  taxCode         TaxCode         @relation(fields: [companyId, taxCodeId], references: [companyId, id])
+  taxRatePercent  Decimal         @map("tax_rate_percent") @db.Decimal(7, 4)
+  lineSubtotal    Decimal         @map("line_subtotal") @db.Decimal(19, 2)
+  lineDiscount    Decimal         @map("line_discount") @db.Decimal(19, 2)
+  lineNet         Decimal         @map("line_net") @db.Decimal(19, 2)
+  lineGross       Decimal         @map("line_gross") @db.Decimal(19, 2)
+
+  @@map("invoice_line")
+}
+
+model InvoiceTaxSummary {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  company        Company  @relation(fields: [companyId], references: [id])
+  invoiceId      String   @map("invoice_id") @db.Uuid
+  invoice        Invoice  @relation(fields: [companyId, invoiceId], references: [companyId, id])
+  taxCodeId      String   @map("tax_code_id") @db.Uuid
+  taxCode        TaxCode  @relation(fields: [companyId, taxCodeId], references: [companyId, id])
+  taxRatePercent Decimal  @map("tax_rate_percent") @db.Decimal(7, 4)
+  net            Decimal  @db.Decimal(19, 2)
+  tax            Decimal  @db.Decimal(19, 2)
+  gross          Decimal  @db.Decimal(19, 2)
+
+  @@map("invoice_tax_summary")
+}
+
+model SalesOrder {
+  id                  String            @id @default(uuid(7)) @db.Uuid
+  companyId           String            @map("company_id") @db.Uuid
+  company             Company           @relation(fields: [companyId], references: [id])
+  storeId             String            @map("store_id") @db.Uuid
+  store               Store             @relation(fields: [companyId, storeId], references: [companyId, id])
+  connectionId        String            @map("connection_id") @db.Uuid
+  connection          StoreConnection   @relation(fields: [companyId, connectionId], references: [companyId, id])
+  externalId          String            @map("external_id")
+  externalNumber      String            @map("external_number")
+  sourcePlatform      StorePlatform     @map("source_platform")
+  sourceStatus        Json              @map("source_status") @db.JsonB
+  sourceCreatedAt     DateTime?         @map("source_created_at") @db.Timestamptz(6)
+  sourceUpdatedAt     DateTime?         @map("source_updated_at") @db.Timestamptz(6)
+  paymentStatus       PaymentStatus     @map("payment_status")
+  fulfilmentStatus    FulfilmentStatus  @map("fulfilment_status")
+  integrationStatus   IntegrationStatus @map("integration_status")
+  reviewReason        String?           @map("review_reason")
+  attentionReasons    String[]          @default([]) @map("attention_reasons")
+  customer            Json?             @db.JsonB
+  recipient           Json?             @db.JsonB
+  billingAddress      Json?             @map("billing_address") @db.JsonB
+  deliveryMethod      DeliveryMethod    @map("delivery_method")
+  shippingLine        Json?             @map("shipping_line") @db.JsonB
+  giftMessage         String?           @map("gift_message") @db.Text
+  giftMessageMeta     Json?             @map("gift_message_meta") @db.JsonB
+  customerNote        String?           @map("customer_note") @db.Text
+  currency            String
+  subtotal            Decimal           @db.Decimal(19, 2)
+  shippingTotal       Decimal           @map("shipping_total") @db.Decimal(19, 2)
+  taxTotal            Decimal           @map("tax_total") @db.Decimal(19, 2)
+  total               Decimal           @db.Decimal(19, 2)
+  assignedToUserId    String?           @map("assigned_to_user_id") @db.Uuid
+  assignedTo          UserAccount?      @relation("OrderAssignedTo", fields: [assignedToUserId], references: [id])
+  version             Int               @default(0)
+  createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  lines    SalesOrderLine[]
+  notes    OrderNote[]
+  invoices Invoice[]
+
+  @@unique([companyId, id])
+  @@unique([companyId, connectionId, externalId])
+  @@map("sales_order")
+}
+
+model SalesOrderLine {
+  id             String     @id @default(uuid(7)) @db.Uuid
+  companyId      String     @map("company_id") @db.Uuid
+  company        Company    @relation(fields: [companyId], references: [id])
+  orderId        String     @map("order_id") @db.Uuid
+  order          SalesOrder @relation(fields: [companyId, orderId], references: [companyId, id])
+  externalLineId String?    @map("external_line_id")
+  sku            String?
+  title          String
+  variantTitle   String?    @map("variant_title")
+  quantity       Decimal    @db.Decimal(19, 4)
+  unitPrice      Decimal    @map("unit_price") @db.Decimal(19, 4)
+  total          Decimal    @db.Decimal(19, 2)
+
+  @@map("sales_order_line")
+}
+
+model OrderNote {
+  id           String      @id @default(uuid(7)) @db.Uuid
+  companyId    String      @map("company_id") @db.Uuid
+  company      Company     @relation(fields: [companyId], references: [id])
+  orderId      String      @map("order_id") @db.Uuid
+  order        SalesOrder  @relation(fields: [companyId, orderId], references: [companyId, id])
+  authorUserId String      @map("author_user_id") @db.Uuid
+  author       UserAccount @relation(fields: [authorUserId], references: [id])
+  body         String      @db.Text
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("order_note")
+}
+
+model StoredFile {
+  id            String         @id @default(uuid(7)) @db.Uuid
+  companyId     String         @map("company_id") @db.Uuid
+  company       Company        @relation(fields: [companyId], references: [id])
+  kind          StoredFileKind
+  storageKey    String         @unique @map("storage_key")
+  contentType   String         @map("content_type")
+  sizeBytes     Int            @map("size_bytes")
+  sha256        String
+  sourceType    String?        @map("source_type")
+  sourceId      String?        @map("source_id") @db.Uuid
+  sourceVersion Int?           @map("source_version")
+  createdById   String         @map("created_by") @db.Uuid
+  createdBy     UserAccount    @relation("FileCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  printJobs PrintJob[]
+
+  @@unique([companyId, id])
+  @@map("stored_file")
+}
+
+/// line_height is not specified in the plan. The seed uses 1.2.
+model GiftMessageTemplate {
+  id             String             @id @default(uuid(7)) @db.Uuid
+  companyId      String             @map("company_id") @db.Uuid
+  company        Company            @relation(fields: [companyId], references: [id])
+  name           String
+  pageWidthMm    Decimal            @map("page_width_mm") @db.Decimal(6, 2)
+  pageHeightMm   Decimal            @map("page_height_mm") @db.Decimal(6, 2)
+  marginTopMm    Decimal            @map("margin_top_mm") @db.Decimal(6, 2)
+  marginRightMm  Decimal            @map("margin_right_mm") @db.Decimal(6, 2)
+  marginBottomMm Decimal            @map("margin_bottom_mm") @db.Decimal(6, 2)
+  marginLeftMm   Decimal            @map("margin_left_mm") @db.Decimal(6, 2)
+  fontSizePt     Decimal            @map("font_size_pt") @db.Decimal(6, 2)
+  minFontSizePt  Decimal            @map("min_font_size_pt") @db.Decimal(6, 2)
+  lineHeight     Decimal            @map("line_height") @db.Decimal(6, 3)
+  align          GiftAlign
+  verticalAlign  GiftVerticalAlign  @map("vertical_align")
+  isDefault      Boolean            @default(false) @map("is_default")
+
+  @@map("gift_message_template")
+}
+
+model Printer {
+  id                String          @id @default(uuid(7)) @db.Uuid
+  companyId         String          @map("company_id") @db.Uuid
+  company           Company         @relation(fields: [companyId], references: [id])
+  locationId        String          @map("location_id") @db.Uuid
+  location          Location        @relation(fields: [companyId, locationId], references: [companyId, id])
+  provider          PrinterProvider
+  externalPrinterId String          @map("external_printer_id")
+  name              String
+  description       String?
+  paperSizes        String[]        @map("paper_sizes")
+  status            PrinterStatus   @default(unknown)
+  lastSeenAt        DateTime?       @map("last_seen_at") @db.Timestamptz(6)
+
+  mappings PrinterMapping[]
+  jobs     PrintJob[]
+
+  @@unique([companyId, id])
+  @@map("printer")
+}
+
+model PrinterMapping {
+  id           String            @id @default(uuid(7)) @db.Uuid
+  companyId    String            @map("company_id") @db.Uuid
+  company      Company           @relation(fields: [companyId], references: [id])
+  locationId   String            @map("location_id") @db.Uuid
+  location     Location          @relation(fields: [companyId, locationId], references: [companyId, id])
+  documentType PrintDocumentType @map("document_type")
+  printerId    String            @map("printer_id") @db.Uuid
+  printer      Printer           @relation(fields: [companyId, printerId], references: [companyId, id])
+  paperSize    String            @map("paper_size")
+  copies       Int               @default(1)
+
+  @@unique([companyId, locationId, documentType])
+  @@map("printer_mapping")
+}
+
+model PrintJob {
+  id              String            @id @default(uuid(7)) @db.Uuid
+  companyId       String            @map("company_id") @db.Uuid
+  company         Company           @relation(fields: [companyId], references: [id])
+  printerId       String            @map("printer_id") @db.Uuid
+  printer         Printer           @relation(fields: [companyId, printerId], references: [companyId, id])
+  documentType    PrintDocumentType @map("document_type")
+  sourceType      PrintSourceType   @map("source_type")
+  sourceId        String            @map("source_id") @db.Uuid
+  sourceVersion   Int               @map("source_version")
+  fileId          String?           @map("file_id") @db.Uuid
+  file            StoredFile?       @relation(fields: [companyId, fileId], references: [companyId, id])
+  copies          Int               @default(1)
+  paperSize       String            @map("paper_size")
+  status          PrintJobStatus    @default(queued)
+  isReprint       Boolean           @default(false) @map("is_reprint")
+  reprintOfId     String?           @map("reprint_of_id") @db.Uuid
+  reprintOf       PrintJob?         @relation("Reprint", fields: [companyId, reprintOfId], references: [companyId, id])
+  reprints        PrintJob[]        @relation("Reprint")
+  reprintReason   String?           @map("reprint_reason")
+  idempotencyKey  String            @map("idempotency_key")
+  providerJobId   String?           @map("provider_job_id")
+  providerState   String?           @map("provider_state")
+  requestedById   String            @map("requested_by") @db.Uuid
+  requestedBy     UserAccount       @relation("PrintRequestedBy", fields: [requestedById], references: [id])
+  queueJobId      String?           @map("queue_job_id") @db.Uuid
+  queueJob        Job?              @relation(fields: [queueJobId], references: [id])
+  attempts        Int               @default(0)
+  lastError       String?           @map("last_error")
+  correlationId   String            @map("correlation_id")
+  submittedAt     DateTime?         @map("submitted_at") @db.Timestamptz(6)
+  completedAt     DateTime?         @map("completed_at") @db.Timestamptz(6)
+  confirmedById   String?           @map("confirmed_by") @db.Uuid
+  confirmedBy     UserAccount?      @relation("PrintConfirmedBy", fields: [confirmedById], references: [id])
+  confirmedAt     DateTime?         @map("confirmed_at") @db.Timestamptz(6)
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([companyId, id])
+  @@unique([companyId, idempotencyKey])
+  @@map("print_job")
+}
+
+model AuditEvent {
+  id            String        @id @default(uuid(7)) @db.Uuid
+  companyId     String?       @map("company_id") @db.Uuid
+  company       Company?      @relation(fields: [companyId], references: [id])
+  occurredAt    DateTime      @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  actorType     ActorType     @map("actor_type")
+  actorId       String?       @map("actor_id") @db.Uuid
+  actorLabel    String?       @map("actor_label")
+  action        String
+  objectType    String        @map("object_type")
+  objectId      String?       @map("object_id") @db.Uuid
+  outcome       AuditOutcome
+  correlationId String        @map("correlation_id")
+  ip            String?       @db.Inet
+  userAgent     String?       @map("user_agent")
+  details       Json          @default("{}") @db.JsonB
+
+  @@map("audit_event")
+}

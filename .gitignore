@@ -147,3 +147,21 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Local runtime output (mock prints, milestone state)
+var/
+
+# Nx
+.nx/
+
+# Playwright
+playwright-report/
+test-results/
+blob-report/
+
+# Prisma client
+packages/db/src/generated/
+
+# Generated PDFs. Fixture PDFs stay tracked.
+*.pdf
+!**/fixtures/**/*.pdf

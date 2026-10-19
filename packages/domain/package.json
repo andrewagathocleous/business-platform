@@ -1,0 +1,16 @@
+{
+  "name": "@bp/domain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "commonjs",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "decimal.js": "10.6.0",
+    "zod": "4.6.7"
+  }
+}
