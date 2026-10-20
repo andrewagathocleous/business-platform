@@ -60,7 +60,9 @@ jobs:
         run: pnpm test:integration
       - name: Build
         run: pnpm build
-      - name: Smoke-check built packages
+      - name: Smoke-check the built API
+        env:
+          DATABASE_URL_TEST: postgresql://bp_app:ci-app-password@127.0.0.1:5432/business_platform_test
         run: node tools/smoke-dist.mjs
       - name: gitleaks
         uses: gitleaks/gitleaks-action@v2

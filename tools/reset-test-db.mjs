@@ -3,7 +3,11 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import pg from 'pg';
 import { applyAppDatabaseAcl } from './db-acl.mjs';
-import { databaseName, refuseUnlessTestDatabase } from './test-db-guard.mjs';
+import {
+  assertEnvConnectionsTargetTestDatabase,
+  databaseName,
+  refuseUnlessTestDatabase,
+} from './test-db-guard.mjs';
 
 loadEnv({ path: resolve(import.meta.dirname, '../.env') });
 
@@ -45,6 +49,7 @@ await admin.query(`CREATE DATABASE ${pg.escapeIdentifier(database)} OWNER bp_own
 await admin.end();
 
 await applyAppDatabaseAcl({ host, port, user, password, database });
+await assertEnvConnectionsTargetTestDatabase();
 
 const result = spawnSync('pnpm', ['--filter', '@bp/db', 'exec', 'prisma', 'migrate', 'deploy'], {
   cwd: resolve(import.meta.dirname, '..'),

@@ -322,6 +322,8 @@ model UserIdentity {
   issuer       String
   subject      String
   tenantId     String?          @map("tenant_id")
+  /// Entra `oid` claim. The column is not named oid: that is a PostgreSQL type.
+  entraOid     String?          @map("entra_oid")
   emailAtLink  String?          @map("email_at_link") @db.Citext
   lastLoginAt  DateTime?        @map("last_login_at") @db.Timestamptz(6)
 
@@ -553,6 +555,7 @@ model Job {
 
   printJobs PrintJob[]
 
+  @@unique([companyId, id])
   @@index([status, runAfter])
   @@map("job")
 }
@@ -1093,7 +1096,7 @@ model PrintJob {
   requestedById   String            @map("requested_by") @db.Uuid
   requestedBy     UserAccount       @relation("PrintRequestedBy", fields: [requestedById], references: [id])
   queueJobId      String?           @map("queue_job_id") @db.Uuid
-  queueJob        Job?              @relation(fields: [queueJobId], references: [id])
+  queueJob        Job?              @relation(fields: [companyId, queueJobId], references: [companyId, id])
   attempts        Int               @default(0)
   lastError       String?           @map("last_error")
   correlationId   String            @map("correlation_id")

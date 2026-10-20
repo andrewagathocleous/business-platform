@@ -4,6 +4,7 @@
   "sourceRoot": "apps/api/src",
   "projectType": "application",
   "tags": ["type:app"],
+  "implicitDependencies": ["db", "domain"],
   "targets": {
     "lint": {
       "executor": "nx:run-commands",
@@ -21,6 +22,13 @@
       "executor": "nx:run-commands",
       "options": {
         "command": "vitest run",
+        "cwd": "apps/api"
+      }
+    },
+    "test-integration": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "vitest run --config vitest.integration.config.ts",
         "cwd": "apps/api"
       }
     },

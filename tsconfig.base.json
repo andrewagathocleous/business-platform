@@ -4,6 +4,7 @@
     "target": "ES2023",
     "module": "commonjs",
     "moduleResolution": "bundler",
+    "customConditions": ["bp-source"],
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,

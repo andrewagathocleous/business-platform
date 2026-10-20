@@ -3,14 +3,34 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "dev": "tsx src/main.ts",
-    "dev:worker": "tsx src/main.worker.ts"
+    "dev": "tsx --conditions=bp-source src/main.ts",
+    "dev:worker": "tsx --conditions=bp-source src/main.worker.ts",
+    "openapi:export": "tsx --conditions=bp-source src/export-openapi.ts"
   },
   "dependencies": {
+    "@bp/db": "workspace:*",
+    "@bp/domain": "workspace:*",
     "@nestjs/common": "12.1.3",
     "@nestjs/core": "12.1.3",
     "@nestjs/platform-express": "12.1.3",
+    "@nestjs/swagger": "12.0.2",
+    "@nestjs/throttler": "6.7.1",
+    "dotenv": "18.0.8",
+    "express": "5.2.1",
+    "helmet": "8.3.0",
+    "nestjs-pino": "5.3.1",
+    "openid-client": "6.8.8",
+    "pino": "10.4.0",
+    "pino-http": "11.0.0",
     "reflect-metadata": "0.2.2",
-    "rxjs": "7.8.2"
+    "rxjs": "7.8.2",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "12.1.3",
+    "@types/express": "5.0.6",
+    "@types/supertest": "7.2.1",
+    "oauth2-mock-server": "9.3.0",
+    "supertest": "7.3.1"
   }
 }

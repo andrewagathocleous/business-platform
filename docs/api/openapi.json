@@ -1,0 +1,535 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/api/auth/dev/users": {
+      "get": {
+        "operationId": "AuthController_devUsers",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Seed users with a membership summary"
+          }
+        },
+        "summary": "Fictional users for the development login picker",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/dev/login": {
+      "post": {
+        "operationId": "AuthController_devLoginRoute",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Development login by fictional email",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/oidc/start": {
+      "get": {
+        "operationId": "AuthController_oidcStart",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Start the Entra authorization-code flow",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/oidc/callback": {
+      "get": {
+        "operationId": "AuthController_oidcCallback",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Complete the Entra authorization-code flow",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "operationId": "AuthController_logout",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "Revoke the staff session and clear its cookies",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/me": {
+      "get": {
+        "operationId": "MeController_me",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Active memberships, or every active company for a platform owner"
+          }
+        },
+        "summary": "The signed-in user, authorised companies and session expiry",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/c/{companyId}/context": {
+      "get": {
+        "operationId": "CompanyController_context",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read-only company context for the signed-in member"
+          }
+        },
+        "summary": "Company summary, caller grants, switches and MFA step-up",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/members": {
+      "get": {
+        "operationId": "CompanyController_members",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List company members and their role assignments",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/members/{membershipId}": {
+      "get": {
+        "operationId": "CompanyController_member",
+        "parameters": [
+          {
+            "name": "membershipId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "One membership in this company",
+        "tags": [
+          "company"
+        ]
+      },
+      "patch": {
+        "operationId": "CompanyController_updateMember",
+        "parameters": [
+          {
+            "name": "membershipId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Change a member role assignment or membership status",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/members/{membershipId}/revoke-sessions": {
+      "post": {
+        "operationId": "CompanyController_revokeSessions",
+        "parameters": [
+          {
+            "name": "membershipId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Revoke another member's sessions",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/invitations": {
+      "post": {
+        "operationId": "CompanyController_invite",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create an invitation and return the accept link once. No email is sent.",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/roles": {
+      "get": {
+        "operationId": "CompanyController_roles",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List role bundles copied into this company",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/audit-events": {
+      "get": {
+        "operationId": "CompanyController_auditEvents",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Paginated audit events for this company",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/service-identities": {
+      "get": {
+        "operationId": "CompanyController_listServiceIdentities",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List automation tokens. Secrets are never returned.",
+        "tags": [
+          "company"
+        ]
+      },
+      "post": {
+        "operationId": "CompanyController_createServiceIdentity",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create an automation token. The token is returned once.",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/service-identities/{id}": {
+      "delete": {
+        "operationId": "CompanyController_revokeServiceIdentity",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "Revoke an automation token",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/platform/companies": {
+      "get": {
+        "operationId": "PlatformController_companies",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Every company, including ones the owner has no membership in"
+          }
+        },
+        "summary": "List companies. Platform owner only.",
+        "tags": [
+          "platform"
+        ]
+      },
+      "post": {
+        "operationId": "PlatformController_createCompany",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create a company, copy role templates, add example tax codes and set switches off",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/platform/switches/outbound.all": {
+      "put": {
+        "operationId": "PlatformController_outboundAll",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Set the global outbound.all switch. Platform owner only.",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/automation/v1/c/{companyId}/ping": {
+      "get": {
+        "operationId": "AutomationController_ping",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The service identity is accepted for this company"
+          }
+        },
+        "summary": "Automation ping. Bearer service token only; requires store.events.ingest.",
+        "tags": [
+          "automation"
+        ]
+      }
+    },
+    "/api/health/live": {
+      "get": {
+        "operationId": "HealthController_live",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Process is up",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/api/health/ready": {
+      "get": {
+        "operationId": "HealthController_ready",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Database is reachable as bp_app",
+        "tags": [
+          "health"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Business Platform API",
+    "description": "Staff and automation HTTP API.",
+    "version": "0.0.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "schemas": {}
+  }
+}

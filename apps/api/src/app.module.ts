@@ -1,9 +1,41 @@
 import { Module } from '@nestjs/common';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { AuditModule } from './audit/audit.module';
+import { AuthorizationModule } from './authz/authorization.module';
+import { AppConfigModule } from './config/config.module';
+import { APP_CONFIG, type AppConfig } from './config/env';
+import { DatabaseModule } from './database/database.module';
+import { AutomationModule } from './automation/automation.module';
+import { HealthModule } from './health/health.module';
+import { ApiExceptionFilter } from './http/exception.filter';
+import { IdentityModule } from './identity/identity.module';
+import { LoggingModule } from './logging/logging.module';
+import { PlatformModule } from './platform/platform.module';
+import { TenancyModule } from './tenancy/tenancy.module';
+import { buildThrottlerOptions } from './throttler/throttler';
 
-/**
- * STUB (Step A). Step B registers config, guards and feature modules.
- * The class is empty on purpose: Nest attaches metadata to the class.
- */
-@Module({})
-// eslint-disable-next-line @typescript-eslint/no-extraneous-class
+@Module({
+  imports: [
+    AppConfigModule,
+    LoggingModule,
+    DatabaseModule,
+    AuditModule,
+    AuthorizationModule,
+    IdentityModule,
+    TenancyModule,
+    PlatformModule,
+    AutomationModule,
+    HealthModule,
+    ThrottlerModule.forRootAsync({
+      imports: [AppConfigModule],
+      inject: [APP_CONFIG],
+      useFactory: (config: AppConfig) => buildThrottlerOptions(config),
+    }),
+  ],
+  providers: [
+    { provide: APP_FILTER, useClass: ApiExceptionFilter },
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+  ],
+})
 export class AppModule {}

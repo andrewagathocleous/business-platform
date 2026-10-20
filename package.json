@@ -24,7 +24,7 @@
     "build": "nx run-many -t build",
     "postinstall": "pnpm --filter @bp/db generate",
     "setup:env": "node tools/setup-env.mjs",
-    "openapi:export": "node -e \"console.error('OpenAPI export is Step B.'); process.exit(1)\""
+    "openapi:export": "pnpm --filter @bp/api openapi:export"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

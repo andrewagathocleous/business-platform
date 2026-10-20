@@ -30,10 +30,12 @@ export default tseslint.config(
       '@nx': nxPlugin,
     },
     rules: {
+      '@typescript-eslint/no-extraneous-class': ['error', { allowWithDecorator: true }],
       '@nx/enforce-module-boundaries': [
         'error',
         {
           enforceBuildableLibDependency: false,
+          allow: ['^.*/tools/test-db-guard\\.mjs$'],
           depConstraints: [
             {
               sourceTag: 'type:domain',

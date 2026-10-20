@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { can, canGrant, grantsForAssignment, type Grant } from './evaluate';
+import {
+  can,
+  canGrant,
+  decideAccess,
+  grantsForAssignment,
+  membershipEscalationDenial,
+  permittedScopeFilter,
+  type Grant,
+  type MembershipEscalation,
+} from './evaluate';
 import { BASE_TEMPLATE, roleTemplate } from './role-templates';
 
 const STORE_A = '11111111-1111-7111-8111-111111111111';
@@ -95,5 +104,71 @@ describe('canGrant', () => {
     expect(canGrant([grant('order.view', 'store', STORE_A)], { permissions: ['order.view'] }, { type: 'company', id: null })).toBe(
       false,
     );
+  });
+
+  it('refuses self-modification, platform-owner targets and the last member.manage holder', () => {
+    const actor = companyGrants(administrator.permissions);
+    const otherAdmin: MembershipEscalation = {
+      actorUserId: 'actor',
+      actorIsPlatformOwner: false,
+      targetUserId: 'target',
+      targetIsPlatformOwner: false,
+      otherActiveMemberManageCount: 1,
+      withdrawsMemberManage: true,
+    };
+    expect(canGrant(actor, fulfilment, { type: 'company', id: null }, otherAdmin)).toBe(true);
+    expect(membershipEscalationDenial(otherAdmin)).toBeNull();
+
+    const self: MembershipEscalation = { ...otherAdmin, targetUserId: 'actor', otherActiveMemberManageCount: 0 };
+    expect(membershipEscalationDenial(self)).toBe('self_modification');
+    expect(canGrant(actor, fulfilment, { type: 'company', id: null }, self)).toBe(false);
+    expect(membershipEscalationDenial({ ...self, actorIsPlatformOwner: true })).toBeNull();
+
+    const ownerTarget: MembershipEscalation = { ...otherAdmin, targetIsPlatformOwner: true, withdrawsMemberManage: false };
+    expect(membershipEscalationDenial(ownerTarget)).toBe('platform_owner_target');
+    expect(canGrant(actor, fulfilment, { type: 'company', id: null }, ownerTarget)).toBe(false);
+    expect(membershipEscalationDenial({ ...ownerTarget, actorIsPlatformOwner: true })).toBeNull();
+
+    const lastAdmin: MembershipEscalation = { ...otherAdmin, otherActiveMemberManageCount: 0 };
+    expect(membershipEscalationDenial(lastAdmin)).toBe('last_member_manage');
+    expect(canGrant(actor, fulfilment, { type: 'company', id: null }, lastAdmin)).toBe(false);
+    expect(membershipEscalationDenial({ ...lastAdmin, actorIsPlatformOwner: true })).toBeNull();
+    expect(membershipEscalationDenial({ ...lastAdmin, withdrawsMemberManage: false })).toBeNull();
+  });
+
+  it('still applies rule 1 when escalation would allow the change', () => {
+    const escalation: MembershipEscalation = {
+      actorUserId: 'actor',
+      actorIsPlatformOwner: true,
+      targetUserId: 'actor',
+      targetIsPlatformOwner: false,
+      otherActiveMemberManageCount: 0,
+      withdrawsMemberManage: true,
+    };
+    expect(canGrant([grant('order.view', 'company')], administrator, { type: 'company', id: null }, escalation)).toBe(false);
+  });
+});
+
+describe('decideAccess', () => {
+  it('forbids a company-level miss and hides an out-of-scope store', () => {
+    const grants = [grant('order.view', 'store', STORE_A), grant('company.view', 'company')];
+    expect(decideAccess(grants, 'company.view')).toBe('allow');
+    expect(decideAccess(grants, 'member.view')).toBe('forbidden');
+    expect(decideAccess(grants, 'order.view', null)).toBe('not_found');
+    expect(decideAccess(grants, 'order.view', [{ type: 'store', id: STORE_A }])).toBe('allow');
+    expect(decideAccess(grants, 'order.view', [{ type: 'store', id: STORE_B }])).toBe('not_found');
+    expect(decideAccess(grants, 'invoice.view', [{ type: 'store', id: STORE_A }])).toBe('forbidden');
+    expect(decideAccess([grant('order.view', 'company')], 'order.view', [{ type: 'store', id: STORE_B }])).toBe('allow');
+  });
+});
+
+describe('permittedScopeFilter', () => {
+  it('returns every id for a company grant and only the granted stores otherwise', () => {
+    expect(permittedScopeFilter([grant('order.view', 'company')], 'order.view', 'store')).toEqual({ kind: 'all' });
+    expect(permittedScopeFilter([grant('order.view', 'store', STORE_A)], 'order.view', 'store')).toEqual({
+      kind: 'ids',
+      ids: [STORE_A],
+    });
+    expect(permittedScopeFilter([grant('catalog.view', 'company')], 'order.view', 'store')).toEqual({ kind: 'none' });
   });
 });

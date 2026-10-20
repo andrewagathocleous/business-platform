@@ -2,14 +2,20 @@ import { randomUUID } from 'node:crypto';
 import { config as loadEnv } from 'dotenv';
 import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  assertDatabaseNameIsTest,
+  assertTestDatabaseUrls,
+} from '../../../tools/test-db-guard.mjs';
 import { createPrismaClient, type PrismaClient } from './client';
 import { RLS_EXEMPT_TABLES } from './rls-tables';
 import { TenantDb, type TenantTransaction } from './tenant-db';
 
 loadEnv({ path: resolve(process.cwd(), '.env') });
 loadEnv({ path: resolve(process.cwd(), '../../.env') });
-assertTestDatabase('DATABASE_URL');
-assertTestDatabase('DATABASE_URL_OWNER');
+const testDatabaseRefusal = assertTestDatabaseUrls();
+if (testDatabaseRefusal) {
+  throw new Error(testDatabaseRefusal);
+}
 
 const RLS_TABLES = [
   'audit_event',
@@ -59,6 +65,8 @@ describe('row level security', () => {
     expect(new URL(ownerUrl).username).toBe('bp_owner');
     app = createPrismaClient(appUrl);
     owner = createPrismaClient(ownerUrl);
+    await assertConnectedDatabase(app, 'DATABASE_URL');
+    await assertConnectedDatabase(owner, 'DATABASE_URL_OWNER');
     appTenant = new TenantDb(app);
     ownerTenant = new TenantDb(owner);
 
@@ -491,6 +499,45 @@ describe('row level security', () => {
     ).rejects.toThrow(/foreign key/i);
   });
 
+  it('rejects a print job that points at another company queue job', async () => {
+    const jobA = await app.job.create({
+      data: {
+        companyId: companyA,
+        type: 'print',
+        payload: { marker: 'a' },
+        correlationId: randomUUID(),
+        idempotencyKey: `queue-a-${randomUUID()}`,
+      },
+    });
+    await app.job.create({
+      data: {
+        companyId: companyB,
+        type: 'print',
+        payload: { marker: 'b' },
+        correlationId: randomUUID(),
+        idempotencyKey: `queue-b-${randomUUID()}`,
+      },
+    });
+
+    await expect(
+      appTenant.run({ companyId: companyA, actor: userId, correlationId: randomUUID() }, (tx) =>
+        tx.$executeRaw`
+          UPDATE print_job
+          SET queue_job_id = (
+            SELECT id FROM job WHERE company_id <> app_current_company() LIMIT 1
+          )
+        `,
+      ),
+    ).rejects.toThrow(/foreign key/i);
+
+    await appTenant.run({ companyId: companyA, actor: userId, correlationId: randomUUID() }, (tx) =>
+      tx.printJob.update({
+        where: { id: graphA.print_job },
+        data: { queueJobId: jobA.id },
+      }),
+    );
+  });
+
   it('keeps company-scoped parent references inside the same company', async () => {
     const rows = await app.$queryRaw<{ table_name: string; definition: string }[]>`
       SELECT conrelid::regclass::text AS table_name,
@@ -599,13 +646,14 @@ function requiredEnv(name: string): string {
   return value;
 }
 
-function assertTestDatabase(name: 'DATABASE_URL' | 'DATABASE_URL_OWNER'): void {
-  const database = decodeURIComponent(new URL(requiredEnv(name)).pathname.replace(/^\//, ''));
-  if (!database.endsWith('_test')) {
-    throw new Error(
-      `Refusing to run integration tests: ${name} selects database "${database}", which does not end with "_test". This would write into a non-test database.`,
-    );
-  }
+async function assertConnectedDatabase(
+  client: PrismaClient,
+  label: 'DATABASE_URL' | 'DATABASE_URL_OWNER',
+): Promise<void> {
+  const rows = await client.$queryRaw<{ current_database: string }[]>`
+    SELECT current_database() AS current_database
+  `;
+  assertDatabaseNameIsTest(rows[0]?.current_database, label);
 }
 
 function postgresAdminUrl(databaseUrl: string): string {
@@ -652,6 +700,7 @@ const COMPANY_SCOPED_PARENTS = [
   'integration_credential',
   'invoice',
   'invoice_series',
+  'job',
   'location',
   'printer',
   'print_job',
@@ -705,6 +754,7 @@ const COMPOSITE_FOREIGN_KEYS: ReadonlyArray<readonly [string, string]> = [
   ['print_job', 'FOREIGN KEY (company_id, printer_id) REFERENCES printer(company_id, id)'],
   ['print_job', 'FOREIGN KEY (company_id, file_id) REFERENCES stored_file(company_id, id)'],
   ['print_job', 'FOREIGN KEY (company_id, reprint_of_id) REFERENCES print_job(company_id, id)'],
+  ['print_job', 'FOREIGN KEY (company_id, queue_job_id) REFERENCES job(company_id, id)'],
 ];
 
 async function count(client: PrismaClient, table: string): Promise<number> {

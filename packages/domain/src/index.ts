@@ -43,8 +43,24 @@ export type {
 } from './authz/permissions';
 export { ALL_ROLE_TEMPLATES, BASE_TEMPLATE, ROLE_TEMPLATES, roleTemplate } from './authz/role-templates';
 export type { RoleTemplate, TemplateKey } from './authz/role-templates';
-export { can, canGrant, grantsForAssignment, SCOPE_TYPES } from './authz/evaluate';
-export type { Grant, ResourceScope, ScopeType } from './authz/evaluate';
+export {
+  can,
+  canGrant,
+  decideAccess,
+  grantsForAssignment,
+  membershipEscalationDenial,
+  permittedScopeFilter,
+  SCOPE_TYPES,
+} from './authz/evaluate';
+export type {
+  AccessDecision,
+  EscalationDenial,
+  Grant,
+  MembershipEscalation,
+  ResourceScope,
+  ScopeFilter,
+  ScopeType,
+} from './authz/evaluate';
 
 export { decimalString, documentLineSchema, documentTotalsSchema } from './contracts/document';
 export type { DocumentLineDto, DocumentTotalsDto } from './contracts/document';

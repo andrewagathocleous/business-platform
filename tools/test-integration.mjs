@@ -29,4 +29,13 @@ const test = spawnSync('pnpm', ['exec', 'nx', 'run', 'db:test-integration', '--o
   stdio: 'inherit',
   env: process.env,
 });
-process.exit(test.status ?? 1);
+if (test.status !== 0) {
+  process.exit(test.status ?? 1);
+}
+
+const api = spawnSync('pnpm', ['exec', 'nx', 'run', 'api:test-integration', '--output-style=static'], {
+  cwd: root,
+  stdio: 'inherit',
+  env: process.env,
+});
+process.exit(api.status ?? 1);

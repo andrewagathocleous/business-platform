@@ -6,6 +6,7 @@ packages:
 allowBuilds:
   "@parcel/watcher": true
   "@prisma/engines": true
+  "@scarf/scarf": false
   "@swc/core": true
   esbuild: true
   nx: true

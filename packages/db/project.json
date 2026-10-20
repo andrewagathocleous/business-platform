@@ -4,6 +4,7 @@
   "sourceRoot": "packages/db/src",
   "projectType": "library",
   "tags": ["type:data"],
+  "implicitDependencies": ["domain"],
   "targets": {
     "lint": {
       "executor": "nx:run-commands",

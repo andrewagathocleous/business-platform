@@ -101,6 +101,142 @@ describe('sanitizeWorkflow', () => {
     ).toThrow(/Possible secret/);
   });
 
+  it('rejects an authorization expression that only mentions $env', () => {
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [
+          {
+            parameters: {
+              headerParameters: {
+                parameters: [
+                  {
+                    name: 'Authorization',
+                    value: '={{ "$env" && "Bearer fictional-token-1234" }}',
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      }),
+    ).toThrow(/Possible secret/);
+  });
+
+  it('rejects a password inside expression-wrapped JSON', () => {
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [{ parameters: { jsonBody: '={{ {"password":"fictional-password"} }}' } }],
+      }),
+    ).toThrow(/Possible secret/);
+  });
+
+  it('rejects credentials in a URL userinfo', () => {
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [{ parameters: { url: 'https://demo:secret@example.test/data' } }],
+      }),
+    ).toThrow(/Possible secret/);
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [{ parameters: { url: 'https://demo@example.test/data' } }],
+      }),
+    ).toThrow(/Possible secret/);
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [{ parameters: { url: '={{ "https://demo:secret@example.test/data" }}' } }],
+      }),
+    ).toThrow(/Possible secret/);
+  });
+
+  it('rejects bearer and high-entropy string literals inside expressions', () => {
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [{ parameters: { note: '={{ "Bearer fictional-token-1234" }}' } }],
+      }),
+    ).toThrow(/Possible secret/);
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [
+          {
+            parameters: {
+              note: '={{ "fictional-review-token-12345678901234567890" }}',
+            },
+          },
+        ],
+      }),
+    ).toThrow(/Possible secret/);
+  });
+
+  it('rejects nested JSON secrets, including literals inside arrays', () => {
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [{ parameters: { jsonBody: '{"auth":{"token":"literal-token"}}' } }],
+      }),
+    ).toThrow(/Possible secret/);
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [
+          {
+            parameters: {
+              body: '{"auth":{"password":["fictional-password"]}}',
+            },
+          },
+        ],
+      }),
+    ).toThrow(/Possible secret/);
+  });
+
+  it('rejects a literal secret in a URL query parameter', () => {
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [{ parameters: { url: 'https://example.test/?api_key=literal-key' } }],
+      }),
+    ).toThrow(/Possible secret/);
+  });
+
+  it('allows ordinary API URLs and company URLs that contain a UUID', () => {
+    const result = sanitizeWorkflow({
+      nodes: [
+        {
+          parameters: {
+            graph: 'https://graph.microsoft.com/v1.0/me/messages',
+            company: 'https://example.test/companies/018f1a2b-3c4d-7e5f-8a9b-0c1d2e3f4a5b/orders',
+          },
+        },
+      ],
+    });
+    expect(result).toEqual({
+      nodes: [
+        {
+          parameters: {
+            graph: 'https://graph.microsoft.com/v1.0/me/messages',
+            company: 'https://example.test/companies/018f1a2b-3c4d-7e5f-8a9b-0c1d2e3f4a5b/orders',
+          },
+        },
+      ],
+    });
+  });
+
+  it('rejects a long non-UUID path segment and a high-entropy query value', () => {
+    const segment = 'Ab9xK2mQ7pL4nR8sT1uV6wY3zC5dE0fGhIj';
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [{ parameters: { url: `https://example.test/${segment}` } }],
+      }),
+    ).toThrow(/Possible secret/);
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [
+          {
+            parameters: {
+              url: 'https://example.test/?note=Ab9xK2mQ7pL4nR8sT1uV6wY3zC5dE0fG',
+            },
+          },
+        ],
+      }),
+    ).toThrow(/Possible secret/);
+  });
+
   it('allows credential and env expressions on sensitive headers', () => {
     const result = sanitizeWorkflow({
       nodes: [
@@ -110,6 +246,7 @@ describe('sanitizeWorkflow', () => {
               parameters: [
                 { name: 'Authorization', value: '={{ $credentials.httpHeaderAuth.value }}' },
                 { name: 'X-Api-Key', value: '={{ $env.SHOPIFY_TOKEN }}' },
+                { name: 'X-Auth-Token', value: "={{ $env['SHOPIFY_TOKEN'] }}" },
                 { name: 'Content-Type', value: 'application/json' },
               ],
             },
@@ -125,6 +262,7 @@ describe('sanitizeWorkflow', () => {
               parameters: [
                 { name: 'Authorization', value: '={{ $credentials.httpHeaderAuth.value }}' },
                 { name: 'X-Api-Key', value: '={{ $env.SHOPIFY_TOKEN }}' },
+                { name: 'X-Auth-Token', value: "={{ $env['SHOPIFY_TOKEN'] }}" },
                 { name: 'Content-Type', value: 'application/json' },
               ],
             },

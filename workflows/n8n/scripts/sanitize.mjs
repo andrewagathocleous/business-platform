@@ -73,7 +73,7 @@ function walk(value, path) {
         SECRET_KEY.test(key) &&
         typeof child === 'string' &&
         child.length > 0 &&
-        !isAllowedSecretExpression(child)
+        !isExactSecretReference(child)
       ) {
         throw new Error(`Possible secret at ${path.concat(key).join('.')}`);
       }
@@ -97,7 +97,7 @@ function assertSensitiveParameter(value, path) {
   if (!isSensitiveParameterName(value.name)) {
     return;
   }
-  if (typeof value.value === 'string' && isAllowedSecretExpression(value.value)) {
+  if (typeof value.value === 'string' && isExactSecretReference(value.value)) {
     return;
   }
   throw new Error(`Possible secret at ${path.concat('value').join('.')}`);
@@ -115,12 +115,51 @@ function isSensitiveParameterName(name) {
   );
 }
 
-function isAllowedSecretExpression(value) {
+const EXACT_SECRET_REFERENCE =
+  /^=\{\{\s*\$(env|credentials)(\.[A-Za-z_][A-Za-z0-9_]*|\[['"][^'"]+['"]\])+\s*\}\}$/;
+const EXPRESSION = /^=?\{\{[\s\S]*\}\}$/;
+const STRING_LITERAL = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g;
+
+function isExactSecretReference(value) {
+  return EXACT_SECRET_REFERENCE.test(value.trim());
+}
+
+function isExpression(value) {
+  return EXPRESSION.test(value.trim());
+}
+
+function expressionStringLiterals(value) {
+  const literals = [];
+  for (const match of value.matchAll(new RegExp(STRING_LITERAL.source, 'g'))) {
+    const token = match[0];
+    literals.push(token.slice(1, -1).replace(/\\(.)/g, '$1'));
+  }
+  return literals;
+}
+
+function tryParseJsonContainer(value) {
   const trimmed = value.trim();
-  if (!/^=?\{\{[\s\S]*\}\}$/.test(trimmed)) {
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed !== null && typeof parsed === 'object') {
+      return parsed;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function isHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
     return false;
   }
-  return /\$credentials\b/.test(trimmed) || /\$env\b/.test(trimmed);
 }
 
 function assertLiteralSecret(value, path) {
@@ -128,8 +167,23 @@ function assertLiteralSecret(value, path) {
   if (SECRET_VALUE.test(value)) {
     throw new Error(`Possible secret at ${at}`);
   }
-  if (!path.includes('parameters') || isAllowedSecretExpression(value)) {
+  if (isExactSecretReference(value)) {
     return;
+  }
+  if (isExpression(value)) {
+    assertExpressionContent(value, at);
+    return;
+  }
+  if (!path.includes('parameters')) {
+    return;
+  }
+  if (isHttpUrl(value)) {
+    assertUrlSecrets(value, at);
+    return;
+  }
+  const json = tryParseJsonContainer(value);
+  if (json !== undefined) {
+    assertJsonSecrets(json, at, false);
   }
   if (
     BEARER_OR_BASIC.test(value) ||
@@ -137,6 +191,103 @@ function assertLiteralSecret(value, path) {
     hasHighEntropyLiteral(value)
   ) {
     throw new Error(`Possible secret at ${at}`);
+  }
+}
+
+function assertExpressionContent(value, at) {
+  assertExpressionLiterals(value, at);
+  const body = expressionBody(value);
+  if (body === undefined) {
+    return;
+  }
+  inspectSecretText(body, at);
+  for (const literal of expressionStringLiterals(body)) {
+    inspectSecretText(literal, at);
+  }
+}
+
+function expressionBody(value) {
+  const match = /^=?\{\{([\s\S]*)\}\}$/.exec(value.trim());
+  return match ? match[1] : undefined;
+}
+
+function assertExpressionLiterals(value, at) {
+  for (const literal of expressionStringLiterals(value)) {
+    if (BEARER_OR_BASIC.test(literal) || hasHighEntropyLiteral(literal)) {
+      throw new Error(`Possible secret at ${at}`);
+    }
+  }
+}
+
+function inspectSecretText(value, at) {
+  if (SECRET_VALUE.test(value) || JSON_SECRET_PROPERTY.test(value)) {
+    throw new Error(`Possible secret at ${at}`);
+  }
+  if (isHttpUrl(value.trim())) {
+    assertUrlSecrets(value.trim(), at);
+  }
+  assertEmbeddedUrls(value, at);
+  const json = tryParseJsonContainer(value);
+  if (json !== undefined) {
+    assertJsonSecrets(json, at, false);
+  }
+}
+
+function assertEmbeddedUrls(value, at) {
+  const matches = value.match(/https?:\/\/[^\s"'<>]+/gi) ?? [];
+  for (const match of matches) {
+    const candidate = match.replace(/[),.;\]]+$/g, '');
+    if (isHttpUrl(candidate)) {
+      assertUrlSecrets(candidate, at);
+    }
+  }
+}
+
+function assertJsonSecrets(value, at, sensitive) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      assertJsonSecrets(item, at, sensitive);
+    }
+    return;
+  }
+  if (value !== null && typeof value === 'object') {
+    for (const [key, child] of Object.entries(value)) {
+      const childSensitive =
+        sensitive || isSensitiveParameterName(key) || SECRET_KEY.test(key);
+      assertJsonSecrets(child, at, childSensitive);
+    }
+    return;
+  }
+  if (!sensitive || typeof value !== 'string' || value.length === 0 || isExactSecretReference(value)) {
+    return;
+  }
+  throw new Error(`Possible secret at ${at}`);
+}
+
+function assertUrlSecrets(value, at) {
+  const url = new URL(value);
+  if (url.username.length > 0 || url.password.length > 0) {
+    throw new Error(`Possible secret at ${at}`);
+  }
+  for (const [name, queryValue] of url.searchParams) {
+    if (
+      isSensitiveParameterName(name) &&
+      queryValue.length > 0 &&
+      !isExactSecretReference(queryValue)
+    ) {
+      throw new Error(`Possible secret at ${at}`);
+    }
+    if (BEARER_OR_BASIC.test(queryValue) || hasHighEntropyLiteral(queryValue)) {
+      throw new Error(`Possible secret at ${at}`);
+    }
+  }
+  for (const segment of url.pathname.split('/')) {
+    if (segment.length <= 32 || UUID.test(segment)) {
+      continue;
+    }
+    if (BEARER_OR_BASIC.test(segment) || hasHighEntropyLiteral(segment)) {
+      throw new Error(`Possible secret at ${at}`);
+    }
   }
 }
 
