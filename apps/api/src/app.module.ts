@@ -7,7 +7,13 @@ import { AppConfigModule } from './config/config.module';
 import { APP_CONFIG, type AppConfig } from './config/env';
 import { DatabaseModule } from './database/database.module';
 import { AutomationModule } from './automation/automation.module';
+import { CatalogModule } from './catalog/catalog.module';
+import { ClientsModule } from './clients/clients.module';
+import { DocumentsModule } from './documents/documents.module';
 import { HealthModule } from './health/health.module';
+import { InvoicesModule } from './invoices/invoices.module';
+import { OrdersModule } from './orders/orders.module';
+import { VaultModule } from './vault/vault.module';
 import { ApiExceptionFilter } from './http/exception.filter';
 import { IdentityModule } from './identity/identity.module';
 import { LoggingModule } from './logging/logging.module';
@@ -26,6 +32,12 @@ import { buildThrottlerOptions } from './throttler/throttler';
     TenancyModule,
     PlatformModule,
     AutomationModule,
+    ClientsModule,
+    DocumentsModule,
+    CatalogModule,
+    InvoicesModule,
+    OrdersModule,
+    VaultModule,
     HealthModule,
     ThrottlerModule.forRootAsync({
       imports: [AppConfigModule],

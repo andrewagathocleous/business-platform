@@ -4,11 +4,12 @@
   "sourceRoot": "packages/integrations/src",
   "projectType": "library",
   "tags": ["type:infra"],
+  "implicitDependencies": ["domain"],
   "targets": {
     "lint": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "eslint packages/integrations"
+        "command": "eslint packages/integrations/src"
       }
     },
     "typecheck": {
@@ -17,10 +18,17 @@
         "command": "tsc -p packages/integrations/tsconfig.json --noEmit"
       }
     },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "vitest run",
+        "cwd": "packages/integrations"
+      }
+    },
     "build": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "tsc -p packages/integrations/tsconfig.json"
+        "command": "tsc -p packages/integrations/tsconfig.build.json"
       }
     }
   }

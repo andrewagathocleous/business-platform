@@ -1,203 +1,94 @@
-# Implementation status
+# STATUS
 
-Last updated: 2026-10-20 (Phase 1 Step B review fixes, uncommitted on `develop`).
-
-Test levels:
-
-- **unit**: domain logic in isolation.
-- **integration**: real Postgres as `bp_app`, plus HTTP tests that boot the Nest app against that database.
-- **e2e**: browser.
-- **mock-tested**: against a mock provider.
-- **sandbox-tested**: against the provider's official test environment.
-- **live-tested**: against a real account.
+What is implemented and verified on `develop`. The Step C run-by-run log through fix round 6 is [docs/history/phase-1-step-c-log.md](history/phase-1-step-c-log.md).
 
 ## Current phase
 
-Phase 1 step A is commit `ca7d578`. Step B (B-1 API skeleton, B-2 staff authentication, B-3 authorisation and tenancy) is in the worktree and is not committed. The planner and reviewer findings on that tree are fixed in the same worktree. Step C is next.
+Phase 1. Steps A (`ca7d578`), B (`271bd1d`) and C are committed on `develop` and pushed. Step C covers C-1, C-2a, C-2b1, C-2b2 and seven review-fix rounds, ending with a whole-step review. Step D (the web app) is next.
 
-## Done
+Fix round 7: print-handler reclaim locks `print_job` then `job`; a gift print in `submitting` or `uncertain` counts as possibly printed; `print.confirm` does not widen the print-job list; printer discovery upserts on `(company_id, provider, external_printer_id)` (migration `20261021150124_printer_identity`); printer mappings upsert on `(company_id, location_id, document_type)`; the n8n sanitiser rejects a sensitive variable initialised with a literal; one HTTP sweep covers every company route that takes an object id; the offline, timeout, held, release, cancel, confirm and reprint printing tests assert the audit action, outcome and correlation id.
 
-| Item | Evidence |
+## What works
+
+Nothing below is sandbox-tested or live-tested.
+
+| Capability | Behaviour | Test level | Main tests |
+|---|---|---|---|
+| Auth and sessions | Dev login, OIDC (mock issuer), CSRF, idle and absolute expiry, invitations, MFA withholding | integration; OIDC mock-tested | `apps/api/src/auth.integration.test.ts`, `apps/api/src/http.integration.test.ts` |
+| Tenancy and permissions | Company URL, membership, deny-by-default, store and location scope, service identities | integration, unit | `apps/api/src/tenancy.integration.test.ts`, `apps/api/src/authz/`, `apps/api/src/isolation.integration.test.ts` |
+| Audit | Append-only. State changes and authorisation denials record actor, company, action, object, outcome and correlation id | integration | the HTTP files above, plus commerce, orders, documents, printing and the vault. RLS rejects update and delete |
+| Clients and catalogue | Clients, contacts, addresses, duplicate check, tax codes, products. Money is decimal strings | integration, unit | `apps/api/src/commerce.integration.test.ts`, `packages/domain/src/money/` |
+| Invoice drafts and the PDF | Draft create, edit, preview, on-demand pdfmake PDF. Totals from `calculateDocumentTotals` | integration, unit | `apps/api/src/commerce.integration.test.ts`, `packages/documents/` |
+| Orders import | Mock Shopify fixtures through the inbox and `inbox.process`. Gift text stored byte-for-byte | integration, mock-tested | `apps/api/src/orders.integration.test.ts`, `packages/integrations/src/shopify/` |
+| Orders API | List, detail, transition, note, assign, claim, activity | integration | `apps/api/src/orders.integration.test.ts` |
+| Documents and storage | Packing slip, gift message, gift templates, `GET /files/:id`, local filesystem storage | integration, unit | `apps/api/src/documents.integration.test.ts`, `packages/documents/`, `packages/integrations/src/storage/` |
+| Printing (mock) | Mock provider. Submit, refresh, confirm, release, cancel, discover, mappings. No PrintNode | integration, mock-tested | `apps/api/src/printing.integration.test.ts`, `packages/integrations/src/printing/` |
+| Job runner | Claim, lease, heartbeat, reclaim, shutdown. Handlers: `inbox.process`, `print.submit`, `print.refresh_status` | integration | `apps/api/src/automation/jobs.integration.test.ts` |
+| Switches | Company switches and platform `outbound.all`. Checked again at execution | integration | `apps/api/src/documents.integration.test.ts` |
+| Vault | AES-256-GCM credentials. No route calls it | integration | `apps/api/src/vault/credential-vault.integration.test.ts` |
+| n8n sanitiser | Export, import and sanitize scripts. `workflows/n8n/exports` is empty | unit | `workflows/n8n/scripts/sanitize.test.ts` |
+
+## Mocked or blocked
+
+| Capability | State |
 |---|---|
-| Branches `develop`, `deploy_uat`, `deploy_prod` created from `main` and pushed | `git branch -a` |
-| Phase 0 docs: architecture, ADRs 0001–0007, permission matrix, threat model, ASVS tracker, rounding rules, source-of-truth matrix, provider constraints (n8n verified 2026-10-19), workflow catalogue, backlog, Phase 1 plan | `docs/` |
-| Local toolchain: Node 24.22.0 (nvm), Colima + Docker 29.5.2 + Compose | `.nvmrc` |
-| Nx 23.3.0 / pnpm 12.14.0 workspace, ESLint flat config, Prettier, TypeScript 6.0.3 | `pnpm install` |
-| Step A: Prisma 7.10.1 schema, `TenantDb`, RLS, composite foreign keys, fictional seed | commit `ca7d578` |
-| B-1 API skeleton: config validation, pino, correlation id, helmet, exception filter, health, OpenAPI, throttling, worker context | `pnpm dev:api`, `pnpm dev:worker`, `pnpm openapi:export` |
-| Deny-by-default guard, `@Public()` / `@RequirePermission()` / `@Authenticated()` / `@PlatformOwner()`, route self-check, `AuditService` | API unit and HTTP integration tests |
-| B-2 staff authentication: sessions, CSRF, dev login, OIDC against `oauth2-mock-server`, logout, `GET /api/me` | `apps/api/src/identity`, auth integration tests |
-| B-3 company access, permission checks, MFA withholding, service identities, tenancy and platform endpoints | `apps/api/src/tenancy`, `platform`, `automation`, `authz`; tenancy integration tests |
-| B-1 follow-ups: a handler with permission metadata is never public, throttle defaults 300/20/120, optional `HOST` | route-policy and guard tests, throttle integration test, `.env.example` |
-| Step A follow-ups A1–A4: composite `print_job` queue FK, test-database guard, ACL on existing test DBs, n8n sanitiser | migration `20261020180003_job_company_queue_fk`, tools tests, n8n tests, RLS integration test |
+| Shopify | Mock contract and fixtures. API version on the fixtures is `unverified; check in Phase 2`. No live store calls |
+| Printing | Mock provider. No PrintNode and no physical printer |
+| Invoice issuance | No issue endpoint. Seed does not issue invoices |
+| Web UI | `apps/web` is a reserved project. Angular, PrimeNG and Playwright are not installed |
+| `pdf` queue handler | Not registered. `POST /print-requests` renders in the request |
 
-### What B-3 added
+## Known risks
 
-Company routes under `/api/c/:companyId` load an active membership (a suspended or removed membership, or a disabled user, is not a member). A non-member gets 404 and an audited denial. Grants come from `@bp/domain` `grantsForAssignment` with BASE semantics. When `AUTH_REQUIRE_MFA_FOR_PRIVILEGED=true` and the session has `mfa_satisfied=false`, `applyMfaPolicy` strips `member.invite`, `member.manage`, `member.sessions.revoke`, `role.manage`, `company.bank.manage`, `automation.manage`, `service_identity.manage`, `store.manage`, `integration.manage`, and platform-owner capabilities, while the context is built. `GET /api/me` applies the same policy before the owner flag, so a non-MFA owner session lists only its active memberships.
+- Service tokens are company-wide. An ordinary permission on a token must be held company-wide. Per-connection binding is a later hardening item.
+- The sanitiser's scope is the header of `workflows/n8n/scripts/sanitize.mjs`: literal secrets in parameters and expressions are rejected, and an unparseable expression fails closed. The fixture `={{ { \`token\`: \`secret\` } }}` is not valid JavaScript and fails closed as unparseable. Deliberately obfuscated secrets are out of scope. Credentials belong in n8n's credential store.
+- `prisma migrate dev` must not drop the SQL-only partial unique indexes. Prisma cannot model the predicates, so they are not in `schema.prisma`: `user_identity_one_entra_key` (`user_identity (user_id) WHERE provider = 'entra'`) and `gift_message_template_one_default_key` (`gift_message_template (company_id) WHERE is_default`). RLS, grants and triggers live in `20261018234900_rls`. The printer identity unique index is in `schema.prisma`.
+- Prisma 7 issues concurrent queries on one interactive-transaction client. `createPrismaClient` serialises `pg` `query` per pooled connection. Pipeline mode is not used.
+- Local storage has no `openat`. `put` creates each parent, checks its real path, opens with `O_EXCL | O_NOFOLLOW`, then checks the descriptor. `get` and `exists` open with `O_NOFOLLOW`. An attacker who can already write inside `STORAGE_ROOT` is out of scope. The root must be owned by the app user with mode `0700`.
 
-Permission checks run for every `@RequirePermission` route. A company-level miss is 403. A store outside the caller's grants is 404. `permittedScopeFilter` and `resolvePermission` are the helpers Step C will use. No store-scoped list endpoint exists yet.
+## Deviations that still apply
 
-Automation routes are controllers marked `@AutomationRoute()`. The guard and the automation throttler use that metadata. Boot fails when a controller under `/api/automation` lacks the marker, or a marked controller sits outside that prefix. Those routes accept only `Authorization: Bearer bps_<id>.<secret>`. A session cookie, with or without `X-XSRF-TOKEN`, is 401. The hash is compared in constant time. Status, expiry and company match are checked. `last_used_at` moves at most once a minute. `GET /api/automation/v1/c/:companyId/ping` requires `store.events.ingest` so the tests have a target. It does not ingest events. Express routing is case-sensitive, so `/API/auth/...` does not match `/api/auth/...` and does not consume the auth limiter.
+Superseded notes (the worker job loop, nullable `service_identity.expires_at`, the gift-message ToUnicode rewrite, process-cwd `STORAGE_ROOT`, the sanitiser's permissive fallback, and the fix-round-7 defects) are only in the history log.
 
-Endpoints, with state changes and denials audited:
+**Toolchain.** pnpm 12 reads `allowBuilds` and `peerDependencyRules` from `pnpm-workspace.yaml`. `@scarf/scarf` scripts are not run. Nest stays 12.1.3; the API is built with `tsc`. `moduleResolution` is `bundler`. `@types/express` 5.0.6 is a direct dev dependency. Workspace packages the API imports publish `bp-source`, then `types`, then `default`. Dev, test, seed and `openapi:export` use `tsx --conditions=bp-source`. Vitest aliases `@bp/db`, `@bp/domain`, `@bp/documents` and `@bp/integrations` to source. Plain `node` uses `dist`. `dev`, `dev:web` and `test:e2e` exit 1. `HOST` defaults to `127.0.0.1`. Throttle defaults are 300, 20 and 120 per 60 seconds, skipped when `APP_ENV=test` unless `THROTTLE_ENABLED_IN_TEST=true` (test-only, not in `.env.example`). The auth matcher is the case-sensitive prefix `/api/auth`. Swagger UI allows `'unsafe-inline'` on `/api/docs` in development and test. Express case sensitivity is set in the adapter constructor; a miss of `/api` is HTML 404. Nest shutdown uses `useProcessExit`. Compose commands pass `--env-file .env`.
 
-- `GET /api/c/:companyId/context` (`company.view`): company summary, grants, every company switch and its enabled flag, `mfaStepUpRequired`, withheld permissions
-- `GET /api/c/:companyId/members`, `GET /api/c/:companyId/members/:membershipId`, `GET /api/c/:companyId/roles` (`member.view`)
-- `POST /api/c/:companyId/invitations` (`member.invite` plus `canGrant`). The link is returned once. No email is sent. TTL is 7 days.
-- `PATCH /api/c/:companyId/members/:membershipId` (`member.manage`): roles and status, escalation rules 1–6. The transaction starts with `SELECT … FROM company WHERE id = $1 FOR UPDATE`. A status change then locks `user_account` with `SELECT … FOR UPDATE` before the write. Suspending revokes that user's sessions only when they have no other active membership. The user lock is what makes two companies suspending the same person see a consistent count.
-- `POST /api/c/:companyId/members/:membershipId/revoke-sessions` (`member.sessions.revoke`)
-- `GET /api/c/:companyId/audit-events` (`audit.view`): object type/id, action, actor, outcome, date range, paginated
-- `GET`, `POST` and `DELETE /api/c/:companyId/service-identities[/:id]` (`service_identity.manage`). The token is returned once. Only the SHA-256 of the secret is stored. `expiresAt` defaults to 90 days, must be in the future, and must be at most 365 days ahead. `null`, a past timestamp and a later timestamp are 400. A revoke that loses the conditional update records `authorization.denied` and returns 404.
-- Platform owner: `GET /api/platform/companies`, `POST /api/platform/companies` (role templates, example tax codes, seven company switches false), `PUT /api/platform/switches/outbound.all`
+**Auth and tenancy.** The Entra column is `entra_oid`. Lookup is `(provider, issuer, subject)`. One Entra identity per user is the partial index above. The invitation URL is `GET /api/auth/oidc/start?redirect=&invitation=`. Only the SHA-256 of the token is stored. Role JSON is `{ roleKey, scopeType, scopeId }`. TTL is 7 days. `email` matches only when `email_verified` is exactly `true`. `amr` matches MFA only for the exact string `mfa`. Dev login and the OIDC start and callback routes are public. Logout requires CSRF. The `XSRF-TOKEN` cookie is not HttpOnly, `SameSite=Strict`, `Path=/`, and its max-age is 7 days. Acceptance locks the company row and re-checks the inviter. It does not apply the last-admin rule and does not reactivate a suspended membership. A platform owner is treated as holding `platformOwnerGrants()` without a membership, and that check does not apply MFA withholding. `@Authenticated()` is a staff session with no company permission. `@PlatformOwner()` is a route class. The company check is `CompanyAccessService` inside `AuthorizationGuard`. `GET /members/:membershipId` exists so a miss is audited. `GET /context` requires `company.view` and returns every company switch, including the ones that are off. The global `outbound.all` row is not in that list. A non-owner on a platform route is 404 `not_platform_owner`. Missing MFA on an owner is 403 `mfa_required`. When privileged MFA is required and the session has none, `GET /api/me` lists only that user's active memberships. Session idle and absolute expiry use an injectable clock. `auth_flow` expiry uses database `now()`. A browser-binding mismatch does not consume the flow. Protocol failures are 400. An unprovisioned identity is 403. Unknown and disabled dev-login emails are both 401, with different audit reasons. Login revokes only the presented previous cookie. Account locks that do not change keys use `FOR NO KEY UPDATE`. Company locks stay `FOR UPDATE`. `mailbox` and `integration_account` assignments are 400 `scope_not_supported`. Successful GETs are not audited. Removal does not revoke sessions. Suspension revokes them only when the user has no other active membership. Self-suspension of the last `member.manage` holder is `self_modification` before rule 4. Invitation creation does not take the company lock. `/api/auth/providers` is Step D. `allowInsecureRequests` is used only in development and test. Service tokens are company-wide. Automation routes accept only `Authorization: Bearer bps_…`. A staff session on those routes is 401 `automation_requires_bearer`. `GET …/ping` returns `{ ok: true }` and does not ingest. The delete path parameter is `:id`.
 
-`canGrant` in `@bp/domain` now covers escalation rules 2–4 as well as rule 1. Rule 1 still applies on its own when no escalation subject is passed, which is how invitations are checked.
+**Money, documents and files.** Exclusive-mode `lineGross` equals `lineNet`. The tax summary is one row per tax code. `documentType` accepts `quote` or `invoice`. `GET /tax-codes` is `catalog.view`. Products have no `version`, and there is no `GET /products/:id`. `POST /clients/duplicate-check` is `client.manage`. The draft watermark is drawn twice so pdfjs extracts the Greek sentence. The PDF is rendered after the tenant transaction commits and is not stored. Gift cards use pdfkit 0.20.2 because pdfmake drops blank lines. Invoices and packing slips use pdfmake. Gift acceptance is layout exactness plus per-line visible glyphs, not a byte-identical pdfjs string. Width keeps a 2pt inset. Height does not. Fit height uses `|descent|`. `\r\n` and a lone `\r` are one hard break while drawing. The stored string is not rewritten. `/ActualText` is optional metadata. Gift-template PATCH has no `expectedVersion`. Writes take an advisory lock, not the company row. Each margin must be ≥ 0 and strictly less than half of its page axis. Test hooks on inbox enqueue, template save, switch writes and print recording are null in production. The stored file kind is `invoice_pdf`. `GET /files/:id` chooses the permission from the kind. A storage miss is an audited 404 and the path is not logged. Relative `STORAGE_ROOT` and `MOCK_PRINT_ROOT` both resolve from the repository root. `CredentialVault.encrypt` takes `{ companyId, provider, label, plaintext, createdById }`. `decrypt` and `rotate` take `companyId`.
 
-### Review fixes
+**Orders, jobs and printing.** `GET /orders` uses `orderListScope`. A `storeId` outside the grants is an empty page. A missing order or a store outside the grants is 404 `out_of_scope`. Assign and claim share `POST /orders/:id/assign`. `inbox.process` sets `max_attempts` to 5. HTTP 409 keeps `error.code` `conflict`; the audit reason is `version_conflict`. `new → ready` is `transition_not_allowed`. `payment_not_settled` is `preparing → ready`. The first import of an order with `cancelledAt` sets `review_required`. Store totals are the Shopify money strings. `calculateDocumentTotals` is for invoices. The demo reads the connection id through `TenantDb`. Express `query parser` is `extended`. Advisory locks use `$executeRaw`. `automation_switch` and `job` are RLS-exempt; company lists filter on `companyId`. `setOutboundAll` updates by `id` after a `companyId: null` read. Job-runner updates match `id`, status and `locked_by`. Reclaim of a non-retryable or exhausted lease is `uncertain` with `lease_expired`, not `job.failed`. Shutdown of an exhausted retryable job is `failed`. `shutdownGraceMs` (25s) and `drainDeadlineMs` (5s) are runner fields, not environment variables. `finishQueue` locks the row, then checks the clock. `lockOwnedJob` still evaluates the clock inside `FOR UPDATE`. The external wait uses the host clock against the deadline instant stored at claim. When a heartbeat and the follow-up read both fail, the abort budget uses `performance.now()`. A `print.submit` whose print row is still `queued` is requeued. Once it is `submitting`, reclaim sets both rows to `uncertain`. Confirm locks only `print_job`. Orders expand a location grant to the stores at that location. Print lists do not copy a store's location into the filter, and `print.confirm` does not widen the list. The mock provider's states are `submitted` and `done`. `done_reported` is the worker's mapping. `GET /print-jobs/:id` is extra. The `pdf` handler is not registered. The `print_job` queue foreign key is `ON DELETE RESTRICT`.
 
-- Platform-owner `GET /api/me` applies the MFA policy before the owner company list.
-- Invitation acceptance, under the company lock, re-checks that the inviter is still an active member, still holds `member.invite`, and can still grant every stored role. Email linking is refused when the account already has an Entra identity or is a platform owner.
-- Membership status changes lock the user row after the company row.
-- Request logs replace `invitation`, `code`, `state`, `session_state`, `id_token`, `token` and `access_token` query values with `[Redacted]`, and redact the `location` response header.
-- The n8n sanitiser inspects expression bodies and rejects URL userinfo.
-- Audit `objectId` and `actorId` filters that are not UUIDs return 400. Malformed path ids stay 404 with an audit event.
-- `@bp/db` and `@bp/domain` resolve source through the `bp-source` export condition for dev, test and typecheck, and `dist` for plain Node. `tools/smoke-dist.mjs` starts the built API and worker. CI runs that smoke after the integration tests, with `DATABASE_URL_TEST`.
-- OpenAPI path parameters `companyId`, `membershipId` and `id` are declared. `pnpm openapi:export` regenerated `docs/api/openapi.json`.
+**Seed and schema.** Unspecified statuses are text. Gift `line_height` is `1.200`. `job.max_attempts` defaults to 1. `fulfil.a` is fulfilment scoped to `Nutbox Demo Shopify` plus company-wide base. Company B's store is `Olive Grove Demo Shopify`. Packing-slip mapping is A4 and gift-message mapping is A6. Switches other than global `outbound.all` and Company A `printing` are explicit `false` rows. Draft invoices may have null series and number. `membership_role` uniqueness is an expression index. RLS is called out in `packages/db` rather than a custom ESLint rule. `bp_owner` with no company context sees 0 brand rows.
 
-### Commands verified locally (2026-10-20, Step B review fixes)
+**Fix round 7.** Print-handler reclaim (`print.submit`, `print.refresh_status`) selects expired rows without locking them, then locks `print_job` and re-checks the queue row in one transaction per job. Generic jobs stay on the previous path. `submitting` and `uncertain` count as possibly printed for gift-message change detection. Discovery upserts on `companyId_provider_externalPrinterId`. The dev database had no duplicate printer identities, so the migration does not clean rows. Mapping writes upsert on `companyId_locationId_documentType`. A sensitive `const`, `let` or destructured binding fails unless the initialiser is an exact `$env` or `$credentials` reference. The isolation sweep builds its route list from the Nest router. Routes with no object id besides `:companyId` are an explicit exemption list, and a new company route that is neither swept nor exempted fails the test. Claim is the assign route. Contacts and addresses are nested on client create and patch. `duplicate-check` is exempt because `excludeClientId` does not 404. The store-events route rejects a staff session, so that one case uses a company B bearer token created by admin.b and company A's connection id. The switch key is not a row id, so that PUT uses company A's URL and expects `not_a_member`.
 
-Node 24.22.0 via nvm. Dev Postgres was already running. No new dependency and no new migration. `pnpm test` in the sequence below used the Nx cache for 2 of 4 projects and did not print counts. An immediate uncached re-run printed the counts in the table.
+## Commands verified
+
+Latest run only: 2026-10-21, fix round 7. Node 24.22.0. Dev Postgres was already running. Migration `20261021150124_printer_identity` applied on `business_platform` and, via `pnpm db:reset:test`, on `business_platform_test`. No new npm dependency. TypeScript stayed 6.0.x and Prisma stayed 7.10.1. No route or OpenAPI schema changed, so `pnpm openapi:export` was not run.
 
 | Command | Result |
 |---|---|
 | `pnpm install` | pass. Already up to date |
 | `pnpm lint` | pass. 5 tasks |
 | `pnpm typecheck` | pass. 5 tasks |
-| `pnpm test` | pass. domain 39, n8n-workflows 25, api 37, tools 7. 108 tests, 18 files |
-| `pnpm build` | pass. 5 tasks. `api` depends on `db` and `domain` through Nx `implicitDependencies` and `dependsOn: ["^build"]` |
-| `node tools/smoke-dist.mjs` | pass. Loads both package dists, `GET /api/health/ready` returned 200, the worker logged `worker ready`, and both processes exited 0 after SIGTERM |
-| `pnpm db:reset:test` then `pnpm test:integration` | pass. 69 tests on `business_platform_test`: db 13, api 56. Verbose list below |
-| `pnpm openapi:export` | pass. Company, membership, service-identity and automation operations declare their path parameters |
-| `pnpm dev:api`, then HTTP as `admin.a@example.test` and `admin.b@example.test` | context 200 (Demo Company A, `member.manage` present, MFA step-up false, 7 switches), members 200 (8 members, includes admin.a), audit-events 200 (0 company-scoped rows on the dev database). admin.b on company A members is 404 `not_found`. Cookies were redacted in the server log. The server was then stopped |
+| `pnpm test` | pass. Nx served a cache hit with no counts. Uncached `nx run-many -t test --skip-nx-cache`: domain 40, tools 7, integrations 16, documents 12, n8n-workflows 38, api 63, db 4. 180 tests |
+| `pnpm build` | pass. 5 tasks |
+| `node tools/smoke-dist.mjs` | pass. Draft PDF 25399 bytes, packing slip 18209 bytes, gift message 7979 bytes, Shopify order mapped, one mock submit wrote 18209 bytes, `GET /api/health/ready` 200, worker job loop started, both processes exited 0 |
+| `pnpm db:reset:test` then `pnpm test:integration` | pass. 150 tests: db 13, api 137. No `client.query` deprecation. Vitest still prints its ESM-config warning |
+| `pnpm test:integration` twice more, no reset | pass. Each run: db 13, api 137, 150 tests. No `client.query` deprecation. The same Vitest ESM-config warning |
 
-Integration tests, verbose:
+Integration files, verbose, from the run immediately after `pnpm db:reset:test`. Printing grew from 17 to 22. The new file is the isolation sweep (1). Every other file kept the fix-round-6 count. Total 150 = db 13 + api 137.
 
-- db row level security (13): connects as `bp_app` without bypassrls; no rows without company context; current company only, including the table owner; cross-company insert rejected; audit update and delete rejected; issued invoice, lines and tax summary immutable; in-flight issue blocks a line update; cross-company child and print-job queue references rejected; company-scoped parent references stay in the company; browser binding required and attention reasons non-null; n8n cannot connect; FORCE RLS on every `company_id` table except the documented exemptions
-- authentication (25): dev login and company lists; previous cookie revoked on the next login; revoked session 401 plus audit; CSRF missing and wrong token 403 plus audit, then logout 204; unknown email 401 plus failure audit; bearer token on a staff route 401; idle expiry and the one-minute `last_seen_at` touch; absolute expiry after idle was refreshed; OIDC happy path with and without `mfa` in `amr`; wrong state; wrong nonce; replayed callback; different cookie jar and missing `bp_oidc_flow`; unprovisioned identity; open redirects; invitation email match; `preferred_username` match; email mismatch; one of two concurrent accepts; suspended inviter, missing `member.invite`, and a grant the inviter can no longer make are each 403 plus an audit reason and leave the invitation open; a different Entra identity and a platform-owner email are refused; an account with no Entra identity can be linked
-- HTTP API (10): live and ready; invalid correlation id replaced; error shape without a stack; oversized body; raw body; cookie and authorization redaction; invitation and OIDC query redaction; 401 plus `authorization.denied`; audit detail redaction; dev login and OIDC 404 when disabled
-- auth rate limit (1): four `GET /API/auth/dev/users` responses are 404 and do not consume the limiter; the third `GET /api/auth/dev/users` is 429 when the limit is 2
-- authorisation and tenancy (18): company context, members and audit events; admin.b on company A is 404 plus `not_a_member`; a guessed membership id under the other company is 404 plus `membership_not_found`; a session without `member.view` is 403 plus `permission_missing`; fulfil.a is store-scoped FS plus company-wide BASE, and `resolvePermission` returns `not_found` for a store outside that scope; suspending multi@example.test in A is immediate while company B still works and the session stays; revoke-sessions then 401; an operations manager cannot invite; self role change and self suspend are `self_modification`; a platform-owner flag in the body is 400; a missing store is 404 `scope_not_found`; an invitation link is returned once and only its hash is stored; CSRF on that post is 403; a company admin cannot suspend a platform owner; a caller who holds `member.invite` but not the target role's permissions gets `grant_not_allowed`; a role change is audited and restored; only the platform owner can suspend the last `member.manage` holder, which also revokes that user's sessions; service tokens (create, hash-only storage, ping, `last_used_at` once a minute, permission 403, cross-company 404, staff-route 401, ordinary permission the creator lacks, expiry 401, revoke 401); a staff cookie on the ping route is 401 with and without `X-XSRF-TOKEN`; platform list and create are owner-only (non-owner 404); `outbound.all` is updated and restored; ten mutual suspensions with `Promise.all` each leave exactly one success and at least one active member; ten concurrent suspensions of multi@example.test in A and B leave no open session; omitted service-token expiry is about 90 days, and null, past and 366-day values are 400; two parallel revokes return 204 and 404 and the 404 is audited; malformed audit uuid filters are 400 and malformed path ids are 404 plus an audit event
-- privileged MFA withholding (2): with `AUTH_REQUIRE_MFA_FOR_PRIVILEGED=true`, the owner without MFA gets an empty company list from `GET /api/me` while support.a still sees a company; the owner is 403 `mfa_required` on `/api/platform/companies`; support.a is given company admin during an open dev-login session and cannot use `member.manage` until an OIDC login with `amr: ['mfa']`
-
-B-1 checks that were not repeated on this tree: the production refusal of `AUTH_DEV_LOGIN_ENABLED=true`, and `pnpm dev:worker`. Step A checks that were not repeated: `pnpm db:seed` on the dev database, compose `ps`, and the n8n HTTP check. The dev database was already seeded. The dev audit list for company A was empty because login events are not company-scoped. The integration tests assert the company audit rows.
-
-## In progress
-
-Nothing in Step B. The worktree is uncommitted.
-
-## Mocked or blocked
-
-| Capability | State | Blocked by |
-|---|---|---|
-| Staff login via Entra | OIDC code path is mock-tested with `oauth2-mock-server`. Not sandbox-tested or live-tested. Entra v2 `amr` / `acrs` is still to verify (U2). `mfa` is matched case-sensitively | U2 (tenant access) |
-| Sessions, CSRF, dev login | implemented. Dev login is enabled for `APP_ENV=development`. The local cookie name is `bp_session` because `SESSION_COOKIE_SECURE=false`. Dev-login sessions have `mfa_satisfied=false` | — |
-| Privileged-permission MFA withholding | applied while the request context is built, and again before `GET /api/me` uses the owner flag. Covered with the flag forced on. The development default remains off | U2 for the real claim shape |
-| Company context and permission checks | implemented and integration-tested. Every `@RequirePermission` route is evaluated | — |
-| Service identities | implemented for `/api/automation/v1`. The ping route does not ingest store events | Step C |
-| Store sync | schema and mock connection rows only. No import | U3, U4 |
-| Printing | mock printer rows only. No provider | U6 |
-| Invoice issuance | schema, series and immutability trigger only. Seed does not issue invoices | U1 (accountant validation) |
-| Web UI | reserved project only | Step D |
-| n8n workflows | export/import/sanitize scripts only. `workflows/n8n/exports` is empty | Step C |
-| Worker job loop | process boots and shuts down. No queue polling | Step C |
-
-## Known risks
-
-- Angular 22 pins TypeScript 6.0.x. TypeScript 7 is not used.
-- Prisma's npm `latest` tag is 8.0.0-rc.23. This repo pins 7.10.1. `prisma generate` prints an upgrade notice; do not follow it.
-- The machine's default Node is 16. Always `nvm use` (`.nvmrc`).
-- A later `prisma migrate dev` that changes the schema must be created with `--create-only` and reviewed. Custom partial indexes, RLS, grants and triggers live only in `20261018234900_rls`. `packages/db/prisma/manual/rls.sql` matches that migration. The B-1 migration only replaces the `print_job` queue foreign key and adds `job (company_id, id)` uniqueness. The B-2 migration only adds `user_identity.entra_oid`. `user_identity` stays RLS-exempt. B-3 did not change the schema.
-- `gitleaks/gitleaks-action@v2` is in CI with `actions/checkout` `fetch-depth: 0`. It was not run locally. On a private repository the action can require a license. `pnpm audit --prod --audit-level high` is `continue-on-error` and was not run locally.
-- Vitest 5 warns that `vitest.config.ts` is ESM loaded as CommonJS. The tests pass.
-- pnpm 12 will not install dependency build scripts unless `allowBuilds` lists them. `@scarf/scarf` (pulled in by Swagger) is set to `false`. CI uses `pnpm install --frozen-lockfile` and needs that list.
-- `pnpm dev:api` and `pnpm dev:worker` run under `tsx`, which does not emit `design:paramtypes`. Every Nest constructor parameter in `apps/api` needs an explicit `@Inject(...)`.
-- Postgres applies the `audit_event` SELECT policy to `INSERT ... RETURNING`. A platform audit row is written only after `app.platform_scope=on` in that transaction. A denial that names a company sets `app.company_id` in the denial's own transaction.
-- There is still no store-scoped list endpoint. Step C should call `permittedScopeFilter` rather than reimplementing scope rules.
-
-## Deviations
-
-- pnpm 12 ignores the `pnpm` key in `package.json`. Build approval and the Nest peer exception live in `pnpm-workspace.yaml` (`allowBuilds`, `peerDependencyRules`). `@scarf/scarf` install scripts are not run.
-- `@nx/nest@23.3.0` optionally peers Nest `<12`. Nest stays 12.1.3. The API project is built with `tsc`.
-- `openid-client` 6.8.8 and devDependency `oauth2-mock-server` 9.3.0 are installed. nestjs-zod, Angular, PrimeNG, Playwright, pdfmake, `@nx/angular` and `@nx/vite` are not. They belong to C or D.
-- `apps/web` is a `project.json` reservation (`type:app`, `web`). `packages/documents` and `packages/integrations` export a package-id constant until Step C.
-- `dev`, `dev:web` and `test:e2e` still exit 1. `dev:api`, `dev:worker` and `openapi:export` run.
-- The plan's B1 sentence says the worker runs the job loop. The loop is Step C, so the worker only validates config, logs, and exits 0 on SIGTERM or SIGINT. A timer holds the event loop open because a signal listener alone does not.
-- Throttle limits are optional env vars, defaulting to 300, 20 and 120 requests per 60 seconds for the default key, `/api/auth/*` and automation controllers. They are skipped when `APP_ENV=test` unless `THROTTLE_ENABLED_IN_TEST=true`. That flag is test-only and is not in `.env.example`. The auth matcher is the case-sensitive prefix `/api/auth`. The automation matcher is `@AutomationRoute()`, not a URL prefix.
-- Swagger UI needs inline scripts. `/api/docs` and `/api/docs/*` in development and test allow `'unsafe-inline'` scripts and styles. Every other response uses `default-src 'none'`.
-- `HOST` defaults to `127.0.0.1`. A container in Step E can set `0.0.0.0`. Values with whitespace, a slash or `://` are rejected.
-- The `print_job (company_id, queue_job_id)` foreign key is `ON DELETE RESTRICT`. The old single-column foreign key was `ON DELETE SET NULL`. Setting the composite pair to null would also clear `company_id`. RESTRICT matches the other composite foreign keys.
-- Express 5.2.1 does not ship types. `@types/express` 5.0.6 is a direct dev dependency.
-- `moduleResolution` is `bundler` (emit stays CommonJS). TypeScript 6 deprecates `node`/`node10`, and that resolver cannot load `@bp/domain`'s `exports` entry.
-- Exclusive-mode `lineGross` equals `lineNet`. Inclusive mode still sums line subtotals and discounts into the document subtotal and discount total.
-- The delivery-method guard uses error code `delivery_method_not_allowed`.
-- Unspecified statuses are text. The seed uses `active`. Gift `line_height` is `1.200`. `job.max_attempts` defaults to 1.
-- `fulfil.a` is FS scoped to store `Nutbox Demo Shopify` plus company-wide BASE. `suspended.a` and `fulfil.b` are company-wide FS.
-- Company B's store is `Olive Grove Demo Shopify`, location `Demo Shop – Larnaca`, brand `Olive Grove (demo)`.
-- Organisation clients have a `reception.<company>@example.test` contact. Individual emails are fictional `.test` addresses. Stored display names are not rewritten.
-- Packing-slip mapping is A4 and gift-message mapping is A6. The flaky printer status is `unknown`.
-- Switch keys other than global `outbound.all=true` and Company A `printing=true` are explicit `false` rows (`email.send`, `store.write`, `marketing.send`, `social.publish`, `shipment.book`, `invoice.issue_real`).
-- Demo stores set `delivery_method_map` to `{local: courier_cy, international: post_international, collection: collection}`.
-- `membership_role` uniqueness is an expression index on `COALESCE(scope_id, nil uuid)`, with a check that company scope has a null `scope_id`.
-- Draft invoices may have null `series_id`, `number` and `number_seq`.
-- Raw use of the Prisma client on RLS tables is called out in `packages/db/src/client.ts` and `rls-tables.ts` rather than a custom ESLint rule. The no-context integration test uses that client on purpose.
-- The integration test also asserts that `bp_owner` with no company context sees 0 brand rows, so FORCE RLS applies to the table owner.
-- Compose commands pass `--env-file .env`. Interpolation does not see a repo-root `.env` when the compose file is in `infra/compose`.
-
-## Deviations added in B-2
-
-- `user_identity.entra_oid` was added. Step A stored Entra `tid` as `tenant_id` and did not store `oid`. The column is not named `oid` because that is a PostgreSQL type. Identities are still looked up by `(provider, issuer, subject)`.
-- The invitation token is `GET /api/auth/oidc/start?redirect=&invitation=`. The plan's start URL showed only `redirect`. Only the SHA-256 hex of the token is stored.
-- Invitation role JSON is `{ roleKey, scopeType, scopeId }`. Company scope uses a null `scopeId`. B-3 reuses this shape.
-- `email` matches an invitation only when `email_verified` is exactly `true`. `preferred_username` matches without that flag. `amr` includes MFA only for the exact string `mfa`.
-- Dev login and the OIDC start and callback routes are public, so they do not require the CSRF header. Logout does. The `XSRF-TOKEN` cookie is not HttpOnly, `SameSite=Strict`, `Path=/`, `Secure` follows `SESSION_COOKIE_SECURE`, and its max-age is the 7-day absolute session lifetime.
-- Acceptance takes `SELECT … FROM company WHERE id = $1 FOR UPDATE`, re-reads the invitation, and re-checks the inviter's active membership, `member.invite`, and `canGrant` for each stored role. It does not apply the last-admin rule. A suspended or removed membership is not reactivated.
-- `@Authenticated()` means a staff session and no company permission. A handler that declares a permission is never public. Boot fails when one handler resolves as both public and a permission.
-- Session idle and absolute expiry use an injectable clock. `auth_flow` expiry uses database `now()`, so tests must not move that clock into the past during an OIDC flow.
-- A callback whose browser binding does not match does not consume the flow. A bad nonce or token exchange consumes it, then fails.
-- Protocol failures return 400 `Sign-in could not be completed`. An unprovisioned identity and an invitation email mismatch return 403 `account not provisioned`. The mismatch is distinguished by audit `details.reason` `invitation_email_mismatch`.
-- Unknown and disabled dev-login emails both return 401 `Authentication failed`. The audit `reason` differs.
-- Login revokes only the previous session cookie presented on that request. The stored session secret is the SHA-256 hex of the cookie string.
-- A platform owner sees every company with `status = active` only when the MFA policy still treats the session as an owner. When privileged MFA is required and the session has no MFA, `GET /api/me` lists only that user's active memberships. The seed owner has none, so the list is empty. A member sees companies where their membership is `active`. `user.isPlatformOwner` on that response stays the account flag.
-- `/api/auth/providers` is Step D and was not added.
-- `allowInsecureRequests` is used only when `APP_ENV` is `development` or `test`, so the HTTP mock issuer can be discovered. Production discovery does not use it.
-
-## Deviations added in B-3
-
-- The company check is `CompanyAccessService`, called by `AuthorizationGuard` after authentication. It is not a second Nest guard named `CompanyContextGuard`. A second global guard would sit beside the existing deny-by-default guard.
-- `@PlatformOwner()` is a route class, not a permission. The route self-check accepts it with `@Public()`, `@Authenticated()` and `@RequirePermission()`.
-- `GET /api/c/:companyId/members/:membershipId` is extra. The acceptance test requests that URL, and a framework 404 would not write an audit event.
-- `GET /api/c/:companyId/context` requires `company.view`. Seed staff who should open the company have it through BASE or their role. A platform owner with MFA satisfied receives every non-automation permission, company-wide, without a membership.
-- Context returns every company switch with its `enabled` flag, including the ones that are off. The global `outbound.all` row is not in that list.
-- Invitation TTL is 7 days. The plan does not set one.
-- `mailbox` and `integration_account` assignments return 400 `scope_not_supported`. Those tables do not exist yet. A missing store or location is 404 `scope_not_found` and is audited.
-- A non-owner on a platform route gets 404 `not_platform_owner`. An owner whose required MFA is missing gets 403 `mfa_required`. The plan does not choose the two statuses.
-- Successful GET handlers are not written to `audit_event`. State changes and authorisation denials are. A read of the audit list does not append a row.
-- The company administrator holds every ordinary permission, so "admin.a cannot create a token for an ordinary permission they lack" cannot be shown with admin.a. The negative case is a membership that holds `service_identity.manage` and `company.view` and not `order.view`. admin.a is tested creating `store.events.ingest`.
-- An ordinary permission on a service identity must be held company-wide. The token is not store-scoped. Automation-only permissions are grantable by any holder of `service_identity.manage`.
-- Removal does not revoke sessions. Suspension revokes them only when the user has no other active membership, counted after the company lock and then the user-row lock. `member.sessions.revoke` revokes all of that user's sessions.
-- Invitation creation does not take the company row lock. Invitation acceptance (B-2) and membership role or status changes do.
-- Automation routes authenticate only with `Authorization: Bearer bps_…`. A session cookie and no valid bearer token is 401 `automation_requires_bearer`, whether or not `X-XSRF-TOKEN` is present. Bearer tokens stay rejected on staff routes.
-- `GET /api/automation/v1/c/:companyId/ping` is a test target. It returns `{ ok: true }` and does not ingest events.
-- Self-suspension of the last `member.manage` holder is refused as `self_modification` (rule 2) before rule 4. Rule 4 is unit-tested. The integration test shows the platform owner can suspend that last holder, and that two admins suspending each other leave one active admin.
-
-## Deviations added with the Step B review fixes
-
-- `@bp/db` and `@bp/domain` publish `bp-source` before `default`. `packages/documents` and `packages/integrations` still export `./src/index.ts`. The API does not import them.
-- Dev, test, seed and `openapi:export` pass `tsx --conditions=bp-source`. Vitest `resolve.conditions` is `bp-source`, `module`, `node`, and `development|production`. `tsconfig.base.json` sets `customConditions` to `bp-source`. Plain `node` uses `dist`.
-- Nest's default shutdown hook re-raises SIGTERM, which a parent sees as a signal death. `enableShutdownHooks(undefined, { useProcessExit: true })` makes the HTTP process exit 0 after cleanup.
-- Express copies case sensitivity when its router is created. Nest creates that router inside the adapter constructor, so `caseSensitiveAdapter()` sets the flag before `new ExpressAdapter`. Setting it later in `configureHttp` does not change routes already compiled. A path that misses the case-sensitive `/api` prefix is Express's HTML 404 (`Cannot GET /API/...`), not the JSON error body. A miss under `/api` still uses the JSON filter.
-- `service_identity.expires_at` stays nullable. The create API never stores null. A row that already has null still passes the bearer expiry check, because that check only rejects a timestamp that is in the past. No such row is seeded.
-- The service-identity delete path parameter is `:id`, matching the OpenAPI name. The URL shape is unchanged.
+- db row level security (13): unchanged from Step B
+- authorisation and tenancy (19) and privileged MFA withholding (2): unchanged
+- clients, catalogue and invoice drafts (6), credential vault (2), HTTP API (10), auth rate limit (1): unchanged
+- orders import and API (16): unchanged
+- authentication (28): unchanged
+- job runner (20): unchanged
+- documents, files and company switches (10): unchanged
+- printing with the mock provider (22): the previous 17, plus an expired refresh lease reclaimed during late recording (25 iterations, no deadlock), a gift-message change while the print is `submitting`, a store-scoped submitter who also holds company-wide `print.confirm` can list, two concurrent discoveries leave one printer, and two identical first mapping PUTs both succeed and leave one row. Confirm, reprint, offline, timeout, held, release and cancel assert action, outcome and correlation id
+- company isolation sweep (1): admin.b sends company A's object ids to every company-scoped route that takes an object id. Each response is 404 with `authorization.denied` and the correlation id, and A's row is unchanged
 
 ## Next step
 
-Step C: the worker job loop, then clients, catalogue, invoice drafts, orders, documents, printing and the automation switches at execution time. List endpoints that are store-scoped should use `permittedScopeFilter`. Outbound actions must read the switches at execution time. New Nest providers need `@Inject`. Platform audit writes set `app.platform_scope`. A denial that names a company sets `app.company_id`.
+Step D is the Angular app. Invoice issuance still has no issue endpoint. Shopify and printing stay mock providers until their live credentials exist. The `pdf` queue handler is still not registered.

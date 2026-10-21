@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import type { Prisma } from '@bp/db';
 import type { Request } from 'express';
 import { AuditService } from '../audit/audit.service';
 import { APP_CONFIG, type AppConfig } from '../config/env';
@@ -108,6 +109,7 @@ export class SessionService {
     const idleExpiresAt = new Date(now.getTime() + IDLE_TIMEOUT_MS);
     const absoluteExpiresAt = new Date(now.getTime() + ABSOLUTE_TIMEOUT_MS);
     const created = await this.prisma.client.$transaction(async (tx) => {
+      await lockAccountNoKeyUpdate(tx, input.user.id);
       if (previousHash) {
         await tx.userSession.updateMany({
           where: { tokenHash: previousHash, revokedAt: null },
@@ -155,6 +157,7 @@ export class SessionService {
   async revoke(session: StaffSession, meta: RequestMeta): Promise<void> {
     const now = clockNow(this.clock);
     await this.prisma.client.$transaction(async (tx) => {
+      await lockAccountNoKeyUpdate(tx, session.userId);
       await tx.userSession.updateMany({
         where: { id: session.sessionId, revokedAt: null },
         data: { revokedAt: now, revokedReason: 'logout' },
@@ -197,6 +200,12 @@ export class SessionService {
     });
     return memberships.map((membership) => membership.company);
   }
+}
+
+async function lockAccountNoKeyUpdate(tx: Prisma.TransactionClient, userId: string): Promise<void> {
+  await tx.$queryRaw`
+    SELECT id FROM user_account WHERE id = CAST(${userId} AS uuid) FOR NO KEY UPDATE
+  `;
 }
 
 function toStaffSession(

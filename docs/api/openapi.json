@@ -466,6 +466,1169 @@
         ]
       }
     },
+    "/api/automation/v1/c/{companyId}/store-connections/{connectionId}/events": {
+      "post": {
+        "operationId": "AutomationController_events",
+        "parameters": [
+          {
+            "name": "connectionId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The event was stored. Duplicate event ids do not create a second inbox row."
+          }
+        },
+        "summary": "Accept a mock store event and enqueue inbox.process in the same transaction",
+        "tags": [
+          "automation"
+        ]
+      }
+    },
+    "/api/c/{companyId}/automation/switches": {
+      "get": {
+        "operationId": "CompanyAutomationController_listSwitches",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Company automation switches. The global outbound.all switch is not included.",
+        "tags": [
+          "automation"
+        ]
+      }
+    },
+    "/api/c/{companyId}/automation/switches/{key}": {
+      "put": {
+        "operationId": "CompanyAutomationController_setSwitch",
+        "parameters": [
+          {
+            "name": "key",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Company switch key, such as printing or email.send. outbound.all is not a company switch."
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Enable or disable a company switch. reason is required and the change is audited.",
+        "tags": [
+          "automation"
+        ]
+      }
+    },
+    "/api/c/{companyId}/automation/jobs": {
+      "get": {
+        "operationId": "CompanyAutomationController_listJobs",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Jobs for this company. Payload is omitted. Filter with status.",
+        "tags": [
+          "automation"
+        ]
+      }
+    },
+    "/api/c/{companyId}/print-requests": {
+      "post": {
+        "operationId": "PrintController_request",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Queue a packing slip or gift message. Renders now. A second first print is 409 already_printed. provider is mock.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/print-jobs": {
+      "get": {
+        "operationId": "PrintController_list",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List print jobs. done_reported is not shown as printed.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/print-jobs/{id}": {
+      "get": {
+        "operationId": "PrintController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "One print job. The status stays the provider value, including done_reported.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/print-jobs/{id}/confirm": {
+      "post": {
+        "operationId": "PrintController_confirm",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Staff confirm printed or not_printed. not_printed allows another first print.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/print-jobs/{id}/release": {
+      "post": {
+        "operationId": "PrintController_release",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Release a held print job back to the queue after printing is enabled.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/print-jobs/{id}/cancel": {
+      "post": {
+        "operationId": "PrintController_cancel",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Cancel a queued, held or uncertain job. 409 once it is submitting or later.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/printers": {
+      "get": {
+        "operationId": "PrintController_printers",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Printers visible to the caller. Mock printers are labelled simulated.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/printers/discover": {
+      "post": {
+        "operationId": "PrintController_discover",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Upsert the mock printer catalogue. Simulated — no physical printing.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/printer-mappings": {
+      "put": {
+        "operationId": "PrintController_mapping",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Map a document type at a location to a printer, paper size and copies.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/clients": {
+      "get": {
+        "operationId": "ClientController_list",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Clients with contacts and addresses. Archived clients are omitted unless asked for."
+          }
+        },
+        "summary": "List clients in this company",
+        "tags": [
+          "clients"
+        ]
+      },
+      "post": {
+        "operationId": "ClientController_create",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create a client. There is no delete; archive it instead.",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
+    "/api/c/{companyId}/clients/duplicate-check": {
+      "post": {
+        "operationId": "ClientController_duplicateCheck",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Find clients with the same normalised name, email or VAT in this company",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
+    "/api/c/{companyId}/clients/{id}": {
+      "get": {
+        "operationId": "ClientController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "One client, including an archived client",
+        "tags": [
+          "clients"
+        ]
+      },
+      "patch": {
+        "operationId": "ClientController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Edit a client. expectedVersion must match. A mismatch is 409.",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders/{id}/documents/packing-slip.pdf": {
+      "get": {
+        "operationId": "DocumentController_packingSlip",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Preview a packing slip. The PDF is not stored.",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders/{id}/documents/gift-message.pdf": {
+      "get": {
+        "operationId": "DocumentController_giftMessage",
+        "parameters": [
+          {
+            "name": "templateId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Preview a gift message. The PDF is not stored. Uses the default template when templateId is omitted.",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/c/{companyId}/gift-message-templates": {
+      "get": {
+        "operationId": "DocumentController_listTemplates",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Gift-message card templates for this company",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/c/{companyId}/gift-message-templates/{id}": {
+      "patch": {
+        "operationId": "DocumentController_updateTemplate",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Update a gift-message template. Measurements are decimal strings. Setting isDefault clears the previous default.",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/c/{companyId}/files/{id}": {
+      "get": {
+        "operationId": "DocumentController_file",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Download a stored file. The row is read under RLS first. invoice_pdf requires invoice.view. packing_slip and gift_message require document.download on the source order. test_print requires document.download at company scope.",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/c/{companyId}/tax-codes": {
+      "get": {
+        "operationId": "CatalogController_taxCodes",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Tax codes for this company. Editing them is not in this phase.",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/c/{companyId}/products": {
+      "get": {
+        "operationId": "CatalogController_products",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List products and services",
+        "tags": [
+          "catalog"
+        ]
+      },
+      "post": {
+        "operationId": "CatalogController_createProduct",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create a product, service or shipping item",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/c/{companyId}/products/{id}": {
+      "patch": {
+        "operationId": "CatalogController_updateProduct",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Edit a product. Products have no version column.",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/c/{companyId}/invoices/preview-totals": {
+      "post": {
+        "operationId": "InvoiceController_preview",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Calculate totals for lines. Nothing is stored. Client totals are ignored.",
+        "tags": [
+          "invoices"
+        ]
+      }
+    },
+    "/api/c/{companyId}/invoices": {
+      "post": {
+        "operationId": "InvoiceController_create",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create a draft invoice or quote. Totals are calculated on the server.",
+        "tags": [
+          "invoices"
+        ]
+      },
+      "get": {
+        "operationId": "InvoiceController_list",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List invoices. Filters: status, clientId, from, to, q.",
+        "tags": [
+          "invoices"
+        ]
+      }
+    },
+    "/api/c/{companyId}/invoices/{id}/pdf": {
+      "get": {
+        "operationId": "InvoiceController_pdf",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Render a draft invoice PDF. Drafts are not stored.",
+        "tags": [
+          "invoices"
+        ]
+      }
+    },
+    "/api/c/{companyId}/invoices/{id}": {
+      "get": {
+        "operationId": "InvoiceController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "One invoice, with lines and the tax summary",
+        "tags": [
+          "invoices"
+        ]
+      },
+      "patch": {
+        "operationId": "InvoiceController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Edit a draft. expectedVersion must match. A mismatch is 409. There is no issue endpoint.",
+        "tags": [
+          "invoices"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders": {
+      "get": {
+        "operationId": "OrderController_list",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List orders in scope. Filters: q, fulfilmentStatus, paymentStatus, storeId, assigned, from, to. Sort and page.",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders/{id}": {
+      "get": {
+        "operationId": "OrderController_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Order detail, including the exact gift message and allowed transitions",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders/{id}/activity": {
+      "get": {
+        "operationId": "OrderController_activity",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Audit events for this order and its print jobs, newest first",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders/{id}/transitions": {
+      "post": {
+        "operationId": "OrderController_transition",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Move an order. Cancel also requires order.cancel. Version conflicts are 409.",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders/{id}/notes": {
+      "post": {
+        "operationId": "OrderController_note",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Add an order note. The body is stored exactly.",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders/{id}/assign": {
+      "post": {
+        "operationId": "OrderController_assign",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Assign the order. Someone else, or clearing the assignee, needs order.assign. Assigning yourself needs order.claim or order.assign.",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
     "/api/health/live": {
       "get": {
         "operationId": "HealthController_live",

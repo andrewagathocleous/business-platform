@@ -4,7 +4,7 @@ import { can, canGrant } from '@bp/domain';
 import { z } from 'zod';
 import type { AuditRecord } from '../audit/audit.service';
 import { AuditService } from '../audit/audit.service';
-import { grantsForMembership } from '../authz/load-grants';
+import { grantsForMembership, platformOwnerGrants } from '../authz/load-grants';
 import { PrismaService } from '../database/prisma.service';
 import { writeAudit } from './auth-audit';
 import {
@@ -49,10 +49,15 @@ class AcceptanceStop extends Error {
 
 /**
  * Invitation acceptance takes `SELECT … FROM company WHERE id = $1 FOR UPDATE`
- * and re-reads the invitation under that lock. It then re-checks the inviter:
- * their membership is still active, they still hold `member.invite`, and
- * `canGrant` still allows every stored role assignment against their current
- * grants. A failed check is an audited denial and leaves the invitation open.
+ * and re-reads the invitation under that lock. It then re-checks the inviter.
+ * An active platform owner is authorised without a membership and holds every
+ * ordinary permission. Anyone else must still have an active membership,
+ * `member.invite`, and `canGrant` for every stored role assignment.
+ * A failed check is an audited denial and leaves the invitation open.
+ * Before linking an Entra identity to an existing account, the user row is
+ * locked with `FOR NO KEY UPDATE` so two acceptances cannot both pass the
+ * link check. That lock still allows `membership_role.granted_by` to take
+ * its foreign-key key-share lock.
  *
  * A suspended or removed membership is not reactivated by an invitation.
  * Email linking attaches an Entra identity only when that account has none,
@@ -178,6 +183,7 @@ export class InvitationService {
       }
       user = identityUser;
     } else if (user) {
+      await this.lockUser(tx, user.id, current, input.meta);
       await this.assertEmailLink(tx, user, current, input.meta);
     }
     if (user && user.status !== 'active') {
@@ -224,18 +230,35 @@ export class InvitationService {
         },
       });
     } else {
-      await tx.userIdentity.create({
-        data: {
-          userId: savedUser.id,
-          provider: 'entra',
-          issuer: input.claims.issuer,
-          subject: input.claims.subject,
-          tenantId: input.claims.tenantId ?? null,
-          entraOid: input.claims.entraOid ?? null,
-          emailAtLink: linkedEmail,
-          lastLoginAt: new Date(),
-        },
-      });
+      try {
+        await tx.userIdentity.create({
+          data: {
+            userId: savedUser.id,
+            provider: 'entra',
+            issuer: input.claims.issuer,
+            subject: input.claims.subject,
+            tenantId: input.claims.tenantId ?? null,
+            entraOid: input.claims.entraOid ?? null,
+            emailAtLink: linkedEmail,
+            lastLoginAt: new Date(),
+          },
+        });
+      } catch (error) {
+        if (!isUniqueViolation(error)) {
+          throw error;
+        }
+        throw new AcceptanceStop({
+          audit: denialAudit(
+            input.meta,
+            'account_identity_conflict',
+            current.companyId,
+            current.id,
+            'user_identity',
+          ),
+          status: 403,
+          message: NOT_PROVISIONED,
+        });
+      }
     }
     const membership = await tx.membership.upsert({
       where: { userId_companyId: { userId: savedUser.id, companyId: current.companyId } },
@@ -291,19 +314,28 @@ export class InvitationService {
     meta: RequestMeta,
   ): Promise<void> {
     const inviter = await tx.userAccount.findUnique({ where: { id: invitation.invitedById } });
-    const membership = inviter
-      ? await tx.membership.findUnique({
-          where: { userId_companyId: { userId: inviter.id, companyId: invitation.companyId } },
-        })
-      : null;
-    if (!inviter || inviter.status !== 'active' || !membership || membership.status !== 'active') {
+    if (!inviter || inviter.status !== 'active') {
       throw new AcceptanceStop({
         audit: denialAudit(meta, 'inviter_not_authorized', invitation.companyId, invitation.id, 'invitation'),
         status: 403,
         message: NOT_PROVISIONED,
       });
     }
-    const grants = await grantsForMembership(tx, membership.id);
+    const membership = await tx.membership.findUnique({
+      where: { userId_companyId: { userId: inviter.id, companyId: invitation.companyId } },
+    });
+    const grants = inviter.isPlatformOwner
+      ? platformOwnerGrants()
+      : membership && membership.status === 'active'
+        ? await grantsForMembership(tx, membership.id)
+        : null;
+    if (!grants) {
+      throw new AcceptanceStop({
+        audit: denialAudit(meta, 'inviter_not_authorized', invitation.companyId, invitation.id, 'invitation'),
+        status: 403,
+        message: NOT_PROVISIONED,
+      });
+    }
     if (!can(grants, 'member.invite')) {
       throw new AcceptanceStop({
         audit: denialAudit(meta, 'inviter_permission_missing', invitation.companyId, invitation.id, 'invitation'),
@@ -331,7 +363,27 @@ export class InvitationService {
    * Email linking runs only when this Entra subject is not already on the account.
    * An existing Entra identity is a different (issuer, subject). A platform owner
    * is never linked through an invitation.
+   * `FOR NO KEY UPDATE` serialises the account without conflicting with the
+   * key-share lock taken by `membership_role.granted_by`.
    */
+  private async lockUser(
+    tx: TenantTransaction,
+    userId: string,
+    invitation: { id: string; companyId: string },
+    meta: RequestMeta,
+  ): Promise<void> {
+    const locked = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM user_account WHERE id = CAST(${userId} AS uuid) FOR NO KEY UPDATE
+    `;
+    if (locked.length !== 1) {
+      throw new AcceptanceStop({
+        audit: failureAudit(meta, 'user_missing', invitation.companyId, invitation.id),
+        status: 400,
+        message: 'Sign-in could not be completed',
+      });
+    }
+  }
+
   private async assertEmailLink(
     tx: TenantTransaction,
     user: { id: string; isPlatformOwner: boolean },
@@ -405,4 +457,14 @@ function failureAudit(
 
 function errorName(error: unknown): string {
   return error instanceof Error ? error.name : 'Error';
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+  if ('code' in error && (error.code === 'P2002' || error.code === '23505')) {
+    return true;
+  }
+  return 'cause' in error && isUniqueViolation(error.cause);
 }

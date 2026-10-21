@@ -328,6 +328,9 @@ model UserIdentity {
   lastLoginAt  DateTime?        @map("last_login_at") @db.Timestamptz(6)
 
   @@unique([provider, issuer, subject])
+  // One Entra identity per user is user_identity_one_entra_key
+  // (user_id WHERE provider = 'entra') in migration SQL. Prisma cannot
+  // model that predicate, so the index is not declared here.
   @@map("user_identity")
 }
 
@@ -509,7 +512,7 @@ model ServiceIdentity {
   secretHash  String    @map("secret_hash")
   permissions String[]
   status      String    @default("active")
-  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(6)
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6)
   createdById String    @map("created_by") @db.Uuid
   createdBy   UserAccount @relation("ServiceIdentityCreatedBy", fields: [createdById], references: [id])
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -1029,6 +1032,9 @@ model GiftMessageTemplate {
   align          GiftAlign
   verticalAlign  GiftVerticalAlign  @map("vertical_align")
   isDefault      Boolean            @default(false) @map("is_default")
+  // One default per company is gift_message_template_one_default_key
+  // (company_id WHERE is_default) in migration SQL. Prisma cannot model
+  // that predicate, so the index is not declared here.
 
   @@map("gift_message_template")
 }
@@ -1051,6 +1057,8 @@ model Printer {
   jobs     PrintJob[]
 
   @@unique([companyId, id])
+  // Discovery upserts on this identity. One provider printer per company.
+  @@unique([companyId, provider, externalPrinterId])
   @@map("printer")
 }
 

@@ -37,7 +37,42 @@ export function redactLoggedRequest(req: LoggedRequest): Record<string, unknown>
     ...serialized,
     url: redactRequestUrl(urlSource),
     query: redactQuery(req.query),
+    headers: redactHeaders(serialized.headers),
   };
+}
+
+const SENSITIVE_HEADER = /token|secret|key/i;
+
+function redactHeaders(headers: unknown): unknown {
+  if (Array.isArray(headers)) {
+    return headers.map((item) => redactHeaders(item));
+  }
+  if (!headers || typeof headers !== 'object') {
+    return headers;
+  }
+  const output: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (SENSITIVE_HEADER.test(name)) {
+      output[name] = LOG_REDACT_CENSOR;
+      continue;
+    }
+    if (name.toLowerCase() === 'referer' || name.toLowerCase() === 'referrer') {
+      output[name] = redactReferer(value);
+      continue;
+    }
+    output[name] = value;
+  }
+  return output;
+}
+
+function redactReferer(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return redactRequestUrl(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactReferer(item));
+  }
+  return value;
 }
 
 export function redactRequestUrl(url: string): string {

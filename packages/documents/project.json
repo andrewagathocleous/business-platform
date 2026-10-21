@@ -8,7 +8,7 @@
     "lint": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "eslint packages/documents"
+        "command": "eslint packages/documents/src"
       }
     },
     "typecheck": {
@@ -17,10 +17,17 @@
         "command": "tsc -p packages/documents/tsconfig.json --noEmit"
       }
     },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "vitest run",
+        "cwd": "packages/documents"
+      }
+    },
     "build": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "tsc -p packages/documents/tsconfig.json"
+        "command": "tsc -p packages/documents/tsconfig.build.json"
       }
     }
   }

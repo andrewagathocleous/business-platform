@@ -15,6 +15,7 @@
     "dev": "node -e \"console.error('pnpm dev starts the API, worker and web app together. The web app is Step D.'); process.exit(1)\"",
     "dev:api": "pnpm --filter @bp/api dev",
     "dev:worker": "pnpm --filter @bp/api dev:worker",
+    "demo:import-fixtures": "tsx --conditions=bp-source --tsconfig apps/api/tsconfig.json apps/api/src/demo-import-fixtures.ts",
     "dev:web": "node -e \"console.error('apps/web is generated in Step D.'); process.exit(1)\"",
     "lint": "nx run-many -t lint",
     "typecheck": "nx run-many -t typecheck",

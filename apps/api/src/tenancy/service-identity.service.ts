@@ -19,7 +19,7 @@ export type ServiceIdentityView = {
   purpose: string;
   permissions: string[];
   status: string;
-  expiresAt: string | null;
+  expiresAt: string;
   createdAt: string;
   lastUsedAt: string | null;
   revokedAt: string | null;
@@ -35,7 +35,10 @@ export const SERVICE_IDENTITY_DEFAULT_TTL_MS = 90 * DAY_MS;
 export const SERVICE_IDENTITY_MAX_TTL_MS = 365 * DAY_MS;
 
 /** Omitted expiry becomes 90 days. Null, past dates and dates past 365 days are rejected. */
-export function resolveServiceIdentityExpiry(value: string | null | undefined, now = Date.now()): Date {
+export function resolveServiceIdentityExpiry(
+  value: string | null | undefined,
+  now = Date.now(),
+): Date {
   if (value === undefined) {
     return new Date(now + SERVICE_IDENTITY_DEFAULT_TTL_MS);
   }
@@ -85,7 +88,12 @@ export class ServiceIdentityService {
 
   async create(
     ctx: RequestContext,
-    input: { name: string; purpose: string; permissions: string[]; expiresAt: string | null | undefined },
+    input: {
+      name: string;
+      purpose: string;
+      permissions: string[];
+      expiresAt: string | null | undefined;
+    },
     meta: RequestMeta,
   ): Promise<ServiceIdentityCreated> {
     if (!ctx.userId) {
@@ -196,7 +204,11 @@ export class ServiceIdentityService {
     }
   }
 
-  private async denyMissing(ctx: RequestContext, objectId: string | null, meta: RequestMeta): Promise<void> {
+  private async denyMissing(
+    ctx: RequestContext,
+    objectId: string | null,
+    meta: RequestMeta,
+  ): Promise<void> {
     await this.audit.recordDenial({
       companyId: ctx.companyId,
       actorType: 'user',
@@ -218,7 +230,7 @@ function toView(row: {
   purpose: string;
   permissions: string[];
   status: string;
-  expiresAt: Date | null;
+  expiresAt: Date;
   createdAt: Date;
   lastUsedAt: Date | null;
   revokedAt: Date | null;
@@ -229,7 +241,7 @@ function toView(row: {
     purpose: row.purpose,
     permissions: [...row.permissions].sort(),
     status: row.status,
-    expiresAt: row.expiresAt?.toISOString() ?? null,
+    expiresAt: row.expiresAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
     lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
     revokedAt: row.revokedAt?.toISOString() ?? null,

@@ -196,9 +196,10 @@ export class MembershipService {
     }
     const now = clockNow(this.clock);
     if (patch.status && patch.status !== target.status) {
-      // Company is already locked. Lock the user next so two companies suspending
-      // the same person cannot both observe the other membership as still active.
-      await this.lockUser(tx, target.userId);
+      // Company is already locked. Lock the account next, without a key lock,
+      // so two companies suspending the same person stay serialised and a
+      // granted_by foreign key can still share the row.
+      await this.lockUserNoKeyUpdate(tx, target.userId);
       await tx.membership.update({
         where: { id: target.id },
         data: statusWrite(patch.status, now),
@@ -281,6 +282,7 @@ export class MembershipService {
     if (denial) {
       throw new MembershipDenied(403, denial, ctx.companyId, 'membership', target.id, 'Forbidden');
     }
+    await this.lockUserNoKeyUpdate(tx, target.userId);
     const now = clockNow(this.clock);
     const revoked = await tx.userSession.updateMany({
       where: { userId: target.userId, revokedAt: null },
@@ -302,9 +304,9 @@ export class MembershipService {
     return { revoked: revoked.count };
   }
 
-  private async lockUser(tx: TenantTransaction, userId: string): Promise<void> {
+  private async lockUserNoKeyUpdate(tx: TenantTransaction, userId: string): Promise<void> {
     const locked = await tx.$queryRaw<{ id: string }[]>`
-      SELECT id FROM user_account WHERE id = CAST(${userId} AS uuid) FOR UPDATE
+      SELECT id FROM user_account WHERE id = CAST(${userId} AS uuid) FOR NO KEY UPDATE
     `;
     if (locked.length !== 1) {
       throw new MembershipDenied(404, 'user_not_found', null, 'user_account', userId, 'Not found');

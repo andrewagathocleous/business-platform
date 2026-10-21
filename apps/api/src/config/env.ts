@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { z } from 'zod';
 import {
   AUTH_THROTTLE_LIMIT,
@@ -6,6 +8,12 @@ import {
 } from '../throttler/limits';
 
 const APP_ENVS = ['development', 'test', 'uat', 'production'] as const;
+
+/**
+ * Relative STORAGE_ROOT and MOCK_PRINT_ROOT resolve from the repo root.
+ * `pnpm --filter` runs the API with cwd `apps/api`.
+ */
+const repoRoot = repositoryRoot(process.cwd());
 
 export type AppEnv = (typeof APP_ENVS)[number];
 
@@ -36,6 +44,8 @@ const envSchema = z.object({
   THROTTLE_AUTH_LIMIT: z.string().optional(),
   THROTTLE_AUTOMATION_LIMIT: z.string().optional(),
   THROTTLE_ENABLED_IN_TEST: z.string().optional(),
+  STORAGE_ROOT: z.string().optional(),
+  MOCK_PRINT_ROOT: z.string().optional(),
 });
 
 export type AppConfig = {
@@ -58,6 +68,10 @@ export type AppConfig = {
   throttleAutomationLimit: number;
   /** Honoured only when APP_ENV is test. Production limits always run. */
   throttleEnabledInTest: boolean;
+  /** Absolute directory for stored document bytes. Created on write. */
+  storageRoot: string;
+  /** Absolute directory for simulated print PDFs. Created on write. */
+  mockPrintRoot: string;
 };
 
 export const APP_CONFIG = Symbol('APP_CONFIG');
@@ -70,7 +84,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   const raw = parsed.data;
   const problems: string[] = [];
   const appEnv = raw.APP_ENV;
-  const authDevLoginEnabled = parseBoolean(raw.AUTH_DEV_LOGIN_ENABLED, false, 'AUTH_DEV_LOGIN_ENABLED', problems);
+  const authDevLoginEnabled = parseBoolean(
+    raw.AUTH_DEV_LOGIN_ENABLED,
+    false,
+    'AUTH_DEV_LOGIN_ENABLED',
+    problems,
+  );
   const sessionCookieSecure = parseBoolean(
     raw.SESSION_COOKIE_SECURE,
     false,
@@ -79,7 +98,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   );
   const csrfSecret = requiredSecret(raw.CSRF_SECRET, 'CSRF_SECRET', problems);
   const databaseUrl = requiredSecret(raw.DATABASE_URL, 'DATABASE_URL', problems);
-  const activeMasterKeyId = requiredSecret(raw.APP_MASTER_KEY_ACTIVE, 'APP_MASTER_KEY_ACTIVE', problems);
+  const activeMasterKeyId = requiredSecret(
+    raw.APP_MASTER_KEY_ACTIVE,
+    'APP_MASTER_KEY_ACTIVE',
+    problems,
+  );
   const masterKeys = parseMasterKeys(raw.APP_MASTER_KEYS, activeMasterKeyId, problems);
   const port = parsePort(raw.PORT, problems);
   const host = parseHost(raw.HOST, problems);
@@ -104,6 +127,13 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   const throttleEnabledInTest =
     appEnv === 'test' &&
     parseBoolean(raw.THROTTLE_ENABLED_IN_TEST, false, 'THROTTLE_ENABLED_IN_TEST', problems);
+  const storageRoot = parseDirectory(raw.STORAGE_ROOT, 'STORAGE_ROOT', 'var/storage', problems);
+  const mockPrintRoot = parseDirectory(
+    raw.MOCK_PRINT_ROOT,
+    'MOCK_PRINT_ROOT',
+    'var/mock-print-output',
+    problems,
+  );
   const oidcIssuer = raw.OIDC_ISSUER?.trim() ?? '';
   const oidcClientId = raw.OIDC_CLIENT_ID?.trim() ?? '';
   const oidcClientSecret = raw.OIDC_CLIENT_SECRET?.trim() ?? '';
@@ -166,7 +196,40 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     throttleAuthLimit,
     throttleAutomationLimit,
     throttleEnabledInTest,
+    storageRoot,
+    mockPrintRoot,
   };
+}
+
+function repositoryRoot(start: string): string {
+  let dir = start;
+  for (let depth = 0; depth < 6; depth += 1) {
+    if (existsSync(resolve(dir, 'pnpm-workspace.yaml'))) {
+      return dir;
+    }
+    const parent = resolve(dir, '..');
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+  return start;
+}
+
+function parseDirectory(
+  value: string | undefined,
+  name: string,
+  fallback: string,
+  problems: string[],
+  baseDir = repoRoot,
+): string {
+  const trimmed = value?.trim() ?? '';
+  const chosen = trimmed.length > 0 ? trimmed : fallback;
+  if (chosen.includes('\0') || chosen.includes('://')) {
+    problems.push(`${name} must be a filesystem path`);
+    return resolve(baseDir, fallback);
+  }
+  return resolve(baseDir, chosen);
 }
 
 function isLockedDown(appEnv: AppEnv): boolean {
@@ -240,7 +303,12 @@ function parseHost(value: string | undefined, problems: string[]): string {
   return host;
 }
 
-function parsePositiveInt(value: string | undefined, fallback: number, name: string, problems: string[]): number {
+function parsePositiveInt(
+  value: string | undefined,
+  fallback: number,
+  name: string,
+  problems: string[],
+): number {
   if (value === undefined || value.trim() === '') {
     return fallback;
   }

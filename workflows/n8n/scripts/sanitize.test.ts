@@ -1,3 +1,6 @@
+import { readdir, readFile, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { sanitizeWorkflow } from './sanitize.mjs';
 
@@ -237,6 +240,231 @@ describe('sanitizeWorkflow', () => {
     ).toThrow(/Possible secret/);
   });
 
+  it('rejects a sensitive binding initialised with a literal', () => {
+    const bodies = [
+      "={{ (() => { const password = 'fixture-pass'; return password; })() }}",
+      '={{ (() => { let token = "x"; return token; })() }}',
+      '={{ (() => { var { apiKey } = { apiKey: "x" }; return apiKey; })() }}',
+    ];
+    for (const jsonBody of bodies) {
+      expect(() => sanitizeWorkflow({ nodes: [{ parameters: { jsonBody } }] }), jsonBody).toThrow(
+        /Possible secret/,
+      );
+    }
+    const allowed = sanitizeWorkflow({
+      nodes: [
+        {
+          parameters: {
+            jsonBody:
+              '={{ (() => { const password = $credentials.shopify; const token = $env.SHOP_TOKEN; return password; })() }}',
+          },
+        },
+      ],
+    });
+    expect(allowed).toEqual({
+      nodes: [
+        {
+          parameters: {
+            jsonBody:
+              '={{ (() => { const password = $credentials.shopify; const token = $env.SHOP_TOKEN; return password; })() }}',
+          },
+        },
+      ],
+    });
+    expect(
+      sanitizeWorkflow({
+        nodes: [{ parameters: { jsonBody: "={{ (() => { const label = 'fixture-pass'; return label; })() }}" } }],
+      }),
+    ).toEqual({
+      nodes: [{ parameters: { jsonBody: "={{ (() => { const label = 'fixture-pass'; return label; })() }}" } }],
+    });
+  });
+
+  it('rejects sensitive assignments in bare, quoted and template keys', () => {
+    const bodies = [
+      '={{ { password: "fictional-password" } }}',
+      "={{ { 'token': 'x' } }}",
+      '={{ { "password": "fictional-password" } }}',
+      '={{ { [`token`]: `secret` } }}',
+    ];
+    for (const jsonBody of bodies) {
+      expect(() => sanitizeWorkflow({ nodes: [{ parameters: { jsonBody } }] })).toThrow(
+        /Possible secret/,
+      );
+    }
+    // A template literal is not a JavaScript property name, so the span does not parse.
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [{ parameters: { jsonBody: '={{ { `token`: `secret` } }}' } }],
+      }),
+    ).toThrow(/unparseable expression; cannot verify it is secret-free/);
+    const allowed = sanitizeWorkflow({
+      nodes: [{ parameters: { jsonBody: '={{ { password: $credentials.shopify } }}' } }],
+    });
+    expect(allowed).toEqual({
+      nodes: [{ parameters: { jsonBody: '={{ { password: $credentials.shopify } }}' } }],
+    });
+  });
+
+  it('rejects URL userinfo in plain, expression and interpolated values', () => {
+    for (const url of [
+      'https://demo:secret@example.test/data',
+      '={{ "https://demo:secret@example.test/data" }}',
+      '=https://demo:secret@example.test/data/{{ $json.id }}',
+    ]) {
+      expect(() => sanitizeWorkflow({ nodes: [{ parameters: { url } }] })).toThrow(
+        /Possible secret/,
+      );
+    }
+    const ordinary = sanitizeWorkflow({
+      nodes: [{ parameters: { url: 'https://example.test/data/{{ $json.id }}' } }],
+    });
+    expect(ordinary).toEqual({
+      nodes: [{ parameters: { url: 'https://example.test/data/{{ $json.id }}' } }],
+    });
+  });
+
+  it('rejects computed keys, escaped keys, concatenations and interpolated userinfo', () => {
+    const bodies = [
+      '={{ { ["password"]: "short" } }}',
+      '={{ { \\u0070assword: "x" } }}',
+      '={{ { password: $credentials.shopify + "literal-secret" } }}',
+      '={{ headers["Authorization"] = $credentials.shopify + "literal-secret" }}',
+      '={{ { ["pass" + "word"]: "short" } }}',
+    ];
+    for (const jsonBody of bodies) {
+      expect(() => sanitizeWorkflow({ nodes: [{ parameters: { jsonBody } }] }), jsonBody).toThrow(
+        /Possible secret/,
+      );
+    }
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [
+          {
+            parameters: {
+              url: '=https://{{ $json.user }}:secret@example.test/data/{{ $json.id }}',
+            },
+          },
+        ],
+      }),
+    ).toThrow(/Possible secret/);
+  });
+
+  it('allows ordinary field names, credential references and public URLs', () => {
+    const result = sanitizeWorkflow({
+      nodes: [
+        {
+          parameters: {
+            status: '={{ $json.displayFulfillmentStatus }}',
+            address: '={{ $json.customer.defaultAddress }}',
+            graph: 'https://graph.microsoft.com/v1.0/me/messages',
+            company: 'https://example.test/companies/018f1a2b-3c4d-7e5f-8a9b-0c1d2e3f4a5b/orders',
+            jsonBody: '={{ { password: $credentials.x.y } }}',
+            token: '={{ $env["X"] }}',
+          },
+        },
+      ],
+    });
+    expect(result).toEqual({
+      nodes: [
+        {
+          parameters: {
+            status: '={{ $json.displayFulfillmentStatus }}',
+            address: '={{ $json.customer.defaultAddress }}',
+            graph: 'https://graph.microsoft.com/v1.0/me/messages',
+            company: 'https://example.test/companies/018f1a2b-3c4d-7e5f-8a9b-0c1d2e3f4a5b/orders',
+            jsonBody: '={{ { password: $credentials.x.y } }}',
+            token: '={{ $env["X"] }}',
+          },
+        },
+      ],
+    });
+  });
+
+  it('accepts every workflow JSON file under workflows/n8n', async () => {
+    const root = fileURLToPath(new URL('..', import.meta.url));
+    const files = await jsonFiles(root);
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const parsed: unknown = JSON.parse(await readFile(file, 'utf8'));
+      if (isWorkflowExport(parsed)) {
+        expect(() => sanitizeWorkflow(parsed), file).not.toThrow();
+      }
+    }
+  });
+
+  it('rejects a literal password beside an interpolated json field', () => {
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [
+          {
+            parameters: {
+              jsonBody: '={"password":"short","id":"{{ $json.id }}"}',
+            },
+          },
+        ],
+      }),
+    ).toThrow(/Possible secret/);
+  });
+
+  it('rejects a token query hidden in an expression string', () => {
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [{ parameters: { url: '={{ "https://example.test/?token=short" }}' } }],
+      }),
+    ).toThrow(/Possible secret/);
+  });
+
+  it('allows a json body that interpolates $json and has no sensitive keys', () => {
+    const jsonBody = '={"id":"{{ $json.id }}","note":"hello"}';
+    expect(sanitizeWorkflow({ nodes: [{ parameters: { jsonBody } }] })).toEqual({
+      nodes: [{ parameters: { jsonBody } }],
+    });
+  });
+
+  it('rejects url userinfo hidden in a template literal', () => {
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [
+          {
+            parameters: {
+              url: '={{ `https://${$json.user}:short@example.test/` }}',
+            },
+          },
+        ],
+      }),
+    ).toThrow(/Possible secret/);
+  });
+
+  it('rejects an unresolved computed key and a computed member assignment', () => {
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [{ parameters: { jsonBody: '={{ { [k]: "short" } }}' } }],
+      }),
+    ).toThrow(/Possible secret/);
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [{ parameters: { jsonBody: '={{ obj[k] = "short" }}' } }],
+      }),
+    ).toThrow(/Possible secret/);
+  });
+
+  it('rejects an object whose closing brace sits against the span end', () => {
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [{ parameters: { jsonBody: '={{ { password:"short"}}}' } }],
+      }),
+    ).toThrow(/^Possible secret at nodes\.0\.parameters\.jsonBody$/);
+  });
+
+  it('rejects an expression that does not parse', () => {
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [{ parameters: { note: '={{ { }}' } }],
+      }),
+    ).toThrow(/unparseable expression; cannot verify it is secret-free/);
+  });
+
   it('allows credential and env expressions on sensitive headers', () => {
     const result = sanitizeWorkflow({
       nodes: [
@@ -272,3 +500,27 @@ describe('sanitizeWorkflow', () => {
     });
   });
 });
+
+async function jsonFiles(dir: string): Promise<string[]> {
+  const entries = await readdir(dir);
+  const files: string[] = [];
+  for (const entry of entries) {
+    if (entry === 'node_modules' || entry.startsWith('.')) {
+      continue;
+    }
+    const path = join(dir, entry);
+    const info = await stat(path);
+    if (info.isDirectory()) {
+      files.push(...(await jsonFiles(path)));
+    } else if (entry.endsWith('.json')) {
+      files.push(path);
+    }
+  }
+  return files;
+}
+
+function isWorkflowExport(value: unknown): boolean {
+  return (
+    typeof value === 'object' && value !== null && 'nodes' in value && Array.isArray(value.nodes)
+  );
+}

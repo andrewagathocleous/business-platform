@@ -53,11 +53,28 @@ export class ServiceIdentityAuthenticator {
       return { ok: false, reason: 'service_token_invalid', companyId: null, identityId: null };
     }
     if (row.status !== 'active' || row.revokedAt) {
-      return { ok: false, reason: 'service_token_revoked', companyId: row.companyId, identityId: row.id };
+      return {
+        ok: false,
+        reason: 'service_token_revoked',
+        companyId: row.companyId,
+        identityId: row.id,
+      };
     }
     const now = clockNow(this.clock);
-    if (row.expiresAt && row.expiresAt.getTime() <= now.getTime()) {
-      return { ok: false, reason: 'service_token_expired', companyId: row.companyId, identityId: row.id };
+    // The column is NOT NULL. Widen anyway so a null that reaches the process
+    // another way is rejected rather than treated as never-expires.
+    const expiresAt = row.expiresAt as unknown as Date | null;
+    if (
+      expiresAt == null ||
+      Number.isNaN(expiresAt.getTime()) ||
+      expiresAt.getTime() <= now.getTime()
+    ) {
+      return {
+        ok: false,
+        reason: 'service_token_expired',
+        companyId: row.companyId,
+        identityId: row.id,
+      };
     }
     return {
       ok: true,
@@ -76,7 +93,10 @@ export class ServiceIdentityAuthenticator {
     await this.prisma.client.serviceIdentity.updateMany({
       where: {
         id,
-        OR: [{ lastUsedAt: null }, { lastUsedAt: { lte: new Date(now.getTime() - SESSION_TOUCH_MS) } }],
+        OR: [
+          { lastUsedAt: null },
+          { lastUsedAt: { lte: new Date(now.getTime() - SESSION_TOUCH_MS) } },
+        ],
       },
       data: { lastUsedAt: now },
     });

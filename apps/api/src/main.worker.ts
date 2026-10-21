@@ -1,13 +1,14 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { Logger } from 'nestjs-pino';
+import { JobRunner } from './automation/jobs/job-runner';
 import { AppModule } from './app.module';
 import { loadConfig } from './config/env';
 import { loadRootEnv } from './config/load-env';
 
 /**
  * Nest application context only. There is no HTTP listener.
- * The job loop is Step C.
+ * The job loop keeps the process alive until SIGTERM or SIGINT.
  */
 export async function bootstrapWorker(): Promise<void> {
   loadRootEnv();
@@ -18,18 +19,34 @@ export async function bootstrapWorker(): Promise<void> {
   });
   const logger = app.get(Logger);
   app.useLogger(logger);
+  const jobs = app.get(JobRunner);
+  jobs.startLoop();
   logger.log('worker ready');
-  // A signal listener does not keep the event loop alive.
-  const keepAlive = setInterval(() => undefined, 60_000);
-  await new Promise<void>((resolve) => {
-    const stop = (): void => {
-      clearInterval(keepAlive);
-      resolve();
+  await new Promise<void>((resolve, reject) => {
+    let stopping = false;
+    const stop = (signal: string): void => {
+      if (stopping) {
+        return;
+      }
+      stopping = true;
+      logger.log(`received ${signal}`);
+      jobs
+        .stop()
+        .then(() => app.close())
+        .then(() => {
+          resolve();
+        })
+        .catch((error: unknown) => {
+          reject(error instanceof Error ? error : new Error('worker shutdown failed'));
+        });
     };
-    process.once('SIGTERM', stop);
-    process.once('SIGINT', stop);
+    process.on('SIGTERM', () => {
+      stop('SIGTERM');
+    });
+    process.on('SIGINT', () => {
+      stop('SIGINT');
+    });
   });
-  await app.close();
 }
 
 const entry = process.argv[1] ?? '';

@@ -14,7 +14,10 @@ import {
   assertTestDatabaseUrls,
 } from '../../../tools/test-db-guard.mjs';
 import { AppModule } from './app.module';
+import { correlationStorage } from './correlation/correlation';
 import { PrismaService } from './database/prisma.service';
+import { InvitationService } from './identity/invitation.service';
+import type { ParsedOidcClaims } from './identity/claims';
 import { configureHttp } from './http/configure-http';
 import { caseSensitiveAdapter } from './http/express-adapter';
 import { CLOCK } from './identity/clock';
@@ -381,15 +384,11 @@ describe('authentication', () => {
       where: { email: 'admin.a@example.test' },
     });
     useProfile({ sub: subject, amr: ['pwd', 'mfa'], email: user.email, emailVerified: true, tid: 'tid-happy', oid: 'oid-happy' });
-    await started().get(PrismaService).client.userIdentity.create({
-      data: {
-        userId: user.id,
-        provider: 'entra',
-        issuer: issuerUrl,
-        subject,
-        tenantId: 'tid-happy',
-        entraOid: 'oid-happy',
-      },
+    await replaceEntraIdentity(user.id, {
+      issuer: issuerUrl,
+      subject,
+      tenantId: 'tid-happy',
+      entraOid: 'oid-happy',
     });
     const agent = request.agent(httpServer(started()));
     const done = await finishOidc(agent, { redirect: '/after-login' });
@@ -410,9 +409,18 @@ describe('authentication', () => {
     expect(identity.tenantId).toBe('tid-happy');
 
     const plainSubject = uniqueSubject('plain');
+    const plainUser = await started().get(PrismaService).client.userAccount.create({
+      data: {
+        email: `plain.${run}@example.test`,
+        displayName: 'Plain MFA',
+        locale: 'en',
+        status: 'active',
+        isPlatformOwner: false,
+      },
+    });
     useProfile({ sub: plainSubject, amr: ['pwd'], oid: 'oid-plain' });
     await started().get(PrismaService).client.userIdentity.create({
-      data: { userId: user.id, provider: 'entra', issuer: issuerUrl, subject: plainSubject },
+      data: { userId: plainUser.id, provider: 'entra', issuer: issuerUrl, subject: plainSubject },
     });
     const plainAgent = request.agent(httpServer(started()));
     const plain = await finishOidc(plainAgent, { redirect: '/after-login' });
@@ -466,9 +474,7 @@ describe('authentication', () => {
       where: { email: 'admin.b@example.test' },
     });
     useProfile({ sub: subject, amr: ['mfa'] });
-    await started().get(PrismaService).client.userIdentity.create({
-      data: { userId: user.id, provider: 'entra', issuer: issuerUrl, subject },
-    });
+    await replaceEntraIdentity(user.id, { issuer: issuerUrl, subject });
     const agent = request.agent(httpServer(started()));
     const start = await agent.get('/api/auth/oidc/start').query({ redirect: '/after-login' }).redirects(0);
     const flowCookie = cookieValue(cookieHeader(start, 'bp_oidc_flow'), 'bp_oidc_flow');
@@ -489,9 +495,7 @@ describe('authentication', () => {
       where: { email: 'multi@example.test' },
     });
     useProfile({ sub: subject, amr: ['mfa'] });
-    await started().get(PrismaService).client.userIdentity.create({
-      data: { userId: user.id, provider: 'entra', issuer: issuerUrl, subject },
-    });
+    await replaceEntraIdentity(user.id, { issuer: issuerUrl, subject });
     const agent = request.agent(httpServer(started()));
     const start = await agent.get('/api/auth/oidc/start').query({ redirect: '/after-login' }).redirects(0);
     const callback = await authorize(locationOf(start));
@@ -773,6 +777,167 @@ describe('authentication', () => {
     expect(identity.userId).toBe(user.id);
   });
 
+  it('links only one Entra identity when two invitations are accepted together', async () => {
+    const email = `multi.${randomUUID()}@example.test`;
+    const prisma = started().get(PrismaService).client;
+    const user = await prisma.userAccount.create({
+      data: { email, displayName: 'Two invitations', locale: 'en', status: 'active', isPlatformOwner: false },
+    });
+    const companyB = await prisma.company.findFirstOrThrow({
+      where: { legalName: 'Demo Company B Ltd (fictional)' },
+    });
+    const adminB = await prisma.userAccount.findFirstOrThrow({ where: { email: 'admin.b@example.test' } });
+    const tokenA = await createInvitation(email);
+    const tokenB = await createInvitation(email, adminB.id, companyB.id);
+    const service = started().get(InvitationService);
+    const meta = { ip: '127.0.0.1', userAgent: 'identity-race' };
+    const claims = (subject: string): ParsedOidcClaims => ({
+      issuer: issuerUrl,
+      subject,
+      email,
+      emailVerified: true,
+      name: 'Race',
+      amr: ['mfa'],
+      tenantId: 'tenant-test',
+      entraOid: `oid-${subject}`,
+    });
+    const leftId = cid('entra-race-a');
+    const rightId = cid('entra-race-b');
+    const [left, right] = await Promise.all([
+      correlationStorage.run({ correlationId: leftId }, () =>
+        service.accept({ tokenHash: hashToken(tokenA), claims: claims(uniqueSubject('race-a')), meta }),
+      ),
+      correlationStorage.run({ correlationId: rightId }, () =>
+        service.accept({ tokenHash: hashToken(tokenB), claims: claims(uniqueSubject('race-b')), meta }),
+      ),
+    ]);
+    const results = [left, right];
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.find((result) => !result.ok)).toEqual({
+      ok: false,
+      status: 403,
+      message: 'account not provisioned',
+    });
+    const identities = await prisma.userIdentity.findMany({ where: { userId: user.id, provider: 'entra' } });
+    expect(identities).toHaveLength(1);
+    const events = [
+      ...(await auditEvents(started(), leftId, companyAId)),
+      ...(await auditEvents(started(), rightId, companyB.id)),
+    ];
+    expect(events.some((event) => event.outcome === 'success' && event.action === 'invitation.accepted')).toBe(true);
+    const denial = events.find((event) => event.outcome === 'denied');
+    expect(denial?.action).toBe('auth.login');
+    expect(detailReason(denial?.details)).toBe('account_identity_conflict');
+    await expect(
+      prisma.userIdentity.create({
+        data: {
+          userId: user.id,
+          provider: 'entra',
+          issuer: `${issuerUrl}/other`,
+          subject: uniqueSubject('second-entra'),
+          emailAtLink: email,
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'P2002' });
+  });
+
+  it('accepts reciprocal invitations without deadlocking', async () => {
+    const prisma = started().get(PrismaService).client;
+    const companyB = await prisma.company.findFirstOrThrow({
+      where: { legalName: 'Demo Company B Ltd (fictional)' },
+    });
+    const service = started().get(InvitationService);
+    const meta = { ip: '127.0.0.1', userAgent: 'reciprocal-accept' };
+    for (let round = 0; round < 10; round += 1) {
+      const emailA = `recip-a.${String(round)}.${randomUUID()}@example.test`;
+      const emailB = `recip-b.${String(round)}.${randomUUID()}@example.test`;
+      const userA = await prisma.userAccount.create({
+        data: { email: emailA, displayName: 'Reciprocal A', locale: 'en', status: 'active', isPlatformOwner: false },
+      });
+      const userB = await prisma.userAccount.create({
+        data: { email: emailB, displayName: 'Reciprocal B', locale: 'en', status: 'active', isPlatformOwner: false },
+      });
+      await grantCompanyRole(userA.id, companyAId, 'CA');
+      await grantCompanyRole(userB.id, companyB.id, 'CA');
+      const intoA = await createInvitation(emailB, userA.id, companyAId, 'CA');
+      const intoB = await createInvitation(emailA, userB.id, companyB.id, 'CA');
+      const claimsFor = (email: string, subject: string): ParsedOidcClaims => ({
+        issuer: issuerUrl,
+        subject,
+        email,
+        emailVerified: true,
+        name: 'Reciprocal',
+        amr: ['mfa'],
+        tenantId: 'tenant-test',
+        entraOid: `oid-${subject}`,
+      });
+      const [left, right] = await Promise.all([
+        correlationStorage.run({ correlationId: cid(`recip-a-${String(round)}`) }, () =>
+          service.accept({
+            tokenHash: hashToken(intoA),
+            claims: claimsFor(emailB, uniqueSubject(`recip-b-${String(round)}`)),
+            meta,
+          }),
+        ),
+        correlationStorage.run({ correlationId: cid(`recip-b-${String(round)}`) }, () =>
+          service.accept({
+            tokenHash: hashToken(intoB),
+            claims: claimsFor(emailA, uniqueSubject(`recip-a-${String(round)}`)),
+            meta,
+          }),
+        ),
+      ]);
+      expect(left, JSON.stringify(left)).toEqual({ ok: true, userId: userB.id });
+      expect(right, JSON.stringify(right)).toEqual({ ok: true, userId: userA.id });
+    }
+  });
+
+  it('lets the platform owner invite the first admin of a new company', async () => {
+    const browser = request.agent(httpServer(started()));
+    const signedIn = await browser.post('/api/auth/dev/login').send({ email: 'owner@example.test' });
+    expect(signedIn.status).toBe(200);
+    const xsrf = cookieValue(cookieHeader(signedIn, 'XSRF-TOKEN'), 'XSRF-TOKEN');
+    const legalName = `Owner invite ${run} Ltd (fictional)`;
+    const created = await browser
+      .post('/api/platform/companies')
+      .set('X-Correlation-Id', cid('owner-company'))
+      .set('X-XSRF-TOKEN', xsrf)
+      .send({ legalName, tradingName: `Owner invite ${run}`, isFictional: true });
+    expect(created.status, JSON.stringify(created.body)).toBe(200);
+    const createdBody = responseBody(created);
+    if (!isRecord(createdBody) || !isRecord(createdBody.company) || typeof createdBody.company.id !== 'string') {
+      throw new Error('company id missing');
+    }
+    const companyId = createdBody.company.id;
+    const email = `first-admin.${run}@example.test`;
+    const invited = await browser
+      .post(`/api/c/${companyId}/invitations`)
+      .set('X-Correlation-Id', cid('owner-invite'))
+      .set('X-XSRF-TOKEN', xsrf)
+      .send({
+        email,
+        assignments: [{ roleKey: 'CA', scopeType: 'company', scopeId: null }],
+      });
+    expect(invited.status, JSON.stringify(invited.body)).toBe(200);
+    const invitedBody = responseBody(invited);
+    if (!isRecord(invitedBody) || !isRecord(invitedBody.invitation) || typeof invitedBody.invitation.link !== 'string') {
+      throw new Error('invitation link missing');
+    }
+    const token = new URL(invitedBody.invitation.link, 'http://127.0.0.1').searchParams.get('invitation');
+    if (!token) {
+      throw new Error('invitation token missing');
+    }
+    useProfile({ sub: uniqueSubject('owner-invitee'), email, emailVerified: true, amr: ['mfa'], name: 'First admin' });
+    const accepted = await finishOidc(request.agent(httpServer(started())), { redirect: '/welcome', invitation: token }, cid('owner-accept'));
+    expect(accepted.status).toBe(302);
+    const membership = await started().get(PrismaService).client.membership.findFirst({
+      where: { companyId, user: { email } },
+      include: { roles: { include: { role: true } } },
+    });
+    expect(membership?.status).toBe('active');
+    expect(membership?.roles.map((role) => role.role.key)).toContain('CA');
+  });
+
   function started(): INestApplication {
     if (!app) {
       throw new Error('the API was not started');
@@ -797,19 +962,61 @@ describe('authentication', () => {
     };
   }
 
-  async function createInvitation(email: string, invitedById = adminAId): Promise<string> {
+  async function replaceEntraIdentity(
+    userId: string,
+    data: { issuer: string; subject: string; tenantId?: string | null; entraOid?: string | null },
+  ): Promise<void> {
+    const prisma = started().get(PrismaService).client;
+    await prisma.userIdentity.deleteMany({ where: { userId, provider: 'entra' } });
+    await prisma.userIdentity.create({
+      data: {
+        userId,
+        provider: 'entra',
+        issuer: data.issuer,
+        subject: data.subject,
+        tenantId: data.tenantId ?? null,
+        entraOid: data.entraOid ?? null,
+      },
+    });
+  }
+
+  async function createInvitation(
+    email: string,
+    invitedById = adminAId,
+    companyId = companyAId,
+    roleKey = 'FIN',
+  ): Promise<string> {
     const token = randomBytes(32).toString('base64url');
     await started().get(PrismaService).client.invitation.create({
       data: {
-        companyId: companyAId,
+        companyId,
         email,
-        roleAssignments: [{ roleKey: 'FIN', scopeType: 'company', scopeId: null }],
+        roleAssignments: [{ roleKey, scopeType: 'company', scopeId: null }],
         tokenHash: hashToken(token),
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
         invitedById,
       },
     });
     return token;
+  }
+
+  async function grantCompanyRole(userId: string, companyId: string, roleKey: string): Promise<void> {
+    const client = started().get(PrismaService).client;
+    const role = await client.role.findUniqueOrThrow({
+      where: { companyId_key: { companyId, key: roleKey } },
+    });
+    const membership = await client.membership.create({
+      data: { userId, companyId, status: 'active' },
+    });
+    await client.membershipRole.create({
+      data: {
+        membershipId: membership.id,
+        roleId: role.id,
+        scopeType: 'company',
+        scopeId: null,
+        grantedById: userId,
+      },
+    });
   }
 
   async function finPermissions(): Promise<string[]> {

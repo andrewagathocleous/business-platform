@@ -73,4 +73,35 @@ describe('log redaction', () => {
     expect(output).toContain(LOG_REDACT_CENSOR);
     expect(output).toContain('visible');
   });
+
+  it('redacts token headers and the referer query', () => {
+    const sentinel = 'fictional-header-secret';
+    const lines: string[] = [];
+    const stream = new Writable({
+      write(chunk: Buffer | string, _encoding, callback) {
+        lines.push(chunk.toString());
+        callback();
+      },
+    });
+    const spy = vi.spyOn(stream, 'write');
+    const logger = pino({ serializers: { req: redactLoggedRequest } }, stream);
+    logger.info({
+      req: {
+        method: 'GET',
+        url: '/api/auth/oidc/callback',
+        headers: {
+          'x-xsrf-token': sentinel,
+          'x-api-key': sentinel,
+          referer: `https://app.example.test/join?invitation=${sentinel}&keep=visible-referer`,
+          accept: 'application/json',
+        },
+      },
+    });
+    expect(spy).toHaveBeenCalled();
+    const output = lines.join('');
+    expect(output).not.toContain(sentinel);
+    expect(output).toContain(LOG_REDACT_CENSOR);
+    expect(output).toContain('visible-referer');
+    expect(output).toContain('application/json');
+  });
 });

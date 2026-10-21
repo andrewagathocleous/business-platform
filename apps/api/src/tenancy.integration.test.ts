@@ -727,6 +727,41 @@ describe('authorisation and tenancy', () => {
     }
   }, 60_000);
 
+  it('does not deadlock when suspension and a replacement login run together', async () => {
+    const person = await installUser(`deadlock.${runId}@example.test`, companyA, 'CA');
+    const prisma = started().get(PrismaService).client;
+    const user = await prisma.userAccount.findFirstOrThrow({ where: { email: person.email } });
+    const admin = await login('admin.a@example.test');
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await reactivate(person.membershipId);
+      const session = await login(person.email);
+      const before = await prisma.userSession.findMany({
+        where: { userId: user.id, revokedAt: null },
+        select: { id: true },
+      });
+      const [suspended, signedIn] = await Promise.all([
+        admin.agent
+          .patch(`/api/c/${companyA}/members/${person.membershipId}`)
+          .set('X-Correlation-Id', cid(`deadlock-suspend-${String(attempt)}`))
+          .set('X-XSRF-TOKEN', admin.xsrf)
+          .send({ status: 'suspended' }),
+        session.agent.post('/api/auth/dev/login').send({ email: person.email }),
+      ]);
+      expect(suspended.status, JSON.stringify(suspended.body)).toBe(200);
+      expect(signedIn.status, JSON.stringify(signedIn.body)).toBe(200);
+      const membership = await prisma.membership.findUniqueOrThrow({ where: { id: person.membershipId } });
+      expect(membership.status).toBe('suspended');
+      const account = await prisma.userAccount.findUniqueOrThrow({ where: { id: user.id } });
+      expect(account.status).toBe('active');
+      for (const previous of before) {
+        const row = await prisma.userSession.findUniqueOrThrow({ where: { id: previous.id } });
+        expect(row.revokedAt).not.toBeNull();
+      }
+      const open = await prisma.userSession.count({ where: { userId: user.id, revokedAt: null } });
+      expect(open).toBeLessThanOrEqual(1);
+    }
+  }, 60_000);
+
   it('requires a service token expiry and audits a lost revoke race', async () => {
     const admin = await login('admin.a@example.test');
     const omitted = await admin.agent
@@ -988,8 +1023,12 @@ describe('privileged MFA withholding', () => {
 
       profile.sub = `mfa-${runId}`;
       profile.amr = ['mfa'];
+      const supportUserId = (
+        await prisma.client.userAccount.findFirstOrThrow({ where: { email: 'support.a@example.test' } })
+      ).id;
+      await prisma.client.userIdentity.deleteMany({ where: { userId: supportUserId, provider: 'entra' } });
       await prisma.client.userIdentity.create({
-        data: { userId: (await prisma.client.userAccount.findFirstOrThrow({ where: { email: 'support.a@example.test' } })).id, provider: 'entra', issuer: issuerUrl, subject: profile.sub },
+        data: { userId: supportUserId, provider: 'entra', issuer: issuerUrl, subject: profile.sub },
       });
       const agent = request.agent(httpServer(mfaApp()));
       const callback = await finishOidc(agent);

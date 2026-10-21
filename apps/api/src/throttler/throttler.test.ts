@@ -31,6 +31,8 @@ function config(appEnv: AppConfig['appEnv']): AppConfig {
     throttleAuthLimit: AUTH_THROTTLE_LIMIT,
     throttleAutomationLimit: AUTOMATION_THROTTLE_LIMIT,
     throttleEnabledInTest: false,
+    storageRoot: '/tmp/bp-storage',
+    mockPrintRoot: '/tmp/bp-mock-print',
   };
 }
 

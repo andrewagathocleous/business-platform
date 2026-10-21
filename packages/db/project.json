@@ -18,6 +18,13 @@
         "command": "tsc -p packages/db/tsconfig.json --noEmit"
       }
     },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "vitest run",
+        "cwd": "packages/db"
+      }
+    },
     "test-integration": {
       "executor": "nx:run-commands",
       "options": {

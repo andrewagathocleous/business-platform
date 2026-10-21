@@ -1,4 +1,5 @@
 import { Controller, Get, type INestApplication, Module, Post, Req } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import type { Request } from 'express';
 import { Logger } from 'nestjs-pino';
@@ -42,6 +43,11 @@ class ProbeController {
 class ProbeModule {}
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const runId = randomUUID().slice(0, 8);
+
+function cid(name: string): string {
+  return `http-${name}-${runId}`;
+}
 
 function httpServer(application: INestApplication): App {
   return application.getHttpServer() as App;
@@ -205,7 +211,7 @@ describe('HTTP API', () => {
   });
 
   it('returns 401 and an audit event for a route without a session', async () => {
-    const correlationId = 'denied-route-1234';
+    const correlationId = cid('denied-route');
     const response = await request(httpServer(app))
       .get('/api/probe')
       .set('X-Correlation-Id', correlationId);
@@ -229,7 +235,7 @@ describe('HTTP API', () => {
   });
 
   it('redacts secrets in audit details', async () => {
-    const correlationId = 'audit-redact-1234';
+    const correlationId = cid('audit-redact');
     const audit = app.get(AuditService);
     const prisma = app.get(PrismaService);
     await correlationStorage.run({ correlationId }, async () => {

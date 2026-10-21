@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { documentTotalsSchema } from '../contracts/document';
+import { currencyMinorDigits } from './currency';
 import { AmountError, parseAmount, round2 } from './parse';
 import { calculateDocumentTotals, DocumentValidationError, type DocumentLineInput } from './totals';
 
@@ -18,6 +19,17 @@ function line(overrides: Partial<DocumentLineInput> = {}): DocumentLineInput {
 function totals(pricesIncludeTax: boolean, lines: DocumentLineInput[]) {
   return calculateDocumentTotals({ pricesIncludeTax, lines });
 }
+
+describe('currencyMinorDigits', () => {
+  it('accepts two-digit currencies and rejects every other precision', () => {
+    expect(currencyMinorDigits('EUR')).toBe(2);
+    expect(currencyMinorDigits('USD')).toBe(2);
+    expect(currencyMinorDigits('KWD')).toBe(3);
+    expect(currencyMinorDigits('JPY')).toBe(0);
+    expect(currencyMinorDigits('kwd')).toBeUndefined();
+    expect(currencyMinorDigits('EURO')).toBeUndefined();
+  });
+});
 
 describe('parseAmount and round2', () => {
   it('rounds half up away from zero', () => {

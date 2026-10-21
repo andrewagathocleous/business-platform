@@ -5,5 +5,11 @@
     "outDir": "dist",
     "types": ["node"]
   },
-  "include": ["src/**/*.ts"]
+    "include": [
+      "src/**/*.ts",
+      "src/**/*.d.ts",
+      "../../packages/documents/src/pdfmake.d.ts",
+      "../../packages/documents/src/pdfkit.d.ts",
+      "../../packages/documents/src/fontkit.d.ts"
+    ]
 }

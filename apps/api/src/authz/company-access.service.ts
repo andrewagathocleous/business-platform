@@ -20,7 +20,6 @@ import { readStaffSession } from '../identity/staff-session';
 import { companyIdFromPath } from './company-path';
 import { dedupeGrants, grantsForMembership, platformOwnerGrants } from './load-grants';
 import type { RequiredPermission } from './require-permission.decorator';
-import { resolvePermission } from './resolve-permission';
 import {
   readServicePrincipal,
   setRequestContext,
@@ -74,15 +73,15 @@ export class CompanyAccessService {
       throw new NotFoundException('Not found');
     }
     setRequestContext(request, built.context);
-    const decision = await this.decision(built.context, required, request);
-    if (decision === 'allow') {
+    const outcome = await this.decision(built.context, required, request);
+    if (outcome.decision === 'allow') {
       return;
     }
-    if (decision === 'not_found') {
-      await this.deny(request, 'out_of_scope', company.companyId, 'route', null, required.permission);
+    if (outcome.decision === 'not_found') {
+      await this.deny(request, 'out_of_scope', company.companyId, 'route', null, outcome.permission);
       throw new NotFoundException('Not found');
     }
-    await this.deny(request, 'permission_missing', company.companyId, 'route', null, required.permission);
+    await this.deny(request, 'permission_missing', company.companyId, 'route', null, outcome.permission);
     throw new ForbiddenException('Forbidden');
   }
 
@@ -197,18 +196,50 @@ export class CompanyAccessService {
     ctx: RequestContext,
     required: RequiredPermission,
     request: Request,
-  ): Promise<AccessDecision> {
+  ): Promise<{ decision: AccessDecision; permission: string }> {
+    const permissions = permissionChoices(required);
     const resolve = required.scope;
     if (!resolve) {
-      return decideAccess(ctx.grants, required.permission);
+      for (const permission of permissions) {
+        if (decideAccess(ctx.grants, permission) === 'allow') {
+          return { decision: 'allow', permission };
+        }
+      }
+      return { decision: 'forbidden', permission: required.permission };
     }
     const actor = ctx.userId ?? ctx.serviceIdentityId;
     if (!actor) {
       throw new InternalServerErrorException('Actor is missing');
     }
-    return this.tenant.run({ companyId: ctx.companyId, actor, correlationId: ctx.correlationId }, (tx) =>
-      resolvePermission(ctx.grants, required.permission, () => resolve(request, ctx, tx)),
-    );
+    return this.tenant.run({ companyId: ctx.companyId, actor, correlationId: ctx.correlationId }, async (tx) => {
+      const resolved = await resolve(request, ctx, tx);
+      if (!resolved.found) {
+        return { decision: 'not_found' as const, permission: required.permission };
+      }
+      if (resolved.permission !== undefined) {
+        if (!permissions.includes(resolved.permission)) {
+          throw new InternalServerErrorException('Resolved permission is not declared on the route');
+        }
+        return {
+          decision: decideAccess(ctx.grants, resolved.permission, resolved.scopes),
+          permission: resolved.permission,
+        };
+      }
+      let missed: string | null = null;
+      for (const permission of permissions) {
+        const decision = decideAccess(ctx.grants, permission, resolved.scopes);
+        if (decision === 'allow') {
+          return { decision, permission };
+        }
+        if (decision === 'not_found') {
+          missed = permission;
+        }
+      }
+      if (missed) {
+        return { decision: 'not_found' as const, permission: missed };
+      }
+      return { decision: 'forbidden' as const, permission: required.permission };
+    });
   }
 
   private correlation(): string {
@@ -253,4 +284,8 @@ export class CompanyAccessService {
 
 export function contextHas(ctx: RequestContext, permission: string): boolean {
   return can(ctx.grants, permission);
+}
+
+function permissionChoices(required: RequiredPermission): string[] {
+  return [...new Set([required.permission, ...(required.anyOf ?? [])])];
 }

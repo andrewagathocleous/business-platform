@@ -1,3 +1,4 @@
+export { currencyMinorDigits } from './currency';
 export { AmountError, money, parseAmount, round2 } from './parse';
 export type { AmountRejection } from './parse';
 export { calculateDocumentTotals, DocumentValidationError } from './totals';

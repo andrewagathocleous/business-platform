@@ -5,6 +5,7 @@ export type ErrorBody = {
     code: string;
     message: string;
     correlationId: string;
+    printJobId?: string;
   };
 };
 
@@ -21,16 +22,49 @@ const STATUS_CODES: Readonly<Record<number, string>> = {
 
 export function errorBody(exception: unknown, correlationId: string): { status: number; body: ErrorBody } {
   const status = statusOf(exception);
+  const printJobId = explicitPrintJobId(exception);
   return {
     status,
     body: {
       error: {
-        code: STATUS_CODES[status] ?? `http_${String(status)}`,
+        code: explicitCode(exception) ?? STATUS_CODES[status] ?? `http_${String(status)}`,
         message: publicMessage(exception, status),
         correlationId,
+        ...(printJobId ? { printJobId } : {}),
       },
     },
   };
+}
+
+/** Domain guards put a stable code on the exception body, for example `payment_not_settled`. */
+function explicitCode(exception: unknown): string | undefined {
+  if (!(exception instanceof HttpException)) {
+    return undefined;
+  }
+  const response = exception.getResponse();
+  if (!isRecord(response) || typeof response.code !== 'string') {
+    return undefined;
+  }
+  if (!/^[a-z][a-z0-9_]*$/.test(response.code)) {
+    return undefined;
+  }
+  return response.code;
+}
+
+const PRINT_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function explicitPrintJobId(exception: unknown): string | undefined {
+  if (!(exception instanceof HttpException)) {
+    return undefined;
+  }
+  const response = exception.getResponse();
+  if (!isRecord(response) || response.code !== 'already_printed' || typeof response.printJobId !== 'string') {
+    return undefined;
+  }
+  if (!PRINT_JOB_ID.test(response.printJobId)) {
+    return undefined;
+  }
+  return response.printJobId;
 }
 
 function statusOf(exception: unknown): number {

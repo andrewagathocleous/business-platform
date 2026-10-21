@@ -3,6 +3,7 @@ import './money/decimal';
 export {
   AmountError,
   calculateDocumentTotals,
+  currencyMinorDigits,
   DocumentValidationError,
   money,
   parseAmount,

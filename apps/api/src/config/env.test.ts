@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from './env';
 
@@ -46,8 +47,12 @@ describe('loadConfig', () => {
       /SESSION_COOKIE_SECURE=false/,
     );
     expect(() => loadConfig(productionEnv({ CSRF_SECRET: 'generate' }))).toThrow(/CSRF_SECRET/);
-    expect(() => loadConfig(productionEnv({ APP_MASTER_KEYS: undefined }))).toThrow(/APP_MASTER_KEYS/);
-    expect(() => loadConfig(productionEnv({ OIDC_CLIENT_SECRET: '' }))).toThrow(/OIDC_CLIENT_SECRET/);
+    expect(() => loadConfig(productionEnv({ APP_MASTER_KEYS: undefined }))).toThrow(
+      /APP_MASTER_KEYS/,
+    );
+    expect(() => loadConfig(productionEnv({ OIDC_CLIENT_SECRET: '' }))).toThrow(
+      /OIDC_CLIENT_SECRET/,
+    );
     expect(() =>
       loadConfig(
         productionEnv({
@@ -58,9 +63,9 @@ describe('loadConfig', () => {
   });
 
   it('applies the same refusals in uat', () => {
-    expect(() => loadConfig(productionEnv({ APP_ENV: 'uat', AUTH_DEV_LOGIN_ENABLED: 'true' }))).toThrow(
-      /AUTH_DEV_LOGIN_ENABLED=true/,
-    );
+    expect(() =>
+      loadConfig(productionEnv({ APP_ENV: 'uat', AUTH_DEV_LOGIN_ENABLED: 'true' })),
+    ).toThrow(/AUTH_DEV_LOGIN_ENABLED=true/);
   });
 
   it('allows dev login and optional OIDC in development and test', () => {
@@ -81,10 +86,13 @@ describe('loadConfig', () => {
     expect(loadConfig(developmentEnv({ HOST: '0.0.0.0' })).host).toBe('0.0.0.0');
     expect(loadConfig(developmentEnv({ THROTTLE_AUTH_LIMIT: '7' })).throttleAuthLimit).toBe(7);
     expect(() => loadConfig(developmentEnv({ HOST: 'http://evil' }))).toThrow(/HOST/);
-    expect(loadConfig(developmentEnv({ APP_ENV: 'test', THROTTLE_ENABLED_IN_TEST: 'true' })).throttleEnabledInTest).toBe(
-      true,
-    );
-    expect(loadConfig(productionEnv({ THROTTLE_ENABLED_IN_TEST: 'true' })).throttleEnabledInTest).toBe(false);
+    expect(
+      loadConfig(developmentEnv({ APP_ENV: 'test', THROTTLE_ENABLED_IN_TEST: 'true' }))
+        .throttleEnabledInTest,
+    ).toBe(true);
+    expect(
+      loadConfig(productionEnv({ THROTTLE_ENABLED_IN_TEST: 'true' })).throttleEnabledInTest,
+    ).toBe(false);
 
     const test = loadConfig(developmentEnv({ APP_ENV: 'test' }));
     expect(test.authRequireMfaForPrivileged).toBe(false);
@@ -95,6 +103,35 @@ describe('loadConfig', () => {
     expect(config.authRequireMfaForPrivileged).toBe(true);
     const disabled = loadConfig(productionEnv({ AUTH_REQUIRE_MFA_FOR_PRIVILEGED: 'false' }));
     expect(disabled.authRequireMfaForPrivileged).toBe(false);
+  });
+
+  it('resolves STORAGE_ROOT and MOCK_PRINT_ROOT from the repository root', () => {
+    const repoRoot = resolve(__dirname, '../../../..');
+    expect(loadConfig(developmentEnv()).storageRoot).toBe(resolve(repoRoot, 'var/storage'));
+    expect(loadConfig(developmentEnv({ STORAGE_ROOT: 'tmp/docs' })).storageRoot).toBe(
+      resolve(repoRoot, 'tmp/docs'),
+    );
+    expect(loadConfig(developmentEnv({ STORAGE_ROOT: '/tmp/bp-storage' })).storageRoot).toBe(
+      '/tmp/bp-storage',
+    );
+    expect(() => loadConfig(developmentEnv({ STORAGE_ROOT: 's3://bucket/docs' }))).toThrow(
+      /STORAGE_ROOT/,
+    );
+    expect(() => loadConfig(developmentEnv({ STORAGE_ROOT: 'var/storage\0hidden' }))).toThrow(
+      /STORAGE_ROOT/,
+    );
+    expect(loadConfig(developmentEnv()).mockPrintRoot).toBe(
+      resolve(repoRoot, 'var/mock-print-output'),
+    );
+    expect(loadConfig(developmentEnv({ MOCK_PRINT_ROOT: 'tmp/prints' })).mockPrintRoot).toBe(
+      resolve(repoRoot, 'tmp/prints'),
+    );
+    expect(loadConfig(developmentEnv({ MOCK_PRINT_ROOT: '/tmp/bp-print' })).mockPrintRoot).toBe(
+      '/tmp/bp-print',
+    );
+    expect(() => loadConfig(developmentEnv({ MOCK_PRINT_ROOT: 's3://bucket/prints' }))).toThrow(
+      /MOCK_PRINT_ROOT/,
+    );
   });
 
   it('rejects a master key that is not 32 bytes', () => {

@@ -4,7 +4,7 @@
   "sourceRoot": "apps/api/src",
   "projectType": "application",
   "tags": ["type:app"],
-  "implicitDependencies": ["db", "domain"],
+  "implicitDependencies": ["db", "domain", "documents", "integrations"],
   "targets": {
     "lint": {
       "executor": "nx:run-commands",

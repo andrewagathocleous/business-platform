@@ -1,18 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ALL_ROLE_TEMPLATES } from '@bp/domain';
 import { AuditService } from '../audit/audit.service';
+import { COMPANY_SWITCH_KEYS } from '../automation/company-switches';
 import { PrismaService } from '../database/prisma.service';
 import type { RequestMeta } from '../identity/request-meta';
-
-const COMPANY_SWITCHES = [
-  'printing',
-  'email.send',
-  'store.write',
-  'marketing.send',
-  'social.publish',
-  'shipment.book',
-  'invoice.issue_real',
-] as const;
 
 const EXAMPLE_TAX_CODES = [
   { code: 'STD19', name: 'Standard 19% (example — verify with accountant)', rate: '19.0000', kind: 'standard' },
@@ -97,7 +88,7 @@ export class PlatformService {
         })),
       });
       await tx.automationSwitch.createMany({
-        data: COMPANY_SWITCHES.map((key) => ({
+        data: COMPANY_SWITCH_KEYS.map((key) => ({
           companyId: company.id,
           key,
           enabled: false,

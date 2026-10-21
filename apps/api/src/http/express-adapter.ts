@@ -9,5 +9,8 @@ import express from 'express';
 export function caseSensitiveAdapter(): ExpressAdapter {
   const server = express();
   server.set('case sensitive routing', true);
+  // Repeated filters such as fulfilmentStatus[]=new&fulfilmentStatus[]=preparing.
+  // Express 5's simple parser keeps only the last value.
+  server.set('query parser', 'extended');
   return new ExpressAdapter(server);
 }

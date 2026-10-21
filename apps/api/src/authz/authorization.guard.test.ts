@@ -71,6 +71,8 @@ function config(): AppConfig {
     throttleAuthLimit: 20,
     throttleAutomationLimit: 120,
     throttleEnabledInTest: false,
+    storageRoot: '/tmp/bp-storage',
+    mockPrintRoot: '/tmp/bp-mock-print',
   };
 }
 

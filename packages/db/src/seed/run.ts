@@ -720,25 +720,33 @@ async function upsertPrinter(
     status: 'online' | 'offline' | 'unknown';
   },
 ): Promise<string> {
-  const existing = await tx.printer.findFirst({
-    where: { companyId, externalPrinterId: input.externalPrinterId },
+  const saved = await tx.printer.upsert({
+    where: {
+      companyId_provider_externalPrinterId: {
+        companyId,
+        provider: 'mock',
+        externalPrinterId: input.externalPrinterId,
+      },
+    },
+    create: {
+      companyId,
+      locationId,
+      provider: 'mock',
+      externalPrinterId: input.externalPrinterId,
+      name: input.name,
+      description: input.description,
+      paperSizes: input.paperSizes,
+      status: input.status,
+    },
+    update: {
+      locationId,
+      name: input.name,
+      description: input.description,
+      paperSizes: input.paperSizes,
+      status: input.status,
+    },
   });
-  const data = {
-    locationId,
-    provider: 'mock' as const,
-    name: input.name,
-    description: input.description,
-    paperSizes: input.paperSizes,
-    status: input.status,
-  };
-  if (existing) {
-    const updated = await tx.printer.update({ where: { id: existing.id }, data });
-    return updated.id;
-  }
-  const created = await tx.printer.create({
-    data: { companyId, externalPrinterId: input.externalPrinterId, ...data },
-  });
-  return created.id;
+  return saved.id;
 }
 
 async function upsertMapping(
