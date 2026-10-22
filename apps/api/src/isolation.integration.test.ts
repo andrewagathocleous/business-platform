@@ -54,6 +54,8 @@ const EXEMPTIONS: { route: string; reason: string }[] = [
   { route: 'GET /api/c/:companyId/gift-message-templates', reason: 'Template list. No object id.' },
   { route: 'GET /api/c/:companyId/print-jobs', reason: 'Print-job list. No object id in the path or body.' },
   { route: 'GET /api/c/:companyId/printers', reason: 'Printer list. No printer id route.' },
+  { route: 'GET /api/c/:companyId/locations', reason: 'Location list. No object id.' },
+  { route: 'GET /api/c/:companyId/printer-mappings', reason: 'Printer-mapping list. No object id.' },
   { route: 'GET /api/c/:companyId/automation/switches', reason: 'Switch list. No object id.' },
   { route: 'GET /api/c/:companyId/automation/jobs', reason: 'Job list. No job id route.' },
   {
@@ -492,6 +494,13 @@ function sweepCases(adminB: Session, fx: Fixtures): SweepCase[] {
       { expectedVersion: 0, reference: 'stolen' },
     ),
     onB('order-get', 'GET /api/c/:companyId/orders/:id', 'get', b(`/orders/${fx.orderA}`), () => orderSnap(fx)),
+    onB(
+      'order-assignees',
+      'GET /api/c/:companyId/orders/:id/assignees',
+      'get',
+      b(`/orders/${fx.orderA}/assignees`),
+      () => orderSnap(fx),
+    ),
     onB('order-activity', 'GET /api/c/:companyId/orders/:id/activity', 'get', b(`/orders/${fx.orderA}/activity`), () =>
       orderSnap(fx),
     ),
@@ -597,6 +606,13 @@ function sweepCases(adminB: Session, fx: Fixtures): SweepCase[] {
         copies: 1,
       },
     ),
+    {
+      name: 'order-filters',
+      route: 'GET /api/c/:companyId/order-filters',
+      auditCompany: fx.companyA,
+      snap: () => storeSnap(fx),
+      call: (correlationId) => send(adminB, 'get', `/api/c/${fx.companyA}/order-filters`, correlationId),
+    },
     {
       name: 'switch-put',
       route: 'PUT /api/c/:companyId/automation/switches/:key',
@@ -771,6 +787,18 @@ function invoiceCreateSnap(fx: Fixtures): Promise<string> {
       SELECT
         (SELECT version::text FROM client WHERE id = ${fx.clientA}::uuid) AS client_version,
         (SELECT count(*)::int FROM invoice WHERE company_id = ${fx.companyA}::uuid) AS invoices
+    `,
+  );
+}
+
+function storeSnap(fx: Fixtures): Promise<string> {
+  return rows(
+    fx.companyA,
+    (tx) => tx.$queryRaw`
+      SELECT id::text, name, platform::text
+      FROM store
+      WHERE company_id = ${fx.companyA}::uuid
+      ORDER BY id
     `,
   );
 }

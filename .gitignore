@@ -165,3 +165,5 @@ packages/db/src/generated/
 # Generated PDFs. Fixture PDFs stay tracked.
 *.pdf
 !**/fixtures/**/*.pdf
+
+.angular

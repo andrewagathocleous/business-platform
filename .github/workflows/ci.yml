@@ -60,6 +60,8 @@ jobs:
         run: pnpm test:integration
       - name: Build
         run: pnpm build
+      - name: Check the web bundle for secrets
+        run: node tools/check-bundle.mjs
       - name: Smoke-check the built API
         env:
           DATABASE_URL_TEST: postgresql://bp_app:ci-app-password@127.0.0.1:5432/business_platform_test

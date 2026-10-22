@@ -1,0 +1,28 @@
+import { convertToParamMap } from '@angular/router';
+import { describe, expect, it } from 'vitest';
+import { invoicesHttpParams, parseInvoiceQuery } from './invoice-query';
+
+describe('parseInvoiceQuery', () => {
+  it('drops an impossible date and keeps the valid status', () => {
+    const dated = convertToParamMap({ status: 'issued', from: '2026-13-01' });
+    const parsed = parseInvoiceQuery(dated);
+    expect(parsed.status).toBe('issued');
+    expect(parsed.from).toBe('');
+    expect(invoicesHttpParams(parsed).get('status')).toBe('issued');
+    expect(invoicesHttpParams(parsed).get('from')).toBeNull();
+  });
+
+  it('drops a 201-character search and keeps the valid status', () => {
+    const searched = convertToParamMap({ q: 'a'.repeat(201), status: 'issued' });
+    const parsed = parseInvoiceQuery(searched);
+    expect(parsed.q).toBe('');
+    expect(parsed.status).toBe('issued');
+    expect(invoicesHttpParams(parsed).get('q')).toBeNull();
+    expect(invoicesHttpParams(parsed).get('status')).toBe('issued');
+  });
+
+  it('keeps a real calendar date', () => {
+    const params = convertToParamMap({ from: '2026-10-21', to: '2026-10-21' });
+    expect(parseInvoiceQuery(params)).toMatchObject({ from: '2026-10-21', to: '2026-10-21' });
+  });
+});

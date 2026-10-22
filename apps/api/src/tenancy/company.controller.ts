@@ -89,6 +89,13 @@ export class CompanyController {
     return this.companyRead.context(requireContext(req, companyId));
   }
 
+  @Get('locations')
+  @RequirePermission('company.view')
+  @ApiOperation({ summary: 'Locations in this company' })
+  async locations(@Req() req: Request, @Param('companyId') companyId: string) {
+    return this.companyRead.locations(requireContext(req, companyId));
+  }
+
   @Get('members')
   @RequirePermission('member.view')
   @ApiOperation({ summary: 'List company members and their role assignments' })

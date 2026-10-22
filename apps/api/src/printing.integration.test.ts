@@ -251,6 +251,35 @@ describe('printing with the mock provider', () => {
     expect(arrayOf(record(listed.body).printJobs)).toHaveLength(1);
   });
 
+  it('lets a reprint-only user read their job and still refuses a user with no print permission', async () => {
+    const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
+    const created = await requestPrint(fulfil, companyA, order.id, 'packing_slip', cid('reprint-read'));
+    const reprintOnly = await installStaff(`reprint-only-${runId}@example.test`, ['order.view', 'print.reprint']);
+    const read = await send(
+      reprintOnly,
+      'get',
+      `/api/c/${companyA}/print-jobs/${String(created.id)}`,
+      cid('reprint-read-get'),
+    );
+    expect(read.status, text(read)).toBe(200);
+    expect(stringField(record(record(read.body).printJob), 'id')).toBe(String(created.id));
+    const listed = await send(reprintOnly, 'get', `/api/c/${companyA}/print-jobs?pageSize=100`, cid('reprint-list'));
+    await expectDenied(listed, 403, cid('reprint-list'), companyA, 'permission_missing');
+
+    const confirmOnly = await installStaff(`confirm-only-${runId}@example.test`, ['order.view', 'print.confirm']);
+    const confirmed = await send(
+      confirmOnly,
+      'get',
+      `/api/c/${companyA}/print-jobs/${String(created.id)}`,
+      cid('confirm-read-get'),
+    );
+    expect(confirmed.status, text(confirmed)).toBe(200);
+
+    const viewer = await installStaff(`view-only-${runId}@example.test`, ['order.view']);
+    const denied = await send(viewer, 'get', `/api/c/${companyA}/print-jobs/${String(created.id)}`, cid('view-only-get'));
+    await expectDenied(denied, 403, cid('view-only-get'), companyA, 'permission_missing');
+  });
+
   it('refuses a reprint without print.reprint and accepts one with a reason', async () => {
     const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
     const first = await requestPrint(fulfil, companyA, order.id, 'gift_message', cid('reprint-base'));
@@ -282,6 +311,46 @@ describe('printing with the mock provider', () => {
       reprint: { ofPrintJobId: first.id, reason: 'no' },
     });
     expect(shortReason.status, text(shortReason)).toBe(400);
+  });
+
+  it('keeps firstPrintAvailable after a failed first print and a failed reprint', async () => {
+    const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, null);
+    expect(await firstPrint(adminA, companyA, order.id, 'packing_slip')).toBe(true);
+
+    const first = await requestPrint(fulfil, companyA, order.id, 'packing_slip', cid('fp-first'), {
+      printerId: offlineA,
+    });
+    expect(await firstPrint(adminA, companyA, order.id, 'packing_slip')).toBe(false);
+    const failedFirst = await finishPrint(fulfil, companyA, stringField(first, 'id'));
+    expect(failedFirst.status).toBe('failed');
+    expect(failedFirst.isReprint).toBe(false);
+    expect(await firstPrint(adminA, companyA, order.id, 'packing_slip')).toBe(true);
+
+    const reprinted = await send(fulfil, 'post', `/api/c/${companyA}/print-requests`, cid('fp-reprint'), {
+      documentType: 'packing_slip',
+      sourceType: 'order',
+      sourceId: order.id,
+      printerId: offlineA,
+      reprint: { ofPrintJobId: stringField(first, 'id'), reason: 'first copy failed' },
+    });
+    expect(reprinted.status, text(reprinted)).toBe(200);
+    const reprintJob = record(record(reprinted.body).printJob);
+    expect(reprintJob.isReprint).toBe(true);
+    const failedReprint = await finishPrint(fulfil, companyA, stringField(reprintJob, 'id'));
+    expect(failedReprint.status).toBe('failed');
+    expect(failedReprint.isReprint).toBe(true);
+
+    const detail = await send(adminA, 'get', `/api/c/${companyA}/orders/${order.id}`);
+    expect(detail.status, text(detail)).toBe(200);
+    const slot = record(record(record(record(detail.body).order).printJobs).packing_slip);
+    expect(slot.status).toBe('failed');
+    expect(slot.isReprint).toBe(true);
+    expect(await firstPrint(adminA, companyA, order.id, 'packing_slip')).toBe(true);
+
+    const again = await requestPrint(fulfil, companyA, order.id, 'packing_slip', cid('fp-again'), {
+      printerId: offlineA,
+    });
+    expect(again.isReprint).toBe(false);
   });
 
   it('fails an offline printer and leaves a timeout uncertain without a second submit', async () => {
@@ -641,6 +710,39 @@ describe('printing with the mock provider', () => {
     expect(arrayOf(record(ownList.body).printJobs).map((job) => stringField(record(job), 'id'))).toContain(own.id);
     await send(adminA, 'post', `/api/c/${companyA}/print-jobs/${stringField(hidden, 'id')}/cancel`, cid('scope-presta-cancel'));
     await send(adminA, 'post', `/api/c/${companyA}/print-jobs/${stringField(own, 'id')}/cancel`, cid('scope-shopify-cancel'));
+  });
+
+  it('offers cancel only for print jobs inside the caller print.submit scope', async () => {
+    const placed = await withCompany(companyA, async (tx) => {
+      const presta = await tx.store.findFirstOrThrow({
+        where: { companyId: companyA, name: 'Nutbox Demo PrestaShop' },
+      });
+      const connection = await tx.storeConnection.findFirstOrThrow({
+        where: { companyId: companyA, storeId: presta.id, status: 'active', mode: 'mock' },
+      });
+      return { prestaId: presta.id, connectionId: connection.id };
+    });
+    const prestaOrder = await makeOrder(companyA, placed.prestaId, placed.connectionId, GREEK_GIFT);
+    const prestaJob = await requestPrint(adminA, companyA, prestaOrder.id, 'packing_slip', cid('can-presta'));
+    const shopifyOrder = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
+    const shopifyJob = await requestPrint(adminA, companyA, shopifyOrder.id, 'packing_slip', cid('can-shopify'));
+    const prestaJobId = stringField(prestaJob, 'id');
+    const shopifyJobId = stringField(shopifyJob, 'id');
+    const viewer = await installWideViewer(`print-scope-${runId}@example.test`);
+    const listed = await send(viewer, 'get', `/api/c/${companyA}/print-jobs?pageSize=100`);
+    expect(listed.status, text(listed)).toBe(200);
+    const jobs = arrayOf(record(listed.body).printJobs).map((job) => record(job));
+    const presta = jobs.find((job) => stringField(job, 'id') === prestaJobId);
+    const shopify = jobs.find((job) => stringField(job, 'id') === shopifyJobId);
+    if (!presta || !shopify) {
+      throw new Error('scoped print jobs were not both listed');
+    }
+    expect(boolField(record(presta.can), 'cancel')).toBe(false);
+    expect(boolField(record(shopify.can), 'cancel')).toBe(true);
+    expect(boolField(record(presta.can), 'release')).toBe(false);
+    expect(boolField(record(shopify.can), 'release')).toBe(false);
+    await send(adminA, 'post', `/api/c/${companyA}/print-jobs/${prestaJobId}/cancel`, cid('can-presta-cancel'));
+    await send(adminA, 'post', `/api/c/${companyA}/print-jobs/${shopifyJobId}/cancel`, cid('can-shopify-cancel'));
   });
 
   it('settles a hanging submit as uncertain within the timeout and records the late result', async () => {
@@ -1029,6 +1131,40 @@ describe('printing with the mock provider', () => {
     expect(count).toBe(1);
   });
 
+  it('lists locations for this company only', async () => {
+    const listed = await send(adminA, 'get', `/api/c/${companyA}/locations`);
+    expect(listed.status, text(listed)).toBe(200);
+    const names = arrayOf(record(listed.body).locations).map((row) => stringField(record(row), 'name'));
+    expect(names).toContain('Demo Shop – Nicosia');
+    expect(names).not.toContain('Demo Shop – Larnaca');
+    const ids = arrayOf(record(listed.body).locations).map((row) => stringField(record(row), 'id'));
+    expect(new Set(ids).size).toBe(ids.length);
+    const foreign = await send(adminB, 'get', `/api/c/${companyA}/locations`);
+    expect(foreign.status, text(foreign)).toBe(404);
+    const own = await send(adminB, 'get', `/api/c/${companyB}/locations`);
+    expect(own.status, text(own)).toBe(200);
+    const ownNames = arrayOf(record(own.body).locations).map((row) => stringField(record(row), 'name'));
+    expect(ownNames).toContain('Demo Shop – Larnaca');
+    expect(ownNames).not.toContain('Demo Shop – Nicosia');
+  });
+
+  it('lists printer mappings for this company only', async () => {
+    const listed = await send(adminA, 'get', `/api/c/${companyA}/printer-mappings`);
+    expect(listed.status, text(listed)).toBe(200);
+    const rows = arrayOf(record(listed.body).mappings).map((row) => record(row));
+    const packing = rows.find((row) => row.documentType === 'packing_slip');
+    expect(packing).toMatchObject({ printerId: onlineA, paperSize: 'A4', copies: 1 });
+    expect(rows.some((row) => row.printerId === onlineB)).toBe(false);
+    const denied = await send(fulfil, 'get', `/api/c/${companyA}/printer-mappings`);
+    expect(denied.status, text(denied)).toBe(403);
+    const other = await send(adminB, 'get', `/api/c/${companyB}/printer-mappings`);
+    expect(other.status, text(other)).toBe(200);
+    const otherPrinters = arrayOf(record(other.body).mappings).map((row) => stringField(record(row), 'printerId'));
+    expect(otherPrinters).not.toContain(onlineA);
+    const foreign = await send(adminB, 'get', `/api/c/${companyA}/printer-mappings`);
+    expect(foreign.status, text(foreign)).toBe(404);
+  });
+
   it('refuses a gift message that the template cannot print', async () => {
     const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, '🎉');
     const before = provider.submitCount;
@@ -1136,6 +1272,60 @@ describe('printing with the mock provider', () => {
       return order.id;
     });
     return { id };
+  }
+
+  async function installWideViewer(email: string): Promise<Session> {
+    const client = started().get(PrismaService).client;
+    const user = await client.userAccount.create({
+      data: { email, displayName: email, locale: 'en', status: 'active', isPlatformOwner: false },
+    });
+    await client.userIdentity.create({
+      data: {
+        userId: user.id,
+        provider: 'dev',
+        issuer: 'https://dev-login.invalid',
+        subject: email,
+        emailAtLink: email,
+      },
+    });
+    const membership = await client.membership.create({
+      data: { userId: user.id, companyId: companyA, status: 'active' },
+    });
+    const viewRole = await client.role.create({
+      data: {
+        companyId: companyA,
+        key: `view-${randomUUID().slice(0, 8)}`,
+        name: `${email} view`,
+        permissions: { create: [{ permission: 'automation.view' }] },
+      },
+    });
+    const submitRole = await client.role.create({
+      data: {
+        companyId: companyA,
+        key: `submit-${randomUUID().slice(0, 8)}`,
+        name: `${email} submit`,
+        permissions: { create: [{ permission: 'print.submit' }] },
+      },
+    });
+    await client.membershipRole.create({
+      data: {
+        membershipId: membership.id,
+        roleId: viewRole.id,
+        scopeType: 'company',
+        scopeId: null,
+        grantedById: adminUserId,
+      },
+    });
+    await client.membershipRole.create({
+      data: {
+        membershipId: membership.id,
+        roleId: submitRole.id,
+        scopeType: 'store',
+        scopeId: shopifyStoreA,
+        grantedById: adminUserId,
+      },
+    });
+    return login(started(), email);
   }
 
   async function installStaff(email: string, permissions: string[]): Promise<Session> {
@@ -1265,6 +1455,18 @@ describe('printing with the mock provider', () => {
     );
   }
 });
+
+async function firstPrint(
+  session: Session,
+  companyId: string,
+  orderId: string,
+  documentType: string,
+): Promise<boolean> {
+  const response = await send(session, 'get', `/api/c/${companyId}/orders/${orderId}`);
+  expect(response.status, text(response)).toBe(200);
+  const flags = record(record(record(response.body).order).firstPrintAvailable);
+  return flags[documentType] === true;
+}
 
 async function requestPrint(
   session: Session,
@@ -1565,6 +1767,14 @@ function arrayOf(value: unknown): unknown[] {
     throw new Error('expected an array');
   }
   return value;
+}
+
+function boolField(value: Record<string, unknown>, key: string): boolean {
+  const field = value[key];
+  if (typeof field !== 'boolean') {
+    throw new Error(`${key} is missing`);
+  }
+  return field;
 }
 
 function stringField(value: Record<string, unknown>, key: string): string {

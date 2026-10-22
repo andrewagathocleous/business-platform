@@ -161,6 +161,12 @@ async function main(): Promise<void> {
   if (!ownerUrl) {
     throw new Error('DATABASE_URL_OWNER is required');
   }
+  if (process.env['BP_SEED_TARGET'] === 'test') {
+    const name = new URL(ownerUrl).pathname.replace(/^\//, '');
+    if (name !== 'business_platform_test') {
+      throw new Error('BP_SEED_TARGET=test requires the business_platform_test database');
+    }
+  }
   const username = new URL(ownerUrl).username;
   if (username !== 'bp_owner') {
     throw new Error('seed must connect as bp_owner');

@@ -82,6 +82,7 @@ describe('authorisation and tenancy', () => {
     const contextBody = record(payload(context));
     const company = record(contextBody.company);
     expect(company.legalName).toBe(COMPANY_A);
+    expect(company.documentLanguage).toBe('en');
     expect(contextBody.mfaStepUpRequired).toBe(false);
     expect(contextBody.withheldPermissions).toEqual([]);
     expect(grants(contextBody).some((grant) => grant.permission === 'member.manage' && grant.scopeType === 'company')).toBe(

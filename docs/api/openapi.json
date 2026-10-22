@@ -1,6 +1,21 @@
 {
   "openapi": "3.0.0",
   "paths": {
+    "/api/auth/providers": {
+      "get": {
+        "operationId": "AuthController_providers",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Development login and OIDC availability"
+          }
+        },
+        "summary": "Which sign-in methods are enabled. The response contains no secrets.",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/auth/dev/users": {
       "get": {
         "operationId": "AuthController_devUsers",
@@ -89,6 +104,19 @@
         "tags": [
           "auth"
         ]
+      },
+      "patch": {
+        "operationId": "MeController_updateLocale",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The user, authorised companies and session expiry, with the stored locale"
+          }
+        },
+        "summary": "Update the signed-in user locale",
+        "tags": [
+          "auth"
+        ]
       }
     },
     "/api/c/{companyId}/context": {
@@ -111,6 +139,31 @@
           }
         },
         "summary": "Company summary, caller grants, switches and MFA step-up",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/locations": {
+      "get": {
+        "operationId": "CompanyController_locations",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Locations in this company",
         "tags": [
           "company"
         ]
@@ -662,7 +715,7 @@
             "description": ""
           }
         },
-        "summary": "One print job. The status stays the provider value, including done_reported.",
+        "summary": "One print job. print.submit, print.reprint, print.confirm or automation.view, at the job scope. The status stays the provider value, including done_reported.",
         "tags": [
           "printing"
         ]
@@ -821,6 +874,29 @@
       }
     },
     "/api/c/{companyId}/printer-mappings": {
+      "get": {
+        "operationId": "PrintController_mappings",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Printer mappings for this company",
+        "tags": [
+          "printing"
+        ]
+      },
       "put": {
         "operationId": "PrintController_mapping",
         "parameters": [
@@ -1459,6 +1535,40 @@
         ]
       }
     },
+    "/api/c/{companyId}/orders/{id}/assignees": {
+      "get": {
+        "operationId": "OrderController_assignees",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Active members who can view this order and claim or move it. Suspended members are excluded. order.claim alone is not enough to list them.",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
     "/api/c/{companyId}/orders/{id}": {
       "get": {
         "operationId": "OrderController_detail",
@@ -1487,7 +1597,7 @@
             "description": ""
           }
         },
-        "summary": "Order detail, including the exact gift message and allowed transitions",
+        "summary": "Order detail, including the exact gift message, allowed transitions, per-order can flags and firstPrintAvailable",
         "tags": [
           "orders"
         ]
@@ -1624,6 +1734,31 @@
           }
         },
         "summary": "Assign the order. Someone else, or clearing the assignee, needs order.assign. Assigning yourself needs order.claim or order.assign.",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/c/{companyId}/order-filters": {
+      "get": {
+        "operationId": "OrderFilterController_filters",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Stores the caller can use to filter the order list",
         "tags": [
           "orders"
         ]

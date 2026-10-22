@@ -27,6 +27,7 @@ import { PrismaService } from '../database/prisma.service';
 import type { RequestMeta } from '../identity/request-meta';
 import { businessDateBounds } from './business-time';
 import type { OrderListQuery } from './order.query';
+import { blocksFirstPrint } from '../printing/first-print';
 import { printJobLabel, type PrintSlot } from '../printing/print-label';
 import { orderScopes } from './order.scope';
 
@@ -184,8 +185,13 @@ export class OrderService {
           skip: (query.page - 1) * query.pageSize,
           take: query.pageSize,
         });
+        const names = await memberNames(
+          tx,
+          ctx.companyId,
+          rows.map((row) => row.assignedToUserId),
+        );
         return {
-          orders: rows.map((row) => orderSummary(row)),
+          orders: rows.map((row) => orderSummary(row, names)),
           page: query.page,
           pageSize: query.pageSize,
           total,
@@ -201,8 +207,7 @@ export class OrderService {
     try {
       return await this.tenants.run(this.context(ctx, actor), async (tx) => {
         const order = await this.load(tx, ctx.companyId, id);
-        const printJobs = await latestPrintJobs(tx, ctx.companyId, order.id);
-        return { order: orderDetail(order, ctx, printJobs) };
+        return { order: await presentOrder(tx, ctx, order) };
       });
     } catch (error) {
       return this.fail(ctx, meta, error);
@@ -276,7 +281,7 @@ export class OrderService {
           details: { from: state.fulfilmentStatus, to: input.to, reason: input.reason ?? null },
         });
         const saved = await this.load(tx, ctx.companyId, order.id);
-        return { order: orderDetail(saved, ctx, await latestPrintJobs(tx, ctx.companyId, order.id)) };
+        return { order: await presentOrder(tx, ctx, saved) };
       });
     } catch (error) {
       return this.fail(ctx, meta, error);
@@ -305,9 +310,14 @@ export class OrderService {
           details: { noteId: note.id },
         });
         const saved = await this.load(tx, ctx.companyId, order.id);
+        const names = await memberNames(tx, ctx.companyId, [
+          saved.assignedToUserId,
+          note.authorUserId,
+          ...(saved.notes ?? []).map((item) => item.authorUserId),
+        ]);
         return {
-          note: noteView(note),
-          order: orderDetail(saved, ctx, await latestPrintJobs(tx, ctx.companyId, order.id)),
+          note: noteView(note, names),
+          order: orderDetail(saved, ctx, await printState(tx, ctx.companyId, order.id), names),
         };
       });
     } catch (error) {
@@ -366,7 +376,7 @@ export class OrderService {
           details: { userId },
         });
         const saved = await this.load(tx, ctx.companyId, order.id);
-        return { order: orderDetail(saved, ctx, await latestPrintJobs(tx, ctx.companyId, order.id)) };
+        return { order: await presentOrder(tx, ctx, saved) };
       });
     } catch (error) {
       return this.fail(ctx, meta, error);
@@ -408,6 +418,62 @@ export class OrderService {
             details: event.details,
           })),
         };
+      });
+    } catch (error) {
+      return this.fail(ctx, meta, error);
+    }
+  }
+
+  async filters(
+    ctx: RequestContext,
+    meta: RequestMeta,
+  ): Promise<{ stores: { id: string; name: string; platform: string }[] }> {
+    const actor = requireActor(ctx);
+    try {
+      return await this.tenants.run(this.context(ctx, actor), async (tx) => {
+        const scope = await this.visibleStoreIds(tx, ctx);
+        if (scope.kind === 'none') {
+          return { stores: [] };
+        }
+        const stores = await tx.store.findMany({
+          where: {
+            companyId: ctx.companyId,
+            ...(scope.kind === 'ids' ? { id: { in: scope.ids } } : {}),
+          },
+          select: { id: true, name: true, platform: true },
+          orderBy: [{ name: 'asc' }, { id: 'asc' }],
+        });
+        return {
+          stores: stores.map((store) => ({
+            id: store.id,
+            name: store.name,
+            platform: store.platform,
+          })),
+        };
+      });
+    } catch (error) {
+      return this.fail(ctx, meta, error);
+    }
+  }
+
+  async assignees(ctx: RequestContext, id: string, meta: RequestMeta) {
+    const actor = requireActor(ctx);
+    try {
+      return await this.tenants.run(this.context(ctx, actor), async (tx) => {
+        const order = await this.load(tx, ctx.companyId, id);
+        const members = await tx.membership.findMany({
+          where: { companyId: ctx.companyId, status: 'active', user: { status: 'active' } },
+          select: { id: true, userId: true, user: { select: { displayName: true } } },
+          orderBy: [{ user: { displayName: 'asc' } }, { userId: 'asc' }],
+        });
+        const users: { userId: string; displayName: string }[] = [];
+        for (const member of members) {
+          const grants = await grantsForMembership(tx, member.id);
+          if (assigneeCandidate(grants, order.storeId, order.store?.locationId ?? '')) {
+            users.push({ userId: member.userId, displayName: member.user.displayName });
+          }
+        }
+        return { users };
       });
     } catch (error) {
       return this.fail(ctx, meta, error);
@@ -482,7 +548,7 @@ async function assertAssignee(
       ? await tx.membership.findUnique({ where: { userId_companyId: { userId, companyId } } })
       : null;
   const grants = membership && membership.status === 'active' ? await grantsForMembership(tx, membership.id) : [];
-  if (!can(grants, 'order.view', orderScopes(storeId, locationId))) {
+  if (!assigneeGrantsAllow(grants, storeId, locationId)) {
     throw new CommerceError(422, 'assignee_not_allowed', 'order', orderId, 'assignee_not_allowed', action);
   }
 }
@@ -527,11 +593,11 @@ async function searchIds(tx: TenantTransaction, companyId: string, q: string): P
   return rows.map((row) => row.id);
 }
 
-async function latestPrintJobs(
+async function printState(
   tx: TenantTransaction,
   companyId: string,
   orderId: string,
-): Promise<Record<PrintType, PrintSlot | null>> {
+): Promise<{ latest: Record<PrintType, PrintSlot | null>; firstPrintAvailable: Record<PrintType, boolean> }> {
   const jobs = await tx.printJob.findMany({
     where: { companyId, sourceType: 'order', sourceId: orderId },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -559,8 +625,15 @@ async function latestPrintJobs(
     gift_message: null,
     shipping_label: null,
   };
+  const blocked = new Set<PrintType>();
   for (const job of jobs) {
-    if (!isPrintType(job.documentType) || latest[job.documentType] !== null) {
+    if (!isPrintType(job.documentType)) {
+      continue;
+    }
+    if (blocksFirstPrint(job.status, job.isReprint)) {
+      blocked.add(job.documentType);
+    }
+    if (latest[job.documentType] !== null) {
       continue;
     }
     const provider = providerById.get(job.printerId) ?? 'mock';
@@ -574,7 +647,15 @@ async function latestPrintJobs(
       label: printJobLabel(job.status),
     };
   }
-  return latest;
+  return {
+    latest,
+    firstPrintAvailable: {
+      invoice: !blocked.has('invoice'),
+      packing_slip: !blocked.has('packing_slip'),
+      gift_message: !blocked.has('gift_message'),
+      shipping_label: !blocked.has('shipping_label'),
+    },
+  };
 }
 
 function orderBy(query: OrderListQuery): Prisma.SalesOrderOrderByWithRelationInput[] {
@@ -601,7 +682,44 @@ function emptyPage(query: OrderListQuery) {
   return { orders: [], page: query.page, pageSize: query.pageSize, total: 0 };
 }
 
-function orderSummary(row: OrderRow) {
+type MemberNames = ReadonlyMap<string, string>;
+
+async function memberNames(
+  tx: TenantTransaction,
+  companyId: string,
+  userIds: readonly (string | null | undefined)[],
+): Promise<MemberNames> {
+  const ids = [...new Set(userIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+  if (ids.length === 0) {
+    return new Map();
+  }
+  const rows = await tx.membership.findMany({
+    where: { companyId, userId: { in: ids } },
+    select: { userId: true, user: { select: { displayName: true } } },
+  });
+  return new Map(rows.map((row) => [row.userId, row.user.displayName]));
+}
+
+function named(userId: string | null, names: MemberNames): { userId: string; displayName: string } | null {
+  if (!userId) {
+    return null;
+  }
+  const displayName = names.get(userId);
+  if (displayName === undefined) {
+    return null;
+  }
+  return { userId, displayName };
+}
+
+async function presentOrder(tx: TenantTransaction, ctx: RequestContext, row: OrderRow) {
+  const names = await memberNames(tx, ctx.companyId, [
+    row.assignedToUserId,
+    ...(row.notes ?? []).map((note) => note.authorUserId),
+  ]);
+  return orderDetail(row, ctx, await printState(tx, ctx.companyId, row.id), names);
+}
+
+function orderSummary(row: OrderRow, names: MemberNames) {
   return {
     id: row.id,
     storeId: row.storeId,
@@ -623,6 +741,7 @@ function orderSummary(row: OrderRow) {
     taxTotal: fixed(row.taxTotal, 2),
     total: fixed(row.total, 2),
     assignedToUserId: row.assignedToUserId,
+    assignedTo: named(row.assignedToUserId, names),
     version: row.version,
     customer: customerSummary(row.customer),
   };
@@ -631,7 +750,8 @@ function orderSummary(row: OrderRow) {
 function orderDetail(
   row: OrderRow,
   ctx: RequestContext,
-  printJobs: Record<PrintType, PrintSlot | null>,
+  prints: { latest: Record<PrintType, PrintSlot | null>; firstPrintAvailable: Record<PrintType, boolean> },
+  names: MemberNames,
 ) {
   const state = {
     fulfilmentStatus: fulfilmentOf(row.fulfilmentStatus),
@@ -639,7 +759,7 @@ function orderDetail(
     deliveryMethod: deliveryOf(row.deliveryMethod),
   };
   return {
-    ...orderSummary(row),
+    ...orderSummary(row, names),
     sourceStatus: jsonObject(row.sourceStatus),
     customer: jsonObject(row.customer),
     recipient: jsonObject(row.recipient),
@@ -657,17 +777,63 @@ function orderDetail(
       unitPrice: fixed(line.unitPrice, 4),
       total: fixed(line.total, 2),
     })),
-    notes: (row.notes ?? []).map(noteView),
+    notes: (row.notes ?? []).map((note) => noteView(note, names)),
     allowedTransitions: visibleTransitions(state, ctx, row.storeId, row.store?.locationId ?? ''),
-    printJobs,
+    printJobs: prints.latest,
+    firstPrintAvailable: prints.firstPrintAvailable,
+    can: orderCapabilities(ctx.grants, row.storeId, row.store?.locationId ?? ''),
   };
 }
 
-function noteView(note: NoteRow) {
+export type OrderCan = {
+  edit: boolean;
+  claim: boolean;
+  assign: boolean;
+  cancel: boolean;
+  downloadDocuments: boolean;
+  printSubmit: boolean;
+  printReprint: boolean;
+  printConfirm: boolean;
+};
+
+/** Same `can(grants, permission, orderScopes)` check the order and print routes use. `claim` is claim or assign. */
+export function orderCapabilities(grants: readonly Grant[], storeId: string, locationId: string): OrderCan {
+  const scopes = orderScopes(storeId, locationId);
+  return {
+    edit: can(grants, 'order.edit', scopes),
+    claim: can(grants, 'order.claim', scopes) || can(grants, 'order.assign', scopes),
+    assign: can(grants, 'order.assign', scopes),
+    cancel: can(grants, 'order.cancel', scopes),
+    downloadDocuments: can(grants, 'document.download', scopes),
+    printSubmit: can(grants, 'print.submit', scopes),
+    printReprint: can(grants, 'print.reprint', scopes),
+    printConfirm: can(grants, 'print.confirm', scopes),
+  };
+}
+
+/** The grant check `assertAssignee` enforces: the member can view this order. */
+export function assigneeGrantsAllow(grants: readonly Grant[], storeId: string, locationId: string): boolean {
+  return can(grants, 'order.view', orderScopes(storeId, locationId));
+}
+
+/**
+ * Assignee list: `assertAssignee`'s rule, plus `order.claim` or `order.transition` on the order.
+ * The view check is the shared predicate so the list cannot offer someone assign would reject.
+ */
+export function assigneeCandidate(grants: readonly Grant[], storeId: string, locationId: string): boolean {
+  const scopes = orderScopes(storeId, locationId);
+  return (
+    assigneeGrantsAllow(grants, storeId, locationId) &&
+    (can(grants, 'order.claim', scopes) || can(grants, 'order.transition', scopes))
+  );
+}
+
+function noteView(note: NoteRow, names: MemberNames) {
   return {
     id: note.id,
     body: note.body,
     authorUserId: note.authorUserId,
+    authorDisplayName: names.get(note.authorUserId) ?? null,
     createdAt: note.createdAt.toISOString(),
   };
 }

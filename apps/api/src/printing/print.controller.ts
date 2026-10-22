@@ -7,7 +7,13 @@ import { issueMessage, queryRecord, requireContext, unknownBody } from '../comme
 import { requestMeta } from '../identity/request-meta';
 import { isUuid } from '../authz/company-path';
 import { PrintService, type PrintJobStatusName, type PrintRequestInput } from './print.service';
-import { printJobScope, printListScope, printRequestScope, printerListScope } from './print.scope';
+import {
+  printJobReadAnyOf,
+  printJobScope,
+  printListScope,
+  printRequestScope,
+  printerListScope,
+} from './print.scope';
 
 const DOCUMENT_TYPES = ['invoice', 'packing_slip', 'gift_message', 'shipping_label'] as const;
 const PRINT_STATUSES = [
@@ -112,8 +118,11 @@ export class PrintController {
 
   @Get('print-jobs/:id')
   @idParam
-  @RequirePermission('print.submit', { anyOf: ['automation.view'], scope: printJobScope })
-  @ApiOperation({ summary: 'One print job. The status stays the provider value, including done_reported.' })
+  @RequirePermission('print.submit', { anyOf: printJobReadAnyOf, scope: printJobScope })
+  @ApiOperation({
+    summary:
+      'One print job. print.submit, print.reprint, print.confirm or automation.view, at the job scope. The status stays the provider value, including done_reported.',
+  })
   async get(@Req() req: Request, @Param('companyId') companyId: string, @Param('id') id: string) {
     return this.printing.get(requireContext(req, companyId), id, requestMeta(req));
   }
@@ -169,6 +178,13 @@ export class PrintController {
       throw new BadRequestException(issueMessage(parsed.error));
     }
     return this.printing.discover(requireContext(req, companyId), parsed.data.locationId, requestMeta(req));
+  }
+
+  @Get('printer-mappings')
+  @RequirePermission('printer.manage')
+  @ApiOperation({ summary: 'Printer mappings for this company' })
+  async mappings(@Req() req: Request, @Param('companyId') companyId: string) {
+    return this.printing.listMappings(requireContext(req, companyId), requestMeta(req));
   }
 
   @Put('printer-mappings')

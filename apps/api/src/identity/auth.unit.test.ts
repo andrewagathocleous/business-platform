@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { AppConfig } from '../config/env';
+import { publicAuthProviders } from './auth-providers';
 import { invitationEmailMatches, parseOidcClaims, type ParsedOidcClaims } from './claims';
 import { xsrfToken, xsrfTokensMatch } from './csrf';
 import { applyMfaPolicy, mfaSatisfiedFromAmr, PRIVILEGED_PERMISSIONS } from './mfa-policy';
@@ -9,6 +11,36 @@ import { sessionStatus, shouldTouchSession } from './session-rules';
 import { hashToken, tokenHashesMatch } from './tokens';
 
 const key = Buffer.alloc(32, 7);
+
+describe('public auth providers', () => {
+  it('reports development login and OIDC from configuration without copying secrets', () => {
+    expect(publicAuthProviders(providerConfig({}))).toEqual({ devLogin: false, oidc: false });
+    expect(
+      publicAuthProviders(
+        providerConfig({
+          authDevLoginEnabled: true,
+          appEnv: 'development',
+          oidcIssuer: 'https://login.example.test/tenant',
+          oidcClientId: 'client',
+          oidcClientSecret: 'secret-value',
+          oidcRedirectUri: 'http://127.0.0.1:3000/api/auth/oidc/callback',
+        }),
+      ),
+    ).toEqual({ devLogin: true, oidc: true });
+    expect(
+      publicAuthProviders(providerConfig({ authDevLoginEnabled: true, appEnv: 'production' })),
+    ).toEqual({ devLogin: false, oidc: false });
+    expect(
+      publicAuthProviders(
+        providerConfig({
+          oidcIssuer: 'https://login.example.test/tenant',
+          oidcClientId: 'client',
+          oidcRedirectUri: 'http://127.0.0.1:3000/api/auth/oidc/callback',
+        }),
+      ),
+    ).toEqual({ devLogin: false, oidc: false });
+  });
+});
 
 describe('session cookies and CSRF', () => {
   it('names the session cookie from the secure flag', () => {
@@ -80,7 +112,9 @@ describe('MFA policy', () => {
     expect(result.grants).toEqual([ordinary]);
     expect(result.isPlatformOwner).toBe(false);
     expect(result.mfaStepUpRequired).toBe(true);
-    expect(result.withheldPermissions).toEqual(expect.arrayContaining(['member.manage', 'platform-owner']));
+    expect(result.withheldPermissions).toEqual(
+      expect.arrayContaining(['member.manage', 'platform-owner']),
+    );
     expect(PRIVILEGED_PERMISSIONS).toContain('member.manage');
   });
 
@@ -157,11 +191,52 @@ describe('session expiry rules', () => {
     };
     expect(sessionStatus(session, new Date(session.idleExpiresAt.getTime() - 1))).toBe('ok');
     expect(sessionStatus(session, session.idleExpiresAt)).toBe('expired');
-    expect(sessionStatus({ ...session, idleExpiresAt: session.absoluteExpiresAt }, session.absoluteExpiresAt)).toBe(
-      'expired',
-    );
+    expect(
+      sessionStatus(
+        { ...session, idleExpiresAt: session.absoluteExpiresAt },
+        session.absoluteExpiresAt,
+      ),
+    ).toBe('expired');
     expect(sessionStatus({ ...session, revokedAt: start }, start)).toBe('revoked');
     expect(shouldTouchSession(start, new Date(start.getTime() + 59_999))).toBe(false);
     expect(shouldTouchSession(start, new Date(start.getTime() + 60_000))).toBe(true);
   });
 });
+
+function providerConfig(
+  overrides: Partial<
+    Pick<
+      AppConfig,
+      | 'appEnv'
+      | 'authDevLoginEnabled'
+      | 'oidcIssuer'
+      | 'oidcClientId'
+      | 'oidcClientSecret'
+      | 'oidcRedirectUri'
+    >
+  >,
+): AppConfig {
+  return {
+    appEnv: 'test',
+    authDevLoginEnabled: false,
+    sessionCookieSecure: false,
+    csrfSecret: 'csrf',
+    authRequireMfaForPrivileged: false,
+    oidcIssuer: '',
+    oidcClientId: '',
+    oidcClientSecret: '',
+    oidcRedirectUri: '',
+    masterKeys: {},
+    activeMasterKeyId: 'k1',
+    databaseUrl: 'configured',
+    port: 3000,
+    host: '127.0.0.1',
+    throttleDefaultLimit: 300,
+    throttleAuthLimit: 20,
+    throttleAutomationLimit: 120,
+    throttleEnabledInTest: false,
+    storageRoot: '/tmp/bp-storage',
+    mockPrintRoot: '/tmp/bp-mock-print',
+    ...overrides,
+  };
+}

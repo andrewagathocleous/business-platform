@@ -2,7 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { TenantDb } from '@bp/db';
 import { shopifyFixturesDirectory } from '@bp/integrations';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { AppModule } from './app.module';
 import { loadRootEnv } from './config/load-env';
 import { PrismaService } from './database/prisma.service';
@@ -16,7 +16,7 @@ import { JobRunner } from './automation/jobs/job-runner';
  * list endpoint yet.
  */
 const ROOT = resolve(__dirname, '../../..');
-const TOKEN_FILE = join(ROOT, 'var', 'demo-service-identities.json');
+const TOKEN_FILE = process.env.DEMO_TOKEN_FILE ?? join(ROOT, 'var', 'demo-service-identities.json');
 const COMPANIES = {
   A: {
     legalName: 'Demo Company A Ltd (fictional)',
@@ -58,7 +58,7 @@ if (entry.endsWith('demo-import-fixtures.ts') || entry.endsWith('demo-import-fix
 async function main(): Promise<void> {
   const key = companyKey();
   const spec = COMPANIES[key];
-  const base = `http://127.0.0.1:${process.env.PORT ?? '3000'}`;
+  const base = apiOrigin();
   const app = await NestFactory.createApplicationContext(AppModule, {
     bufferLogs: true,
     abortOnError: false,
@@ -214,8 +214,16 @@ function readTokenFile(): TokenFile {
   }
 }
 
+function apiOrigin(): string {
+  const configured = process.env.DEMO_API_ORIGIN;
+  if (configured && configured.length > 0) {
+    return configured.replace(/\/$/, '');
+  }
+  return `http://127.0.0.1:${process.env.PORT ?? '3000'}`;
+}
+
 function writeTokenFile(file: TokenFile): void {
-  mkdirSync(join(ROOT, 'var'), { recursive: true, mode: 0o700 });
+  mkdirSync(dirname(TOKEN_FILE), { recursive: true, mode: 0o700 });
   writeFileSync(TOKEN_FILE, `${JSON.stringify(file)}\n`, { mode: 0o600 });
   chmodSync(TOKEN_FILE, 0o600);
 }

@@ -31,7 +31,7 @@ The milestone is met when all of these are demonstrated and recorded in `docs/mi
 | Nx | 23.3.x | `@nx/angular`, `@nx/nest`, `@nx/js`, `@nx/vite` |
 | TypeScript | 6.0.x | Angular 22 peer `>=6.0 <6.1`. **Not 7.x** |
 | Angular | 22.2.x | standalone, signals, zoneless if the generator supports it |
-| PrimeNG | 22.1.x plus `@primeuix/themes` 3.x (Aura) | `@angular/cdk` 22.1+ |
+| PrimeNG | 21.1.10 (MIT) plus `@primeuix/themes` 2.0.3 (Aura) and PrimeIcons 7.0.0 | PrimeNG 22+, `@primeuix/themes` 3 and PrimeIcons 8 are under the commercial PrimeUI licence and need a licence key. 21.1.10 is the last MIT release. |
 | NestJS | 12.1.x | Express platform |
 | Prisma | **7.10.x** (`prisma`, `@prisma/client`, `@prisma/adapter-pg`) | npm `latest` points at 8.0 RC; do not use it |
 | zod | 4.x; `nestjs-zod` 5.x | |
@@ -573,7 +573,9 @@ Fictional data only, with `is_fictional = true` and `.test` emails. Idempotent, 
 
 ---
 
-## Step D: web app (Angular 22 + PrimeNG 22)
+## Step D: web app (Angular 22 + PrimeNG 21.1.10)
+
+PrimeNG 22 and later, `@primeuix/themes` 3 and PrimeIcons 8 are under the commercial PrimeUI licence. This step pins PrimeNG **21.1.10** (MIT), `@primeuix/themes` **2.0.3** (Aura) and PrimeIcons **7.0.0**.
 
 - Standalone components, signals, the `provideHttpClient(withXsrfConfiguration({cookieName:'XSRF-TOKEN', headerName:'X-XSRF-TOKEN'}))` setup, and the dev-server proxy `/api` → `http://localhost:3000`.
 - Aura theme preset (PrimeNG's own; no third-party paid themes or icon packs; PrimeIcons is MIT). Responsive layout: a top bar with the **company switcher** (only authorised companies, from `/api/me`) and user menu, and a side nav filtered by the permissions from `/context`. The UI hides what the user can't do, while the backend still enforces it.

@@ -30,6 +30,7 @@ import {
   setSessionCookie,
   setXsrfCookie,
 } from './cookies';
+import { publicAuthProviders, oidcConfigured } from './auth-providers';
 import { DevLoginService, devLoginEnabled } from './dev-login.service';
 import { OidcService } from './oidc.service';
 import { relativeRedirect, containsControlCharacter } from './redirect';
@@ -40,15 +41,6 @@ import { readStaffSession } from './staff-session';
 const loginBody = z.object({
   email: z.string().trim().min(3).max(320),
 });
-
-function oidcConfigured(config: AppConfig): boolean {
-  return (
-    config.oidcIssuer.length > 0 &&
-    config.oidcClientId.length > 0 &&
-    config.oidcClientSecret.length > 0 &&
-    config.oidcRedirectUri.length > 0
-  );
-}
 
 @ApiTags('auth')
 @Controller('auth')
@@ -61,6 +53,14 @@ export class AuthController {
     @Inject(OidcService) private readonly oidc: OidcService,
     @Inject(SessionService) private readonly sessions: SessionService,
   ) {}
+
+  @Get('providers')
+  @Public()
+  @ApiOperation({ summary: 'Which sign-in methods are enabled. The response contains no secrets.' })
+  @ApiOkResponse({ description: 'Development login and OIDC availability' })
+  providers(): { devLogin: boolean; oidc: boolean } {
+    return publicAuthProviders(this.config);
+  }
 
   @Get('dev/users')
   @Public()
@@ -91,7 +91,11 @@ export class AuthController {
     if (!parsed.success || !parsed.data.email.includes('@')) {
       throw new BadRequestException('email is required');
     }
-    const result = await this.devLogin.login(parsed.data.email, requestMeta(req), readSessionCookie(req, this.config));
+    const result = await this.devLogin.login(
+      parsed.data.email,
+      requestMeta(req),
+      readSessionCookie(req, this.config),
+    );
     if (!result.ok) {
       throw new UnauthorizedException('Authentication failed');
     }
@@ -138,7 +142,11 @@ export class AuthController {
       return;
     }
     try {
-      const result = await this.oidc.callback(req, requestMeta(req), readSessionCookie(req, this.config));
+      const result = await this.oidc.callback(
+        req,
+        requestMeta(req),
+        readSessionCookie(req, this.config),
+      );
       if (!result.ok) {
         sendError(res, result.status, result.message);
         return;
@@ -189,7 +197,12 @@ function invitationInput(value: unknown): { ok: true; token: string | null } | {
   if (value === undefined) {
     return { ok: true, token: null };
   }
-  if (typeof value !== 'string' || value.length === 0 || value.length > 512 || containsControlCharacter(value)) {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > 512 ||
+    containsControlCharacter(value)
+  ) {
     return { ok: false };
   }
   return { ok: true, token: value };

@@ -39,8 +39,19 @@ export type CompanySummary = {
   status: string;
 };
 
+/** Test seams. Production leaves `hooks` null. */
+export type SessionHooks = {
+  /** Inside the locale transaction, before the account row is locked. */
+  beforeLocaleLock?: () => Promise<void>;
+  /** After the account row is locked and before the current locale is read. */
+  afterLocaleLock?: () => Promise<void>;
+};
+
 @Injectable()
 export class SessionService {
+  /** Test seams. Production leaves this null. */
+  hooks: SessionHooks | null = null;
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(AuditService) private readonly audit: AuditService,
@@ -175,6 +186,40 @@ export class SessionService {
         details: { reason: 'logout' },
       });
     });
+  }
+
+  async updateLocale(
+    session: StaffSession,
+    locale: 'en' | 'el',
+    meta: RequestMeta,
+  ): Promise<'en' | 'el'> {
+    await this.prisma.client.$transaction(async (tx) => {
+      await this.hooks?.beforeLocaleLock?.();
+      await lockAccountNoKeyUpdate(tx, session.userId);
+      await this.hooks?.afterLocaleLock?.();
+      const current = await tx.userAccount.findUniqueOrThrow({
+        where: { id: session.userId },
+        select: { locale: true },
+      });
+      const from = current.locale === 'el' ? 'el' : 'en';
+      await tx.userAccount.update({
+        where: { id: session.userId },
+        data: { locale },
+      });
+      await this.audit.record(tx, {
+        actorType: 'user',
+        actorId: session.userId,
+        actorLabel: session.email,
+        action: 'user.locale_updated',
+        objectType: 'user_account',
+        objectId: session.userId,
+        outcome: 'success',
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+        details: { from, to: locale },
+      });
+    });
+    return locale;
   }
 
   async authorisedCompanies(session: StaffSession): Promise<CompanySummary[]> {

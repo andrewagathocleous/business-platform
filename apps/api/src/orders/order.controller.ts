@@ -58,10 +58,24 @@ export class OrderController {
     return this.orders.list(requireContext(req, companyId), parseOrderListQuery(req.query), requestMeta(req));
   }
 
+  @Get(':id/assignees')
+  @idParam
+  @RequirePermission('order.assign', { scope: orderResourceScope })
+  @ApiOperation({
+    summary:
+      'Active members who can view this order and claim or move it. Suspended members are excluded. order.claim alone is not enough to list them.',
+  })
+  async assignees(@Req() req: Request, @Param('companyId') companyId: string, @Param('id') id: string) {
+    return this.orders.assignees(requireContext(req, companyId), id, requestMeta(req));
+  }
+
   @Get(':id')
   @idParam
   @RequirePermission('order.view', { scope: orderResourceScope })
-  @ApiOperation({ summary: 'Order detail, including the exact gift message and allowed transitions' })
+  @ApiOperation({
+    summary:
+      'Order detail, including the exact gift message, allowed transitions, per-order can flags and firstPrintAvailable',
+  })
   async detail(@Req() req: Request, @Param('companyId') companyId: string, @Param('id') id: string) {
     return this.orders.detail(requireContext(req, companyId), id, requestMeta(req));
   }
@@ -123,5 +137,22 @@ export class OrderController {
       throw new BadRequestException(issueMessage(parsed.error));
     }
     return this.orders.assign(requireContext(req, companyId), id, parsed.data, requestMeta(req));
+  }
+}
+
+@ApiTags('orders')
+@companyIdParam
+@Controller('c/:companyId')
+export class OrderFilterController {
+  constructor(@Inject(OrderService) private readonly orders: OrderService) {}
+
+  @Get('order-filters')
+  @RequirePermission('order.view', { scope: orderListScope })
+  @ApiOperation({ summary: 'Stores the caller can use to filter the order list' })
+  async filters(
+    @Req() req: Request,
+    @Param('companyId') companyId: string,
+  ): Promise<{ stores: { id: string; name: string; platform: string }[] }> {
+    return this.orders.filters(requireContext(req, companyId), requestMeta(req));
   }
 }

@@ -27,6 +27,7 @@ export type CompanyContextView = {
     timezone: string;
     defaultCurrency: string;
     countryCode: string;
+    documentLanguage: 'en' | 'el';
   };
   grants: { permission: string; scopeType: string; scopeId: string | null }[];
   switches: { key: string; enabled: boolean }[];
@@ -58,6 +59,7 @@ export class CompanyReadService {
         timezone: company.timezone,
         defaultCurrency: company.defaultCurrency,
         countryCode: company.countryCode,
+        documentLanguage: company.documentLanguage,
       },
       grants: ctx.grants.map((grant) => ({
         permission: grant.permission,
@@ -68,6 +70,23 @@ export class CompanyReadService {
       mfaStepUpRequired: ctx.mfaStepUpRequired,
       withheldPermissions: ctx.withheldPermissions,
     };
+  }
+
+  async locations(ctx: RequestContext): Promise<{ locations: { id: string; name: string }[] }> {
+    const actor = ctx.userId ?? ctx.serviceIdentityId;
+    if (!actor) {
+      throw new BadRequestException('actor is missing');
+    }
+    const rows = await this.tenant.run(
+      { companyId: ctx.companyId, actor, correlationId: ctx.correlationId },
+      (tx) =>
+        tx.location.findMany({
+          where: { companyId: ctx.companyId },
+          orderBy: [{ name: 'asc' }, { id: 'asc' }],
+          select: { id: true, name: true },
+        }),
+    );
+    return { locations: rows };
   }
 
   async roles(companyId: string): Promise<
@@ -124,7 +143,7 @@ export class CompanyReadService {
             action: query.action,
             actorId: query.actorId,
             outcome: query.outcome,
-            occurredAt: query.from || query.to ? { gte: query.from, lte: query.to } : undefined,
+            occurredAt: auditOccurredAt(query.from, query.to),
           },
           orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
           skip: query.offset,
@@ -152,6 +171,17 @@ export class CompanyReadService {
       hasMore,
     };
   }
+}
+
+/** Inclusive start, exclusive end. A date-only `to` must already be the next boundary. */
+export function auditOccurredAt(from?: Date, to?: Date): { gte?: Date; lt?: Date } | undefined {
+  if (!from && !to) {
+    return undefined;
+  }
+  return {
+    ...(from ? { gte: from } : {}),
+    ...(to ? { lt: to } : {}),
+  };
 }
 
 export function parseAuditQuery(query: Record<string, unknown>): AuditQuery {

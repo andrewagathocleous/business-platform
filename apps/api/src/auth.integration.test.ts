@@ -22,6 +22,7 @@ import { configureHttp } from './http/configure-http';
 import { caseSensitiveAdapter } from './http/express-adapter';
 import { CLOCK } from './identity/clock';
 import { IDLE_TIMEOUT_MS } from './identity/session-rules';
+import { SessionService } from './identity/session.service';
 import { hashToken } from './identity/tokens';
 import { LOG_STREAM } from './logging/logging.module';
 
@@ -141,14 +142,18 @@ describe('authentication', () => {
     await app.init();
 
     const prisma = started().get(PrismaService);
-    const databases = await prisma.client.$queryRaw<{ current_database: string; current_user: string }[]>`
+    const databases = await prisma.client.$queryRaw<
+      { current_database: string; current_user: string }[]
+    >`
       SELECT current_database() AS current_database, current_user AS current_user
     `;
     assertDatabaseNameIsTest(databases[0]?.current_database, 'DATABASE_URL');
     expect(databases[0]?.current_user).toBe('bp_app');
 
     const company = await prisma.client.company.findFirst({ where: { legalName: COMPANY_A } });
-    const owner = await prisma.client.userAccount.findFirst({ where: { email: 'owner@example.test' } });
+    const owner = await prisma.client.userAccount.findFirst({
+      where: { email: 'owner@example.test' },
+    });
     if (!company || !owner) {
       throw new Error('seed company A or platform owner is missing');
     }
@@ -173,7 +178,13 @@ describe('authentication', () => {
     const users = await request(server).get('/api/auth/dev/users');
     expect(users.status).toBe(200);
     const emails = userEmails(responseBody(users));
-    expect(emails).toEqual(expect.arrayContaining(['admin.a@example.test', 'multi@example.test', 'admin.b@example.test']));
+    expect(emails).toEqual(
+      expect.arrayContaining([
+        'admin.a@example.test',
+        'multi@example.test',
+        'admin.b@example.test',
+      ]),
+    );
 
     const correlationId = cid('dev-login-admin-a');
     const agent = request.agent(server);
@@ -184,23 +195,32 @@ describe('authentication', () => {
     expect(login.status).toBe(200);
     const sessionHeader = cookieHeader(login, 'bp_session');
     const xsrfHeader = cookieHeader(login, 'XSRF-TOKEN');
-    expect(cookieAttributes(sessionHeader)).toEqual(expect.arrayContaining(['httponly', 'samesite=lax', 'path=/']));
+    expect(cookieAttributes(sessionHeader)).toEqual(
+      expect.arrayContaining(['httponly', 'samesite=lax', 'path=/']),
+    );
     expect(cookieAttributes(sessionHeader)).not.toContain('secure');
     expect(cookieAttributes(xsrfHeader)).toContain('samesite=strict');
     expect(cookieAttributes(xsrfHeader)).not.toContain('httponly');
     const sessionCookie = cookieValue(sessionHeader, 'bp_session');
     expect(JSON.stringify(responseBody(login))).not.toContain(sessionCookie);
 
-    const row = await started().get(PrismaService).client.userSession.findUnique({
-      where: { tokenHash: hashToken(sessionCookie) },
-    });
+    const row = await started()
+      .get(PrismaService)
+      .client.userSession.findUnique({
+        where: { tokenHash: hashToken(sessionCookie) },
+      });
     expect(row?.mfaSatisfied).toBe(false);
     expect(row?.tokenHash).toMatch(/^[0-9a-f]{64}$/);
     expect(row?.tokenHash).not.toBe(sessionCookie);
 
     const events = await auditEvents(started(), correlationId);
     expect(events).toEqual([
-      expect.objectContaining({ action: 'auth.login', outcome: 'success', correlationId, actorType: 'user' }),
+      expect.objectContaining({
+        action: 'auth.login',
+        outcome: 'success',
+        correlationId,
+        actorType: 'user',
+      }),
     ]);
 
     const me = await agent.get('/api/me');
@@ -208,13 +228,19 @@ describe('authentication', () => {
     expect(tradingNames(responseBody(me))).toEqual([NUTBOX]);
     expect(await companyNames('multi@example.test')).toEqual([NUTBOX, OLIVE]);
     expect(await companyNames('admin.b@example.test')).toEqual([OLIVE]);
-    const active = await started().get(PrismaService).client.company.findMany({
-      where: { status: 'active' },
-      orderBy: [{ tradingName: 'asc' }, { id: 'asc' }],
-      select: { tradingName: true },
-    });
-    expect(active.map((company) => company.tradingName)).toEqual(expect.arrayContaining([NUTBOX, OLIVE]));
-    expect(await companyNames('owner@example.test')).toEqual(active.map((company) => company.tradingName));
+    const active = await started()
+      .get(PrismaService)
+      .client.company.findMany({
+        where: { status: 'active' },
+        orderBy: [{ tradingName: 'asc' }, { id: 'asc' }],
+        select: { tradingName: true },
+      });
+    expect(active.map((company) => company.tradingName)).toEqual(
+      expect.arrayContaining([NUTBOX, OLIVE]),
+    );
+    expect(await companyNames('owner@example.test')).toEqual(
+      active.map((company) => company.tradingName),
+    );
     expect(await companyNames('suspended.a@example.test')).toEqual([]);
   });
 
@@ -225,7 +251,9 @@ describe('authentication', () => {
     const firstCookie = cookieValue(cookieHeader(first, 'bp_session'), 'bp_session');
     const second = await agent.post('/api/auth/dev/login').send({ email: 'admin.a@example.test' });
     expect(second.status).toBe(200);
-    const stale = await request(httpServer(started())).get('/api/me').set('Cookie', `bp_session=${firstCookie}`);
+    const stale = await request(httpServer(started()))
+      .get('/api/me')
+      .set('Cookie', `bp_session=${firstCookie}`);
     expect(stale.status).toBe(401);
     expect(errorMessage(responseBody(stale))).toBe('Authentication is required');
     const current = await agent.get('/api/me');
@@ -235,16 +263,20 @@ describe('authentication', () => {
   it('returns 401 and an audit event for a revoked session', async () => {
     const correlationId = cid('revoked-session');
     const signedIn = await devLogin('admin.a@example.test');
-    const row = await started().get(PrismaService).client.userSession.findUnique({
-      where: { tokenHash: hashToken(signedIn.sessionCookie) },
-    });
+    const row = await started()
+      .get(PrismaService)
+      .client.userSession.findUnique({
+        where: { tokenHash: hashToken(signedIn.sessionCookie) },
+      });
     if (!row) {
       throw new Error('session row is missing');
     }
-    await started().get(PrismaService).client.userSession.update({
-      where: { id: row.id },
-      data: { revokedAt: new Date() },
-    });
+    await started()
+      .get(PrismaService)
+      .client.userSession.update({
+        where: { id: row.id },
+        data: { revokedAt: new Date() },
+      });
     const denied = await signedIn.browser.get('/api/me').set('X-Correlation-Id', correlationId);
     expect(denied.status).toBe(401);
     expect(errorMessage(responseBody(denied))).toBe('Authentication is required');
@@ -267,12 +299,18 @@ describe('authentication', () => {
     const xsrf = cookieValue(cookieHeader(me, 'XSRF-TOKEN'), 'XSRF-TOKEN');
 
     const missingId = cid('csrf-missing');
-    const missing = await signedIn.browser.post('/api/auth/logout').set('X-Correlation-Id', missingId);
+    const missing = await signedIn.browser
+      .post('/api/auth/logout')
+      .set('X-Correlation-Id', missingId);
     expect(missing.status).toBe(403);
     expect(errorMessage(responseBody(missing))).toBe('CSRF token is missing or invalid');
     const missingEvents = await auditEvents(started(), missingId);
     expect(missingEvents).toEqual([
-      expect.objectContaining({ action: 'authorization.denied', outcome: 'denied', correlationId: missingId }),
+      expect.objectContaining({
+        action: 'authorization.denied',
+        outcome: 'denied',
+        correlationId: missingId,
+      }),
     ]);
     expect(detailReason(missingEvents[0]?.details)).toBe('csrf');
     expect((await signedIn.browser.get('/api/me')).status).toBe(200);
@@ -296,8 +334,163 @@ describe('authentication', () => {
     expect(after.status).toBe(401);
     const events = await auditEvents(started(), logoutId);
     expect(events).toEqual([
-      expect.objectContaining({ action: 'auth.logout', outcome: 'success', correlationId: logoutId }),
+      expect.objectContaining({
+        action: 'auth.logout',
+        outcome: 'success',
+        correlationId: logoutId,
+      }),
     ]);
+  });
+
+  it('reports sign-in providers without secrets', async () => {
+    const response = await request(httpServer(started())).get('/api/auth/providers');
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ devLogin: true, oidc: true });
+    const serialised = JSON.stringify(responseBody(response));
+    expect(serialised).not.toContain('bp-test-secret');
+    expect(serialised).not.toContain('integration-test-csrf-secret');
+  });
+
+  it('updates the signed-in locale and rejects any other value', async () => {
+    const signedIn = await devLogin('support.a@example.test');
+    const me = await signedIn.browser.get('/api/me');
+    expect(me.status).toBe(200);
+    const original = userLocale(responseBody(me));
+    if (original !== 'en' && original !== 'el') {
+      throw new Error('signed-in locale is missing');
+    }
+    const xsrf = cookieValue(cookieHeader(me, 'XSRF-TOKEN'), 'XSRF-TOKEN');
+    const next = original === 'el' ? 'en' : 'el';
+    try {
+      const missing = await signedIn.browser.patch('/api/me').send({ locale: next });
+      expect(missing.status).toBe(403);
+      expect(errorMessage(responseBody(missing))).toBe('CSRF token is missing or invalid');
+      expect(userLocale(responseBody(await signedIn.browser.get('/api/me')))).toBe(original);
+
+      const bad = await signedIn.browser
+        .patch('/api/me')
+        .set('X-XSRF-TOKEN', xsrf)
+        .send({ locale: 'fr' });
+      expect(bad.status).toBe(400);
+      expect(errorMessage(responseBody(bad))).toBe('locale must be en or el');
+      const extra = await signedIn.browser
+        .patch('/api/me')
+        .set('X-XSRF-TOKEN', xsrf)
+        .send({ locale: 'en', extra: true });
+      expect(extra.status).toBe(400);
+      expect(userLocale(responseBody(await signedIn.browser.get('/api/me')))).toBe(original);
+
+      const correlationId = cid('locale-update');
+      const updated = await signedIn.browser
+        .patch('/api/me')
+        .set('X-XSRF-TOKEN', xsrf)
+        .set('X-Correlation-Id', correlationId)
+        .send({ locale: next });
+      expect(updated.status).toBe(200);
+      expect(userLocale(responseBody(updated))).toBe(next);
+      expect(userLocale(responseBody(await signedIn.browser.get('/api/me')))).toBe(next);
+      const events = await auditEvents(started(), correlationId);
+      expect(events).toEqual([
+        expect.objectContaining({
+          action: 'user.locale_updated',
+          outcome: 'success',
+          correlationId,
+          objectType: 'user_account',
+          actorType: 'user',
+        }),
+      ]);
+      expect(events[0]?.details).toEqual({ from: original, to: next });
+    } finally {
+      const current = await signedIn.browser.get('/api/me');
+      if (current.status === 200 && userLocale(responseBody(current)) !== original) {
+        const token = cookieValue(cookieHeader(current, 'XSRF-TOKEN'), 'XSRF-TOKEN');
+        const restored = await signedIn.browser
+          .patch('/api/me')
+          .set('X-XSRF-TOKEN', token)
+          .send({ locale: original });
+        expect(restored.status).toBe(200);
+      }
+    }
+  });
+
+  it('audits the locale held after the account lock when two updates overlap', async () => {
+    const signedIn = await devLogin('finance.a@example.test');
+    const me = await signedIn.browser.get('/api/me');
+    expect(me.status).toBe(200);
+    const original = userLocale(responseBody(me));
+    if (original !== 'en' && original !== 'el') {
+      throw new Error('signed-in locale is missing');
+    }
+    const xsrf = cookieValue(cookieHeader(me, 'XSRF-TOKEN'), 'XSRF-TOKEN');
+    if (original !== 'en') {
+      const reset = await signedIn.browser
+        .patch('/api/me')
+        .set('X-XSRF-TOKEN', xsrf)
+        .send({ locale: 'en' });
+      expect(reset.status).toBe(200);
+    }
+    const sessions = started().get(SessionService);
+    let startedCount = 0;
+    let locks = 0;
+    let releaseFirst: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    sessions.hooks = {
+      beforeLocaleLock: () => {
+        startedCount += 1;
+        return Promise.resolve();
+      },
+      afterLocaleLock: () => {
+        locks += 1;
+        if (locks === 1) {
+          return gate;
+        }
+        return Promise.resolve();
+      },
+    };
+    const toGreek = cid('locale-overlap-el');
+    const toEnglish = cid('locale-overlap-en');
+    try {
+      const greek = Promise.resolve(
+        request(httpServer(started()))
+          .patch('/api/me')
+          .set('Cookie', `bp_session=${signedIn.sessionCookie}; XSRF-TOKEN=${xsrf}`)
+          .set('X-XSRF-TOKEN', xsrf)
+          .set('X-Correlation-Id', toGreek)
+          .send({ locale: 'el' }),
+      );
+      await waitFor(() => locks >= 1);
+      const english = Promise.resolve(
+        request(httpServer(started()))
+          .patch('/api/me')
+          .set('Cookie', `bp_session=${signedIn.sessionCookie}; XSRF-TOKEN=${xsrf}`)
+          .set('X-XSRF-TOKEN', xsrf)
+          .set('X-Correlation-Id', toEnglish)
+          .send({ locale: 'en' }),
+      );
+      await waitFor(() => startedCount >= 2);
+      releaseFirst();
+      const [greekResponse, englishResponse] = await Promise.all([greek, english]);
+      expect(greekResponse.status).toBe(200);
+      expect(englishResponse.status).toBe(200);
+      const greekAudit = await auditEvents(started(), toGreek);
+      const englishAudit = await auditEvents(started(), toEnglish);
+      expect(greekAudit[0]?.details).toEqual({ from: 'en', to: 'el' });
+      expect(englishAudit[0]?.details).toEqual({ from: 'el', to: 'en' });
+    } finally {
+      sessions.hooks = null;
+      releaseFirst();
+      const current = await signedIn.browser.get('/api/me');
+      if (current.status === 200 && userLocale(responseBody(current)) !== original) {
+        const token = cookieValue(cookieHeader(current, 'XSRF-TOKEN'), 'XSRF-TOKEN');
+        const restored = await signedIn.browser
+          .patch('/api/me')
+          .set('X-XSRF-TOKEN', token)
+          .send({ locale: original });
+        expect(restored.status).toBe(200);
+      }
+    }
   });
 
   it('records a login failure when the development email is unknown', async () => {
@@ -328,8 +521,12 @@ describe('authentication', () => {
       .set('Authorization', 'Bearer bps_not-a-staff-token')
       .set('X-Correlation-Id', correlationId);
     expect(denied.status).toBe(401);
-    expect(errorMessage(responseBody(denied))).toBe('Bearer tokens are not accepted on staff routes');
-    expect(detailReason((await auditEvents(started(), correlationId))[0]?.details)).toBe('bearer_on_staff_route');
+    expect(errorMessage(responseBody(denied))).toBe(
+      'Bearer tokens are not accepted on staff routes',
+    );
+    expect(detailReason((await auditEvents(started(), correlationId))[0]?.details)).toBe(
+      'bearer_on_staff_route',
+    );
     expect((await signedIn.browser.get('/api/me')).status).toBe(200);
   });
 
@@ -366,12 +563,18 @@ describe('authentication', () => {
     let sessionRow = await prisma.userSession.findUniqueOrThrow({
       where: { tokenHash: hashToken(signedIn.sessionCookie) },
     });
-    for (let step = 0; step < 30 && sessionRow.idleExpiresAt.getTime() <= sessionRow.absoluteExpiresAt.getTime(); step += 1) {
+    for (
+      let step = 0;
+      step < 30 && sessionRow.idleExpiresAt.getTime() <= sessionRow.absoluteExpiresAt.getTime();
+      step += 1
+    ) {
       clock.instant = new Date(sessionRow.idleExpiresAt.getTime() - 1);
       expect((await signedIn.browser.get('/api/me')).status).toBe(200);
       sessionRow = await prisma.userSession.findUniqueOrThrow({ where: { id: sessionRow.id } });
     }
-    expect(sessionRow.idleExpiresAt.getTime()).toBeGreaterThan(sessionRow.absoluteExpiresAt.getTime());
+    expect(sessionRow.idleExpiresAt.getTime()).toBeGreaterThan(
+      sessionRow.absoluteExpiresAt.getTime(),
+    );
     clock.instant = new Date(sessionRow.absoluteExpiresAt.getTime() - 1);
     expect((await signedIn.browser.get('/api/me')).status).toBe(200);
     clock.instant = new Date(sessionRow.absoluteExpiresAt.getTime());
@@ -380,10 +583,19 @@ describe('authentication', () => {
 
   it('completes an OIDC login and records whether amr includes mfa', async () => {
     const subject = uniqueSubject('happy');
-    const user = await started().get(PrismaService).client.userAccount.findFirstOrThrow({
-      where: { email: 'admin.a@example.test' },
+    const user = await started()
+      .get(PrismaService)
+      .client.userAccount.findFirstOrThrow({
+        where: { email: 'admin.a@example.test' },
+      });
+    useProfile({
+      sub: subject,
+      amr: ['pwd', 'mfa'],
+      email: user.email,
+      emailVerified: true,
+      tid: 'tid-happy',
+      oid: 'oid-happy',
     });
-    useProfile({ sub: subject, amr: ['pwd', 'mfa'], email: user.email, emailVerified: true, tid: 'tid-happy', oid: 'oid-happy' });
     await replaceEntraIdentity(user.id, {
       issuer: issuerUrl,
       subject,
@@ -398,42 +610,55 @@ describe('authentication', () => {
     expect(me.status).toBe(200);
     expect(userEmail(responseBody(me))).toBe('admin.a@example.test');
     const cookie = cookieValue(cookieHeader(done, 'bp_session'), 'bp_session');
-    const session = await started().get(PrismaService).client.userSession.findUniqueOrThrow({
-      where: { tokenHash: hashToken(cookie) },
-    });
+    const session = await started()
+      .get(PrismaService)
+      .client.userSession.findUniqueOrThrow({
+        where: { tokenHash: hashToken(cookie) },
+      });
     expect(session.mfaSatisfied).toBe(true);
-    const identity = await started().get(PrismaService).client.userIdentity.findUniqueOrThrow({
-      where: { provider_issuer_subject: { provider: 'entra', issuer: issuerUrl, subject } },
-    });
+    const identity = await started()
+      .get(PrismaService)
+      .client.userIdentity.findUniqueOrThrow({
+        where: { provider_issuer_subject: { provider: 'entra', issuer: issuerUrl, subject } },
+      });
     expect(identity.entraOid).toBe('oid-happy');
     expect(identity.tenantId).toBe('tid-happy');
 
     const plainSubject = uniqueSubject('plain');
-    const plainUser = await started().get(PrismaService).client.userAccount.create({
-      data: {
-        email: `plain.${run}@example.test`,
-        displayName: 'Plain MFA',
-        locale: 'en',
-        status: 'active',
-        isPlatformOwner: false,
-      },
-    });
+    const plainUser = await started()
+      .get(PrismaService)
+      .client.userAccount.create({
+        data: {
+          email: `plain.${run}@example.test`,
+          displayName: 'Plain MFA',
+          locale: 'en',
+          status: 'active',
+          isPlatformOwner: false,
+        },
+      });
     useProfile({ sub: plainSubject, amr: ['pwd'], oid: 'oid-plain' });
-    await started().get(PrismaService).client.userIdentity.create({
-      data: { userId: plainUser.id, provider: 'entra', issuer: issuerUrl, subject: plainSubject },
-    });
+    await started()
+      .get(PrismaService)
+      .client.userIdentity.create({
+        data: { userId: plainUser.id, provider: 'entra', issuer: issuerUrl, subject: plainSubject },
+      });
     const plainAgent = request.agent(httpServer(started()));
     const plain = await finishOidc(plainAgent, { redirect: '/after-login' });
     const plainCookie = cookieValue(cookieHeader(plain, 'bp_session'), 'bp_session');
-    const plainSession = await started().get(PrismaService).client.userSession.findUniqueOrThrow({
-      where: { tokenHash: hashToken(plainCookie) },
-    });
+    const plainSession = await started()
+      .get(PrismaService)
+      .client.userSession.findUniqueOrThrow({
+        where: { tokenHash: hashToken(plainCookie) },
+      });
     expect(plainSession.mfaSatisfied).toBe(false);
   });
 
   it('rejects a callback whose state does not match the stored flow', async () => {
     const agent = request.agent(httpServer(started()));
-    const start = await agent.get('/api/auth/oidc/start').query({ redirect: '/after-login' }).redirects(0);
+    const start = await agent
+      .get('/api/auth/oidc/start')
+      .query({ redirect: '/after-login' })
+      .redirects(0);
     expect(start.status).toBe(302);
     const callback = await authorize(locationOf(start));
     const state = callback.searchParams.get('state');
@@ -444,39 +669,53 @@ describe('authentication', () => {
     const response = await agent.get(callbackTarget(callback)).redirects(0);
     expect(response.status).toBe(400);
     expect(errorMessage(responseBody(response))).toBe('Sign-in could not be completed');
-    const flow = await started().get(PrismaService).client.authFlow.findFirst({ where: { stateHash: hashToken(state) } });
+    const flow = await started()
+      .get(PrismaService)
+      .client.authFlow.findFirst({ where: { stateHash: hashToken(state) } });
     expect(flow?.consumedAt).toBeNull();
   });
 
   it('rejects a callback whose nonce does not match and consumes the flow', async () => {
     const agent = request.agent(httpServer(started()));
-    const start = await agent.get('/api/auth/oidc/start').query({ redirect: '/after-login' }).redirects(0);
+    const start = await agent
+      .get('/api/auth/oidc/start')
+      .query({ redirect: '/after-login' })
+      .redirects(0);
     const callback = await authorize(locationOf(start));
     const state = callback.searchParams.get('state');
     if (!state) {
       throw new Error('state is missing');
     }
-    await started().get(PrismaService).client.authFlow.updateMany({
-      where: { stateHash: hashToken(state) },
-      data: { nonce: 'different-nonce' },
-    });
+    await started()
+      .get(PrismaService)
+      .client.authFlow.updateMany({
+        where: { stateHash: hashToken(state) },
+        data: { nonce: 'different-nonce' },
+      });
     const response = await agent.get(callbackTarget(callback)).redirects(0);
     expect(response.status).toBe(400);
-    const flow = await started().get(PrismaService).client.authFlow.findFirstOrThrow({
-      where: { stateHash: hashToken(state) },
-    });
+    const flow = await started()
+      .get(PrismaService)
+      .client.authFlow.findFirstOrThrow({
+        where: { stateHash: hashToken(state) },
+      });
     expect(flow.consumedAt).toBeTruthy();
   });
 
   it('rejects a replayed callback', async () => {
     const subject = uniqueSubject('replay');
-    const user = await started().get(PrismaService).client.userAccount.findFirstOrThrow({
-      where: { email: 'admin.b@example.test' },
-    });
+    const user = await started()
+      .get(PrismaService)
+      .client.userAccount.findFirstOrThrow({
+        where: { email: 'admin.b@example.test' },
+      });
     useProfile({ sub: subject, amr: ['mfa'] });
     await replaceEntraIdentity(user.id, { issuer: issuerUrl, subject });
     const agent = request.agent(httpServer(started()));
-    const start = await agent.get('/api/auth/oidc/start').query({ redirect: '/after-login' }).redirects(0);
+    const start = await agent
+      .get('/api/auth/oidc/start')
+      .query({ redirect: '/after-login' })
+      .redirects(0);
     const flowCookie = cookieValue(cookieHeader(start, 'bp_oidc_flow'), 'bp_oidc_flow');
     const callback = await authorize(locationOf(start));
     const first = await agent.get(callbackTarget(callback)).redirects(0);
@@ -491,13 +730,18 @@ describe('authentication', () => {
 
   it('rejects a callback from another cookie jar or with no flow cookie, without consuming the flow', async () => {
     const subject = uniqueSubject('binding');
-    const user = await started().get(PrismaService).client.userAccount.findFirstOrThrow({
-      where: { email: 'multi@example.test' },
-    });
+    const user = await started()
+      .get(PrismaService)
+      .client.userAccount.findFirstOrThrow({
+        where: { email: 'multi@example.test' },
+      });
     useProfile({ sub: subject, amr: ['mfa'] });
     await replaceEntraIdentity(user.id, { issuer: issuerUrl, subject });
     const agent = request.agent(httpServer(started()));
-    const start = await agent.get('/api/auth/oidc/start').query({ redirect: '/after-login' }).redirects(0);
+    const start = await agent
+      .get('/api/auth/oidc/start')
+      .query({ redirect: '/after-login' })
+      .redirects(0);
     const callback = await authorize(locationOf(start));
     const state = callback.searchParams.get('state');
     if (!state) {
@@ -510,9 +754,11 @@ describe('authentication', () => {
       .set('Cookie', 'bp_oidc_flow=different-browser-token')
       .redirects(0);
     expect(other.status).toBe(400);
-    const flow = await started().get(PrismaService).client.authFlow.findFirstOrThrow({
-      where: { stateHash: hashToken(state) },
-    });
+    const flow = await started()
+      .get(PrismaService)
+      .client.authFlow.findFirstOrThrow({
+        where: { stateHash: hashToken(state) },
+      });
     expect(flow.consumedAt).toBeNull();
     const success = await agent.get(callbackTarget(callback)).redirects(0);
     expect(success.status).toBe(302);
@@ -520,22 +766,39 @@ describe('authentication', () => {
 
   it('denies and audits an unprovisioned identity', async () => {
     const correlationId = cid('oidc-none');
-    useProfile({ sub: uniqueSubject('none'), amr: ['mfa'], email: 'nobody-oidc@example.test', emailVerified: true });
+    useProfile({
+      sub: uniqueSubject('none'),
+      amr: ['mfa'],
+      email: 'nobody-oidc@example.test',
+      emailVerified: true,
+    });
     const agent = request.agent(httpServer(started()));
     const response = await finishOidc(agent, { redirect: '/after-login' }, correlationId);
     expect(response.status).toBe(403);
     expect(errorMessage(responseBody(response))).toBe('account not provisioned');
     const events = await auditEvents(started(), correlationId);
     expect(events).toEqual([
-      expect.objectContaining({ action: 'auth.login', outcome: 'denied', correlationId, actorType: 'system' }),
+      expect.objectContaining({
+        action: 'auth.login',
+        outcome: 'denied',
+        correlationId,
+        actorType: 'system',
+      }),
     ]);
     expect(detailReason(events[0]?.details)).toBe('not_provisioned');
   });
 
   it('rejects open redirects', async () => {
     const server = httpServer(started());
-    for (const redirect of ['https://evil.example/phish', '//evil.example', '/%2f%2fevil.example']) {
-      const response = await request(server).get('/api/auth/oidc/start').query({ redirect }).redirects(0);
+    for (const redirect of [
+      'https://evil.example/phish',
+      '//evil.example',
+      '/%2f%2fevil.example',
+    ]) {
+      const response = await request(server)
+        .get('/api/auth/oidc/start')
+        .query({ redirect })
+        .redirects(0);
       expect(response.status).toBe(400);
       expect(errorMessage(responseBody(response))).toBe('redirect must be a relative path');
     }
@@ -560,12 +823,21 @@ describe('authentication', () => {
       oid: 'oid-invite',
     });
     const agent = request.agent(httpServer(started()));
-    const response = await finishOidc(agent, { redirect: '/welcome', invitation: token }, correlationId);
+    const response = await finishOidc(
+      agent,
+      { redirect: '/welcome', invitation: token },
+      correlationId,
+    );
     expect(response.status).toBe(302);
-    const user = await started().get(PrismaService).client.userAccount.findFirst({
-      where: { email },
-      include: { identities: true, memberships: { include: { roles: { include: { role: true } } } } },
-    });
+    const user = await started()
+      .get(PrismaService)
+      .client.userAccount.findFirst({
+        where: { email },
+        include: {
+          identities: true,
+          memberships: { include: { roles: { include: { role: true } } } },
+        },
+      });
     expect(user?.displayName).toBe('Invited Finance');
     expect(user?.identities[0]?.issuer).toBe(issuerUrl);
     expect(user?.identities[0]?.entraOid).toBe('oid-invite');
@@ -577,7 +849,9 @@ describe('authentication', () => {
     const events = await auditEvents(started(), correlationId, companyAId);
     const actions = events.map((event) => event.action).sort();
     expect(actions).toEqual(['auth.login', 'invitation.accepted']);
-    expect(events.every((event) => event.correlationId === correlationId && event.outcome === 'success')).toBe(true);
+    expect(
+      events.every((event) => event.correlationId === correlationId && event.outcome === 'success'),
+    ).toBe(true);
   });
 
   it('accepts an invitation when only preferred_username matches', async () => {
@@ -593,7 +867,9 @@ describe('authentication', () => {
     const agent = request.agent(httpServer(started()));
     const response = await finishOidc(agent, { redirect: '/welcome', invitation: token });
     expect(response.status).toBe(302);
-    const user = await started().get(PrismaService).client.userAccount.findFirst({ where: { email } });
+    const user = await started()
+      .get(PrismaService)
+      .client.userAccount.findFirst({ where: { email } });
     expect(user).toBeTruthy();
   });
 
@@ -609,13 +885,21 @@ describe('authentication', () => {
       preferredUsername: 'also-else@example.test',
     });
     const agent = request.agent(httpServer(started()));
-    const response = await finishOidc(agent, { redirect: '/welcome', invitation: token }, correlationId);
+    const response = await finishOidc(
+      agent,
+      { redirect: '/welcome', invitation: token },
+      correlationId,
+    );
     expect(response.status).toBe(403);
     expect(errorMessage(responseBody(response))).toBe('account not provisioned');
-    const user = await started().get(PrismaService).client.userAccount.findFirst({ where: { email } });
-    const identity = await started().get(PrismaService).client.userIdentity.findUnique({
-      where: { provider_issuer_subject: { provider: 'entra', issuer: issuerUrl, subject } },
-    });
+    const user = await started()
+      .get(PrismaService)
+      .client.userAccount.findFirst({ where: { email } });
+    const identity = await started()
+      .get(PrismaService)
+      .client.userIdentity.findUnique({
+        where: { provider_issuer_subject: { provider: 'entra', issuer: issuerUrl, subject } },
+      });
     expect(user).toBeNull();
     expect(identity).toBeNull();
     const events = await auditEvents(started(), correlationId, companyAId);
@@ -635,7 +919,10 @@ describe('authentication', () => {
     });
     const firstAgent = request.agent(httpServer(started()));
     const secondAgent = request.agent(httpServer(started()));
-    const firstStart = await firstAgent.get('/api/auth/oidc/start').query({ redirect: '/welcome', invitation: token }).redirects(0);
+    const firstStart = await firstAgent
+      .get('/api/auth/oidc/start')
+      .query({ redirect: '/welcome', invitation: token })
+      .redirects(0);
     const secondStart = await secondAgent
       .get('/api/auth/oidc/start')
       .query({ redirect: '/welcome', invitation: token })
@@ -648,11 +935,15 @@ describe('authentication', () => {
     ]);
     const statuses = [first.status, second.status].sort();
     expect(statuses).toEqual([302, 403]);
-    const users = await started().get(PrismaService).client.userAccount.findMany({ where: { email } });
+    const users = await started()
+      .get(PrismaService)
+      .client.userAccount.findMany({ where: { email } });
     expect(users).toHaveLength(1);
-    const invitation = await started().get(PrismaService).client.invitation.findUniqueOrThrow({
-      where: { tokenHash: hashToken(token) },
-    });
+    const invitation = await started()
+      .get(PrismaService)
+      .client.invitation.findUniqueOrThrow({
+        where: { tokenHash: hashToken(token) },
+      });
     expect(invitation.acceptedAt).toBeTruthy();
   });
 
@@ -662,7 +953,12 @@ describe('authentication', () => {
     const permissions = [...new Set(['member.invite', ...(await finPermissions())])];
     const inviterId = await createAuthority(permissions, 'suspended');
     const token = await createInvitation(email, inviterId);
-    useProfile({ sub: uniqueSubject('suspended-inviter'), email, emailVerified: true, amr: ['mfa'] });
+    useProfile({
+      sub: uniqueSubject('suspended-inviter'),
+      email,
+      emailVerified: true,
+      amr: ['mfa'],
+    });
     const response = await finishOidc(
       request.agent(httpServer(started())),
       { redirect: '/welcome', invitation: token },
@@ -678,7 +974,12 @@ describe('authentication', () => {
     const email = `Invitee.Permission.${randomUUID()}@example.test`;
     const inviterId = await createAuthority(await finPermissions(), 'active');
     const token = await createInvitation(email, inviterId);
-    useProfile({ sub: uniqueSubject('permission-inviter'), email, emailVerified: true, amr: ['mfa'] });
+    useProfile({
+      sub: uniqueSubject('permission-inviter'),
+      email,
+      emailVerified: true,
+      amr: ['mfa'],
+    });
     const response = await finishOidc(
       request.agent(httpServer(started())),
       { redirect: '/welcome', invitation: token },
@@ -710,7 +1011,13 @@ describe('authentication', () => {
     const email = `Linked.${randomUUID()}@example.test`;
     const prisma = started().get(PrismaService).client;
     const user = await prisma.userAccount.create({
-      data: { email, displayName: 'Linked account', locale: 'en', status: 'active', isPlatformOwner: false },
+      data: {
+        email,
+        displayName: 'Linked account',
+        locale: 'en',
+        status: 'active',
+        isPlatformOwner: false,
+      },
     });
     await prisma.userIdentity.create({
       data: {
@@ -729,7 +1036,9 @@ describe('authentication', () => {
     );
     expect(response.status).toBe(403);
     expect(errorMessage(responseBody(response))).toBe('account not provisioned');
-    const identities = await prisma.userIdentity.count({ where: { userId: user.id, provider: 'entra' } });
+    const identities = await prisma.userIdentity.count({
+      where: { userId: user.id, provider: 'entra' },
+    });
     expect(identities).toBe(1);
     await expectInvitationOpen(token, correlationId, 'account_identity_conflict');
   });
@@ -737,7 +1046,9 @@ describe('authentication', () => {
   it('rejects an invitation that would link an Entra identity to a platform owner', async () => {
     const correlationId = cid('invite-owner');
     const prisma = started().get(PrismaService).client;
-    const before = await prisma.userIdentity.count({ where: { userId: ownerId, provider: 'entra' } });
+    const before = await prisma.userIdentity.count({
+      where: { userId: ownerId, provider: 'entra' },
+    });
     const token = await createInvitation('owner@example.test');
     useProfile({
       sub: uniqueSubject('owner-link'),
@@ -752,7 +1063,9 @@ describe('authentication', () => {
     );
     expect(response.status).toBe(403);
     expect(errorMessage(responseBody(response))).toBe('account not provisioned');
-    const after = await prisma.userIdentity.count({ where: { userId: ownerId, provider: 'entra' } });
+    const after = await prisma.userIdentity.count({
+      where: { userId: ownerId, provider: 'entra' },
+    });
     expect(after).toBe(before);
     await expectInvitationOpen(token, correlationId, 'platform_owner_link');
   });
@@ -761,7 +1074,13 @@ describe('authentication', () => {
     const email = `Unlinked.${randomUUID()}@example.test`;
     const prisma = started().get(PrismaService).client;
     const user = await prisma.userAccount.create({
-      data: { email, displayName: 'Unlinked account', locale: 'en', status: 'active', isPlatformOwner: false },
+      data: {
+        email,
+        displayName: 'Unlinked account',
+        locale: 'en',
+        status: 'active',
+        isPlatformOwner: false,
+      },
     });
     const subject = uniqueSubject('first-entra');
     const token = await createInvitation(email);
@@ -781,12 +1100,20 @@ describe('authentication', () => {
     const email = `multi.${randomUUID()}@example.test`;
     const prisma = started().get(PrismaService).client;
     const user = await prisma.userAccount.create({
-      data: { email, displayName: 'Two invitations', locale: 'en', status: 'active', isPlatformOwner: false },
+      data: {
+        email,
+        displayName: 'Two invitations',
+        locale: 'en',
+        status: 'active',
+        isPlatformOwner: false,
+      },
     });
     const companyB = await prisma.company.findFirstOrThrow({
       where: { legalName: 'Demo Company B Ltd (fictional)' },
     });
-    const adminB = await prisma.userAccount.findFirstOrThrow({ where: { email: 'admin.b@example.test' } });
+    const adminB = await prisma.userAccount.findFirstOrThrow({
+      where: { email: 'admin.b@example.test' },
+    });
     const tokenA = await createInvitation(email);
     const tokenB = await createInvitation(email, adminB.id, companyB.id);
     const service = started().get(InvitationService);
@@ -805,10 +1132,18 @@ describe('authentication', () => {
     const rightId = cid('entra-race-b');
     const [left, right] = await Promise.all([
       correlationStorage.run({ correlationId: leftId }, () =>
-        service.accept({ tokenHash: hashToken(tokenA), claims: claims(uniqueSubject('race-a')), meta }),
+        service.accept({
+          tokenHash: hashToken(tokenA),
+          claims: claims(uniqueSubject('race-a')),
+          meta,
+        }),
       ),
       correlationStorage.run({ correlationId: rightId }, () =>
-        service.accept({ tokenHash: hashToken(tokenB), claims: claims(uniqueSubject('race-b')), meta }),
+        service.accept({
+          tokenHash: hashToken(tokenB),
+          claims: claims(uniqueSubject('race-b')),
+          meta,
+        }),
       ),
     ]);
     const results = [left, right];
@@ -818,13 +1153,17 @@ describe('authentication', () => {
       status: 403,
       message: 'account not provisioned',
     });
-    const identities = await prisma.userIdentity.findMany({ where: { userId: user.id, provider: 'entra' } });
+    const identities = await prisma.userIdentity.findMany({
+      where: { userId: user.id, provider: 'entra' },
+    });
     expect(identities).toHaveLength(1);
     const events = [
       ...(await auditEvents(started(), leftId, companyAId)),
       ...(await auditEvents(started(), rightId, companyB.id)),
     ];
-    expect(events.some((event) => event.outcome === 'success' && event.action === 'invitation.accepted')).toBe(true);
+    expect(
+      events.some((event) => event.outcome === 'success' && event.action === 'invitation.accepted'),
+    ).toBe(true);
     const denial = events.find((event) => event.outcome === 'denied');
     expect(denial?.action).toBe('auth.login');
     expect(detailReason(denial?.details)).toBe('account_identity_conflict');
@@ -852,10 +1191,22 @@ describe('authentication', () => {
       const emailA = `recip-a.${String(round)}.${randomUUID()}@example.test`;
       const emailB = `recip-b.${String(round)}.${randomUUID()}@example.test`;
       const userA = await prisma.userAccount.create({
-        data: { email: emailA, displayName: 'Reciprocal A', locale: 'en', status: 'active', isPlatformOwner: false },
+        data: {
+          email: emailA,
+          displayName: 'Reciprocal A',
+          locale: 'en',
+          status: 'active',
+          isPlatformOwner: false,
+        },
       });
       const userB = await prisma.userAccount.create({
-        data: { email: emailB, displayName: 'Reciprocal B', locale: 'en', status: 'active', isPlatformOwner: false },
+        data: {
+          email: emailB,
+          displayName: 'Reciprocal B',
+          locale: 'en',
+          status: 'active',
+          isPlatformOwner: false,
+        },
       });
       await grantCompanyRole(userA.id, companyAId, 'CA');
       await grantCompanyRole(userB.id, companyB.id, 'CA');
@@ -894,7 +1245,9 @@ describe('authentication', () => {
 
   it('lets the platform owner invite the first admin of a new company', async () => {
     const browser = request.agent(httpServer(started()));
-    const signedIn = await browser.post('/api/auth/dev/login').send({ email: 'owner@example.test' });
+    const signedIn = await browser
+      .post('/api/auth/dev/login')
+      .send({ email: 'owner@example.test' });
     expect(signedIn.status).toBe(200);
     const xsrf = cookieValue(cookieHeader(signedIn, 'XSRF-TOKEN'), 'XSRF-TOKEN');
     const legalName = `Owner invite ${run} Ltd (fictional)`;
@@ -905,7 +1258,11 @@ describe('authentication', () => {
       .send({ legalName, tradingName: `Owner invite ${run}`, isFictional: true });
     expect(created.status, JSON.stringify(created.body)).toBe(200);
     const createdBody = responseBody(created);
-    if (!isRecord(createdBody) || !isRecord(createdBody.company) || typeof createdBody.company.id !== 'string') {
+    if (
+      !isRecord(createdBody) ||
+      !isRecord(createdBody.company) ||
+      typeof createdBody.company.id !== 'string'
+    ) {
       throw new Error('company id missing');
     }
     const companyId = createdBody.company.id;
@@ -920,20 +1277,38 @@ describe('authentication', () => {
       });
     expect(invited.status, JSON.stringify(invited.body)).toBe(200);
     const invitedBody = responseBody(invited);
-    if (!isRecord(invitedBody) || !isRecord(invitedBody.invitation) || typeof invitedBody.invitation.link !== 'string') {
+    if (
+      !isRecord(invitedBody) ||
+      !isRecord(invitedBody.invitation) ||
+      typeof invitedBody.invitation.link !== 'string'
+    ) {
       throw new Error('invitation link missing');
     }
-    const token = new URL(invitedBody.invitation.link, 'http://127.0.0.1').searchParams.get('invitation');
+    const token = new URL(invitedBody.invitation.link, 'http://127.0.0.1').searchParams.get(
+      'invitation',
+    );
     if (!token) {
       throw new Error('invitation token missing');
     }
-    useProfile({ sub: uniqueSubject('owner-invitee'), email, emailVerified: true, amr: ['mfa'], name: 'First admin' });
-    const accepted = await finishOidc(request.agent(httpServer(started())), { redirect: '/welcome', invitation: token }, cid('owner-accept'));
-    expect(accepted.status).toBe(302);
-    const membership = await started().get(PrismaService).client.membership.findFirst({
-      where: { companyId, user: { email } },
-      include: { roles: { include: { role: true } } },
+    useProfile({
+      sub: uniqueSubject('owner-invitee'),
+      email,
+      emailVerified: true,
+      amr: ['mfa'],
+      name: 'First admin',
     });
+    const accepted = await finishOidc(
+      request.agent(httpServer(started())),
+      { redirect: '/welcome', invitation: token },
+      cid('owner-accept'),
+    );
+    expect(accepted.status).toBe(302);
+    const membership = await started()
+      .get(PrismaService)
+      .client.membership.findFirst({
+        where: { companyId, user: { email } },
+        include: { roles: { include: { role: true } } },
+      });
     expect(membership?.status).toBe('active');
     expect(membership?.roles.map((role) => role.role.key)).toContain('CA');
   });
@@ -987,20 +1362,26 @@ describe('authentication', () => {
     roleKey = 'FIN',
   ): Promise<string> {
     const token = randomBytes(32).toString('base64url');
-    await started().get(PrismaService).client.invitation.create({
-      data: {
-        companyId,
-        email,
-        roleAssignments: [{ roleKey, scopeType: 'company', scopeId: null }],
-        tokenHash: hashToken(token),
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        invitedById,
-      },
-    });
+    await started()
+      .get(PrismaService)
+      .client.invitation.create({
+        data: {
+          companyId,
+          email,
+          roleAssignments: [{ roleKey, scopeType: 'company', scopeId: null }],
+          tokenHash: hashToken(token),
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          invitedById,
+        },
+      });
     return token;
   }
 
-  async function grantCompanyRole(userId: string, companyId: string, roleKey: string): Promise<void> {
+  async function grantCompanyRole(
+    userId: string,
+    companyId: string,
+    roleKey: string,
+  ): Promise<void> {
     const client = started().get(PrismaService).client;
     const role = await client.role.findUniqueOrThrow({
       where: { companyId_key: { companyId, key: roleKey } },
@@ -1020,18 +1401,29 @@ describe('authentication', () => {
   }
 
   async function finPermissions(): Promise<string[]> {
-    const role = await started().get(PrismaService).client.role.findUniqueOrThrow({
-      where: { companyId_key: { companyId: companyAId, key: 'FIN' } },
-      include: { permissions: true },
-    });
+    const role = await started()
+      .get(PrismaService)
+      .client.role.findUniqueOrThrow({
+        where: { companyId_key: { companyId: companyAId, key: 'FIN' } },
+        include: { permissions: true },
+      });
     return role.permissions.map((permission) => permission.permission);
   }
 
-  async function createAuthority(permissions: string[], status: 'active' | 'suspended'): Promise<string> {
+  async function createAuthority(
+    permissions: string[],
+    status: 'active' | 'suspended',
+  ): Promise<string> {
     const prisma = started().get(PrismaService).client;
     const email = `inviter.${randomUUID()}@example.test`;
     const user = await prisma.userAccount.create({
-      data: { email, displayName: 'Inviter', locale: 'en', status: 'active', isPlatformOwner: false },
+      data: {
+        email,
+        displayName: 'Inviter',
+        locale: 'en',
+        status: 'active',
+        isPlatformOwner: false,
+      },
     });
     const role = await prisma.role.create({
       data: {
@@ -1061,10 +1453,16 @@ describe('authentication', () => {
     return user.id;
   }
 
-  async function expectInvitationOpen(token: string, correlationId: string, reason: string): Promise<void> {
-    const invitation = await started().get(PrismaService).client.invitation.findUniqueOrThrow({
-      where: { tokenHash: hashToken(token) },
-    });
+  async function expectInvitationOpen(
+    token: string,
+    correlationId: string,
+    reason: string,
+  ): Promise<void> {
+    const invitation = await started()
+      .get(PrismaService)
+      .client.invitation.findUniqueOrThrow({
+        where: { tokenHash: hashToken(token) },
+      });
     expect(invitation.acceptedAt).toBeNull();
     const events = await auditEvents(started(), correlationId, companyAId);
     expect(events[0]?.outcome).toBe('denied');
@@ -1190,7 +1588,16 @@ function userEmails(body: unknown): string[] {
   if (!isRecord(body) || !Array.isArray(body.users)) {
     return [];
   }
-  return body.users.flatMap((user) => (isRecord(user) && typeof user.email === 'string' ? [user.email] : []));
+  return body.users.flatMap((user) =>
+    isRecord(user) && typeof user.email === 'string' ? [user.email] : [],
+  );
+}
+
+function userLocale(body: unknown): string | undefined {
+  if (!isRecord(body) || !isRecord(body.user) || typeof body.user.locale !== 'string') {
+    return undefined;
+  }
+  return body.user.locale;
 }
 
 function userEmail(body: unknown): string | undefined {
@@ -1223,7 +1630,27 @@ function detailReason(details: unknown): string | undefined {
   return details.reason;
 }
 
-async function auditEvents(application: INestApplication, correlationId: string, companyId?: string) {
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function waitFor(ready: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!ready()) {
+    if (Date.now() > deadline) {
+      throw new Error('timed out waiting for overlapping locale updates');
+    }
+    await delay(5);
+  }
+}
+
+async function auditEvents(
+  application: INestApplication,
+  correlationId: string,
+  companyId?: string,
+) {
   const prisma = application.get(PrismaService);
   return prisma.client.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.platform_scope', 'on', true)`;

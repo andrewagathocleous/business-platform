@@ -1,0 +1,612 @@
+{
+  "app": {
+    "title": "Business platform"
+  },
+  "a11y": {
+    "skip": "Skip to content"
+  },
+  "nav": {
+    "label": "Sections",
+    "menu": "Menu",
+    "open": "Open menu",
+    "close": "Close menu",
+    "orders": "Orders",
+    "clients": "Clients",
+    "invoices": "Invoices",
+    "admin": "Admin",
+    "members": "Members",
+    "automation": "Automation",
+    "audit": "Audit",
+    "printers": "Printers"
+  },
+  "user": {
+    "menu": "Account menu",
+    "language": "Language",
+    "english": "English",
+    "greek": "Ελληνικά",
+    "logout": "Log out"
+  },
+  "company": {
+    "switcher": "Company",
+    "current": "Current"
+  },
+  "login": {
+    "title": "Sign in",
+    "loading": "Loading sign-in options",
+    "microsoft": "Sign in with Microsoft",
+    "devBanner": "DEVELOPMENT LOGIN — fictional users",
+    "devPick": "Choose a fictional user",
+    "failed": "Sign-in failed"
+  },
+  "forbidden": {
+    "title": "Forbidden",
+    "body": "You do not have permission to open this page.",
+    "home": "Back to your company"
+  },
+  "notFound": {
+    "title": "Not found",
+    "body": "This page does not exist, or you are not a member of this company.",
+    "home": "Back to your company"
+  },
+  "unavailable": {
+    "title": "Something went wrong",
+    "body": "The session could not be loaded. Try again.",
+    "retry": "Retry"
+  },
+  "placeholder": {
+    "d2": "Coming in D-2",
+    "d3": "Coming in D-3"
+  },
+  "empty": {
+    "title": "Nothing to show",
+    "body": "Your account has no sections in this company."
+  },
+  "errors": {
+    "correlation": "Correlation id",
+    "generic": "Something went wrong"
+  },
+  "orders": {
+    "title": "Orders",
+    "loading": "Loading orders",
+    "empty": "No orders",
+    "error": "The orders could not be loaded",
+    "detailLoading": "Loading order",
+    "detailError": "The order could not be loaded",
+    "search": "Search",
+    "unassigned": "Unassigned",
+    "noName": "No name",
+    "markAs": "Mark as {{status}}",
+    "notAvailable": "Not available: {{status}} — {{reason}}",
+    "previous": "Previous",
+    "next": "Next",
+    "reviewRequired": "Review required",
+    "filters": {
+      "fulfilment": "Fulfilment",
+      "payment": "Payment",
+      "store": "Store",
+      "assigned": "Assigned",
+      "any": "Anyone",
+      "me": "Assigned to me",
+      "none": "Unassigned",
+      "from": "From",
+      "to": "To",
+      "allStores": "All stores"
+    },
+    "columns": {
+      "number": "Number",
+      "created": "Created",
+      "customer": "Customer",
+      "store": "Store",
+      "payment": "Payment",
+      "fulfilment": "Fulfilment",
+      "integration": "Integration",
+      "delivery": "Delivery",
+      "total": "Total",
+      "assignee": "Assignee"
+    },
+    "customer": "Customer",
+    "recipient": "Recipient",
+    "billing": "Billing",
+    "items": "Items",
+    "sku": "SKU",
+    "itemTitle": "Title",
+    "variant": "Variant",
+    "quantity": "Quantity",
+    "unitPrice": "Unit price",
+    "lineTotal": "Line total",
+    "subtotal": "Subtotal",
+    "shipping": "Shipping",
+    "tax": "Tax",
+    "noItems": "No items",
+    "gift": {
+      "title": "Gift message",
+      "none": "No gift message",
+      "preview": "Preview at print size"
+    },
+    "customerNote": {
+      "title": "Customer note",
+      "none": "No customer note"
+    },
+    "notes": {
+      "title": "Notes",
+      "none": "No notes",
+      "add": "Add note",
+      "label": "Note"
+    },
+    "assignment": {
+      "title": "Assignment",
+      "claim": "Claim",
+      "assignTo": "Assign to",
+      "assign": "Assign",
+      "unassign": "Unassign",
+      "choose": "Choose a person"
+    },
+    "transitions": {
+      "title": "Status"
+    },
+    "cancel": {
+      "button": "Cancel order",
+      "title": "Cancel order",
+      "prompt": "Cancelling closes this order.",
+      "reason": "Reason (optional)",
+      "confirm": "Cancel order",
+      "back": "Back"
+    },
+    "conflict": {
+      "message": "This order was changed by someone else",
+      "reload": "Reload"
+    },
+    "activity": {
+      "title": "Activity",
+      "none": "No activity",
+      "order": {
+        "imported": "Imported",
+        "source_updated": "Updated from the store",
+        "transition": "Status changed",
+        "note_added": "Note added",
+        "claimed": "Claimed",
+        "assigned": "Assigned"
+      },
+      "print_job": {
+        "requested": "Print requested",
+        "submitting": "Sending to printer",
+        "submitted": "Sent to printer",
+        "delivered_to_printer": "Delivered to printer",
+        "done_reported": "Printer reported done",
+        "confirmed": "Print confirmed",
+        "held": "Print held",
+        "failed": "Print failed",
+        "uncertain": "Print uncertain",
+        "released": "Print released",
+        "cancelled": "Print cancelled"
+      },
+      "authorization": {
+        "denied": "Not allowed"
+      }
+    },
+    "actor": {
+      "user": "User",
+      "system": "System",
+      "service": "Service"
+    },
+    "outcome": {
+      "success": "Succeeded",
+      "failure": "Failed",
+      "denied": "Denied"
+    },
+    "fulfilment": {
+      "new": "New",
+      "review_required": "Review required",
+      "preparing": "Preparing",
+      "ready": "Ready",
+      "handed_to_courier": "Handed to courier",
+      "completed": "Completed",
+      "cancelled": "Cancelled"
+    },
+    "payment": {
+      "pending": "Pending",
+      "authorized": "Authorized",
+      "paid": "Paid",
+      "partially_paid": "Partially paid",
+      "refunded": "Refunded",
+      "partially_refunded": "Partially refunded",
+      "voided": "Voided",
+      "unknown": "Unknown"
+    },
+    "integration": {
+      "synced": "Synced",
+      "stale": "Stale",
+      "error": "Error"
+    },
+    "delivery": {
+      "courier_cy": "Courier in Cyprus",
+      "post_international": "International post",
+      "collection": "Collection",
+      "unknown": "Unknown delivery"
+    },
+    "review": {
+      "unknown_payment": "Unknown payment status",
+      "unknown_delivery": "Unknown delivery method",
+      "unsupported_glyphs": "Characters the gift card cannot print",
+      "cancelled_at_source": "Cancelled in the store",
+      "gift_message_changed_after_print": "Gift message changed after printing"
+    },
+    "transitionErrors": {
+      "transition_not_allowed": "This change is not allowed",
+      "terminal_status": "This order is already closed",
+      "payment_not_settled": "Payment is not settled",
+      "delivery_method_not_allowed": "This delivery method cannot move to that status"
+    },
+    "print": {
+      "title": "Printing",
+      "packingSlip": "Packing slip",
+      "giftMessage": "Gift message",
+      "print": "Print",
+      "preview": "Preview",
+      "confirmPrinted": "Confirm printed",
+      "notPrinted": "Not printed",
+      "reprint": "Reprint",
+      "cancel": "Cancel print",
+      "simulated": "Simulated printer",
+      "checkPrinter": "Check the printer before reprinting",
+      "mayStillPrint": "The previous job may still print — check the printer before reprinting",
+      "heldNote": "Printing is switched off",
+      "waiting": "Still waiting — refresh to check",
+      "pollDenied": "Status updates stopped — this print job cannot be read",
+      "reason": "Reason",
+      "reprintTitle": "Reprint",
+      "provider": "Provider",
+      "reprintFlag": "Reprint",
+      "back": "Back"
+    },
+    "printStatus": {
+      "queued": "Queued",
+      "held": "Held — printing is switched off",
+      "submitting": "Submitting",
+      "submitted": "Sent to printer",
+      "delivered_to_printer": "Delivered to printer (not confirmed)",
+      "done_reported": "Sent to printer (provider reported done — not confirmed)",
+      "confirmed_printed": "Confirmed printed",
+      "not_printed": "Confirmed not printed",
+      "failed": "Failed",
+      "uncertain": "Uncertain — check the printer before reprinting",
+      "cancelled": "Cancelled"
+    }
+  },
+  "common": {
+    "reload": "Reload",
+    "previous": "Previous",
+    "next": "Next",
+    "invalidFilters": "These filters are invalid and were not applied: {{fields}}"
+  },
+  "clients": {
+    "title": "Clients",
+    "new": "New client",
+    "search": "Search",
+    "includeArchived": "Include archived",
+    "loading": "Loading clients",
+    "error": "The clients could not be loaded",
+    "empty": "No clients",
+    "archived": "Archived",
+    "editTitle": "Edit client",
+    "newTitle": "New client",
+    "contacts": "Contacts",
+    "addContact": "Add contact",
+    "contactHeading": "Contact {{position}}",
+    "primaryMark": "Primary",
+    "addressHeading": "Address {{position}}",
+    "removeContact": "Remove contact",
+    "addresses": "Addresses",
+    "addAddress": "Add address",
+    "removeAddress": "Remove address",
+    "save": "Save client",
+    "archive": "Archive",
+    "unarchive": "Unarchive",
+    "conflict": "This client was changed by someone else",
+    "duplicateTitle": "Possible duplicate — save anyway?",
+    "saveAnyway": "Save anyway",
+    "back": "Back",
+    "columns": {
+      "name": "Name",
+      "kind": "Kind",
+      "email": "Email",
+      "phone": "Phone",
+      "vat": "VAT number",
+      "archived": "Archived"
+    },
+    "kind": {
+      "organisation": "Organisation",
+      "individual": "Individual"
+    },
+    "addressKind": {
+      "billing": "Billing",
+      "shipping": "Shipping"
+    },
+    "language": {
+      "en": "English",
+      "el": "Greek"
+    },
+    "fields": {
+      "kind": "Kind",
+      "displayName": "Display name",
+      "legalName": "Legal name",
+      "vatNumber": "VAT number",
+      "taxId": "Tax id",
+      "email": "Email",
+      "phone": "Phone",
+      "website": "Website",
+      "notes": "Notes",
+      "currency": "Default currency",
+      "language": "Default language",
+      "terms": "Payment terms in days",
+      "contactName": "Contact name",
+      "position": "Position",
+      "primary": "Primary contact",
+      "addressKind": "Address kind",
+      "label": "Label",
+      "line1": "Address line 1",
+      "line2": "Address line 2",
+      "city": "City",
+      "region": "Region",
+      "postalCode": "Postal code",
+      "country": "Country code",
+      "defaultAddress": "Default for this kind"
+    },
+    "rules": {
+      "required": "This field is required",
+      "length": "This field is too short or too long",
+      "tooLong": "This field is too long",
+      "currency": "Use a three-letter currency code",
+      "terms": "Payment terms must be a whole number of days from 0 to 3650",
+      "country": "Use a two-letter country code",
+      "multipleDefaults": "Only one address of each kind can be the default"
+    }
+  },
+  "invoices": {
+    "title": "Invoices",
+    "new": "New invoice",
+    "search": "Search",
+    "loading": "Loading invoices",
+    "error": "The invoice could not be loaded",
+    "empty": "No invoices",
+    "draft": "Draft",
+    "editTitle": "Invoice",
+    "newTitle": "New invoice",
+    "readOnly": "This document cannot be edited",
+    "lines": "Lines",
+    "lineNumber": "Line {{position}}",
+    "addLine": "Add line",
+    "changeClient": "Change",
+    "removeLine": "Remove line",
+    "moveUp": "Move up",
+    "moveDown": "Move down",
+    "chooseProduct": "Choose a product",
+    "chooseTax": "Choose a tax code",
+    "save": "Save draft",
+    "conflict": "This invoice was changed by someone else",
+    "draftNotice": "DRAFT — not a tax invoice",
+    "openPdf": "Open draft PDF",
+    "totalsTitle": "Totals",
+    "totalsPending": "Totals not calculated yet",
+    "documentLanguage": "Document language: {{language}}, from the {{source}}",
+    "columns": {
+      "number": "Number",
+      "type": "Document type",
+      "client": "Client",
+      "issueDate": "Issue date",
+      "dueDate": "Due date",
+      "status": "Status",
+      "total": "Total"
+    },
+    "filters": {
+      "status": "Status",
+      "client": "Client",
+      "from": "From",
+      "to": "To",
+      "any": "Any status",
+      "anyClient": "Any client"
+    },
+    "status": {
+      "draft": "Draft",
+      "issued": "Issued",
+      "cancelled": "Cancelled"
+    },
+    "type": {
+      "invoice": "Invoice",
+      "quote": "Quote"
+    },
+    "kind": {
+      "item": "Item",
+      "shipping": "Shipping"
+    },
+    "languageName": {
+      "en": "English",
+      "el": "Greek"
+    },
+    "source": {
+      "client": "client",
+      "company": "company"
+    },
+    "fields": {
+      "client": "Client",
+      "type": "Document type",
+      "pricesIncludeTax": "Prices include tax",
+      "issueDate": "Issue date",
+      "dueDate": "Due date",
+      "reference": "Reference",
+      "notes": "Notes",
+      "terms": "Terms",
+      "product": "Product",
+      "description": "Description",
+      "quantity": "Quantity",
+      "unit": "Unit",
+      "unitPrice": "Unit price",
+      "discount": "Discount %",
+      "tax": "Tax code",
+      "kind": "Kind"
+    },
+    "totals": {
+      "subtotal": "Subtotal",
+      "discount": "Discount",
+      "net": "Net",
+      "tax": "Tax",
+      "total": "Total",
+      "gross": "Gross",
+      "lineExclusive": "Subtotal {{subtotal}} · Discount {{discount}} · Net {{net}} (excl. tax)",
+      "lineInclusive": "Subtotal {{subtotal}} · Discount {{discount}} · Amount incl. tax {{gross}} · Net {{net}}",
+      "taxCode": "Tax code",
+      "byTax": "Tax by code"
+    },
+    "rules": {
+      "client": "Choose a client",
+      "lines": "Each line needs a description, quantity, unit, unit price and tax code"
+    }
+  },
+  "members": {
+    "title": "Members",
+    "loading": "Loading members",
+    "error": "The members could not be loaded",
+    "invite": "Invite",
+    "inviteReady": "Invitation link",
+    "linkOnce": "This link is shown only once. No email was sent.",
+    "copy": "Copy link",
+    "copied": "Copied",
+    "copyUnavailable": "The clipboard is not available. Select the link and copy it yourself.",
+    "close": "Close",
+    "roles": "Roles",
+    "suspendShort": "Suspend",
+    "reactivateShort": "Reactivate",
+    "revokeShort": "Revoke sessions",
+    "chooseRole": "Choose a role",
+    "chooseScope": "Choose a scope",
+    "changeRoles": "Change roles for {{name}}",
+    "suspend": "Suspend {{name}}",
+    "reactivate": "Reactivate {{name}}",
+    "revoke": "Revoke sessions for {{name}}",
+    "revokeConfirm": "Revoke sessions for {{name}}?",
+    "revokeNow": "Revoke sessions",
+    "addRole": "Add role",
+    "removeRole": "Remove role",
+    "saveRoles": "Save roles",
+    "columns": {
+      "name": "Name",
+      "email": "Email",
+      "roles": "Roles",
+      "status": "Status",
+      "actions": "Actions"
+    },
+    "fields": {
+      "email": "Email",
+      "role": "Role",
+      "scope": "Scope",
+      "scopeName": "Scope name"
+    },
+    "scope": {
+      "company": "Company",
+      "location": "Location",
+      "store": "Store"
+    },
+    "status": {
+      "active": "Active",
+      "suspended": "Suspended",
+      "removed": "Removed"
+    }
+  },
+  "automation": {
+    "title": "Automation",
+    "outboundNote": "The global outbound.all switch is not managed here.",
+    "loading": "Loading automation",
+    "error": "Automation could not be loaded",
+    "switches": "Switches",
+    "jobs": "Jobs",
+    "printJobs": "Print jobs",
+    "on": "On",
+    "off": "Off",
+    "turnOn": "Turn on {{key}}",
+    "turnOff": "Turn off {{key}}",
+    "reason": "Reason",
+    "confirm": "Confirm",
+    "back": "Back",
+    "jobStatus": "Job status",
+    "printStatus": "Print job status",
+    "anyStatus": "Any status",
+    "release": "Release",
+    "cancel": "Cancel",
+    "columns": {
+      "switch": "Switch",
+      "state": "State",
+      "lastChange": "Last change",
+      "actions": "Actions",
+      "type": "Type",
+      "status": "Status",
+      "attempts": "Attempts",
+      "runAfter": "Run after",
+      "lastError": "Last error",
+      "document": "Document"
+    }
+  },
+  "audit": {
+    "title": "Audit log",
+    "loading": "Loading audit events",
+    "error": "The audit log could not be loaded",
+    "details": "Details",
+    "copy": "Copy",
+    "copyObject": "Copy object id",
+    "copyCorrelation": "Copy correlation id",
+    "anyOutcome": "Any outcome",
+    "columns": {
+      "time": "Time",
+      "actor": "Actor",
+      "action": "Action",
+      "object": "Object",
+      "outcome": "Outcome",
+      "correlation": "Correlation id",
+      "details": "Details"
+    },
+    "filters": {
+      "action": "Action",
+      "objectType": "Object type",
+      "objectId": "Object id",
+      "actor": "Actor",
+      "outcome": "Outcome",
+      "from": "From",
+      "to": "To"
+    },
+    "outcome": {
+      "success": "Success",
+      "denied": "Denied",
+      "failure": "Failure"
+    }
+  },
+  "printers": {
+    "title": "Printers",
+    "loading": "Loading printers",
+    "error": "The printers could not be loaded",
+    "discover": "Discover simulated printers",
+    "discoverNote": "This lists simulated printers. It does not search a network.",
+    "anyLocation": "Any location",
+    "mappings": "Mappings",
+    "choosePrinter": "Choose a printer",
+    "saveMapping": "Save mapping",
+    "columns": {
+      "name": "Name",
+      "location": "Location",
+      "provider": "Provider",
+      "status": "Status",
+      "paper": "Paper sizes",
+      "lastSeen": "Last seen"
+    },
+    "fields": {
+      "location": "Location",
+      "printer": "Printer",
+      "paper": "Paper size",
+      "copies": "Copies"
+    },
+    "documents": {
+      "invoice": "Invoice",
+      "packing_slip": "Packing slip",
+      "gift_message": "Gift message",
+      "shipping_label": "Shipping label"
+    }
+  }
+}

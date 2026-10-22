@@ -135,6 +135,27 @@ describe('HTTP API', () => {
     expect(ready.headers['x-correlation-id']).toMatch(UUID_V7);
   });
 
+  it('echoes E2E_RUN_ID from ready only while that variable is set', async () => {
+    const previous = process.env.E2E_RUN_ID;
+    process.env.E2E_RUN_ID = '22222222-2222-4222-8222-222222222222';
+    try {
+      const marked = await request(httpServer(app)).get('/api/health/ready');
+      expect(marked.status).toBe(200);
+      expect(responseBody(marked)).toEqual({
+        status: 'ok',
+        runId: '22222222-2222-4222-8222-222222222222',
+      });
+    } finally {
+      if (previous === undefined) {
+        delete process.env.E2E_RUN_ID;
+      } else {
+        process.env.E2E_RUN_ID = previous;
+      }
+    }
+    const plain = await request(httpServer(app)).get('/api/health/ready');
+    expect(responseBody(plain)).toEqual({ status: 'ok' });
+  });
+
   it('replaces an invalid correlation id', async () => {
     const response = await request(httpServer(app))
       .get('/api/health/live')

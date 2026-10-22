@@ -1187,6 +1187,139 @@ describe('orders import and API', () => {
     return { userId: user.id, session: await login(started(), email) };
   }
 
+  it('shows member display names and hides another company', async () => {
+    const current = await orderByNumber(adminA, companyA, '#1001');
+    const assigned = await send(adminA, 'post', `/api/c/${companyA}/orders/${order1001}/assign`, cid('names-assign'), {
+      userId: fulfilUserId,
+      expectedVersion: versionOf(current),
+    });
+    expect(assigned.status, text(assigned)).toBe(200);
+    expect(record(orderOf(assigned).assignedTo)).toEqual({
+      userId: fulfilUserId,
+      displayName: 'Fulfilment A (fictional)',
+    });
+
+    const listed = await send(adminA, 'get', `/api/c/${companyA}/orders?q=${encodeURIComponent('#1001')}&pageSize=25`);
+    expect(listed.status, text(listed)).toBe(200);
+    const row = ordersOf(listed).find((order) => order.externalNumber === '#1001');
+    if (!row) {
+      throw new Error('#1001 is missing from the list');
+    }
+    expect(row.assignedToUserId).toBe(fulfilUserId);
+    expect(record(row.assignedTo)).toEqual({ userId: fulfilUserId, displayName: 'Fulfilment A (fictional)' });
+
+    const detail = await send(adminA, 'get', `/api/c/${companyA}/orders/${order1001}`);
+    expect(detail.status, text(detail)).toBe(200);
+    const notes = arrayOf(orderOf(detail).notes).map((note) => record(note));
+    expect(notes.some((note) => note.authorDisplayName === 'Fulfilment A (fictional)')).toBe(true);
+    expect(record(orderOf(detail).assignedTo).displayName).toBe('Fulfilment A (fictional)');
+
+    const otherCompany = await send(adminB, 'get', `/api/c/${companyB}/orders/${order1001}`, cid('names-other'));
+    expect(otherCompany.status).toBe(404);
+    expect(errorCode(bodyOf(otherCompany))).toBe('not_found');
+  });
+
+  it('limits order filters to the stores in the caller scope', async () => {
+    const fulfilFilters = await send(fulfil, 'get', `/api/c/${companyA}/order-filters`);
+    expect(fulfilFilters.status, text(fulfilFilters)).toBe(200);
+    expect(storeNames(fulfilFilters)).toEqual(['Nutbox Demo Shopify']);
+
+    const adminFilters = await send(adminA, 'get', `/api/c/${companyA}/order-filters`);
+    expect(adminFilters.status, text(adminFilters)).toBe(200);
+    const adminStores = storeNames(adminFilters);
+    expect(adminStores).toContain('Nutbox Demo Shopify');
+    expect(adminStores).toContain('Nutbox Demo PrestaShop');
+    expect(adminStores).not.toContain('Olive Grove Demo Shopify');
+
+    const companyBFilters = await send(adminB, 'get', `/api/c/${companyB}/order-filters`);
+    expect(storeNames(companyBFilters)).toContain('Olive Grove Demo Shopify');
+    expect(storeNames(companyBFilters)).not.toContain('Nutbox Demo Shopify');
+    expect(storeNames(companyBFilters)).not.toContain('Nutbox Demo PrestaShop');
+  });
+
+  it('lists assignees who can work the order store and refuses order.claim alone', async () => {
+    const shopify = await send(adminA, 'get', `/api/c/${companyA}/orders/${order1001}/assignees`);
+    expect(shopify.status, text(shopify)).toBe(200);
+    const shopifyNames = assigneeNames(shopify);
+    expect(shopifyNames).toContain('Fulfilment A (fictional)');
+    expect(shopifyNames).toContain('Admin A (fictional)');
+    expect(shopifyNames).not.toContain('Suspended A (fictional)');
+
+    const presta = await send(adminA, 'get', `/api/c/${companyA}/orders/${prestaOrderId}/assignees`);
+    expect(presta.status, text(presta)).toBe(200);
+    const prestaNames = assigneeNames(presta);
+    expect(prestaNames).not.toContain('Fulfilment A (fictional)');
+    expect(prestaNames).toContain('Admin A (fictional)');
+    expect(prestaNames).not.toContain('Suspended A (fictional)');
+
+    const claimOnly = await send(fulfil, 'get', `/api/c/${companyA}/orders/${order1001}/assignees`, cid('assignees-claim'));
+    expect(claimOnly.status).toBe(403);
+    expect(detailReason((await auditEvents(app, cid('assignees-claim'), companyA))[0]?.details)).toBe('permission_missing');
+  });
+
+  it('omits a member who can transition a store but cannot view it', async () => {
+    const mover = await installStaff(`transition-only.${runId}@example.test`, [
+      { permissions: ['order.transition'], scopeType: 'store', scopeId: shopifyStoreA },
+    ]);
+    const listed = await send(adminA, 'get', `/api/c/${companyA}/orders/${order1001}/assignees`);
+    expect(listed.status, text(listed)).toBe(200);
+    expect(assigneeNames(listed)).not.toContain(`transition-only.${runId}@example.test`);
+    expect(assigneeNames(listed)).toContain('Fulfilment A (fictional)');
+    const current = await orderByNumber(adminA, companyA, '#1001');
+    const assigned = await send(adminA, 'post', `/api/c/${companyA}/orders/${order1001}/assign`, cid('assignee-no-view'), {
+      userId: mover.userId,
+      expectedVersion: versionOf(current),
+    });
+    expect(assigned.status, text(assigned)).toBe(422);
+    expect(errorCode(bodyOf(assigned))).toBe('assignee_not_allowed');
+  });
+
+  it('reports can from the order store when view is company-wide', async () => {
+    const viewer = await installStaff(`store-claim.${runId}@example.test`, [
+      { permissions: ['order.view'], scopeType: 'company', scopeId: null },
+      { permissions: ['order.claim', 'print.submit'], scopeType: 'store', scopeId: shopifyStoreA },
+    ]);
+    const shopify = await send(viewer.session, 'get', `/api/c/${companyA}/orders/${order1001}`);
+    expect(shopify.status, text(shopify)).toBe(200);
+    expect(record(orderOf(shopify).can)).toMatchObject({ claim: true, printSubmit: true, assign: false });
+    const presta = await send(viewer.session, 'get', `/api/c/${companyA}/orders/${prestaOrderId}`);
+    expect(presta.status, text(presta)).toBe(200);
+    expect(record(orderOf(presta).can)).toMatchObject({ claim: false, printSubmit: false });
+
+    const claimIn = await send(viewer.session, 'post', `/api/c/${companyA}/orders/${order1001}/assign`, cid('can-claim-in'), {
+      userId: viewer.userId,
+      expectedVersion: versionOf(orderOf(shopify)),
+    });
+    expect(claimIn.status, text(claimIn)).toBe(200);
+    const claimOut = await send(
+      viewer.session,
+      'post',
+      `/api/c/${companyA}/orders/${prestaOrderId}/assign`,
+      cid('can-claim-out'),
+      { userId: viewer.userId, expectedVersion: versionOf(orderOf(presta)) },
+    );
+    expect(claimOut.status, text(claimOut)).toBe(404);
+    expect(errorCode(bodyOf(claimOut))).toBe('not_found');
+
+    const printOut = await send(
+      viewer.session,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('can-print-out'),
+      { documentType: 'packing_slip', sourceType: 'order', sourceId: prestaOrderId },
+    );
+    expect(printOut.status, text(printOut)).toBe(404);
+    const printIn = await send(
+      viewer.session,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('can-print-in'),
+      { documentType: 'packing_slip', sourceType: 'order', sourceId: order1001 },
+    );
+    expect(printIn.status, text(printIn)).not.toBe(404);
+    expect(printIn.status, text(printIn)).not.toBe(403);
+  });
+
   function withCompany<T>(companyId: string, fn: (tx: TenantTransaction) => Promise<T>): Promise<T> {
     return new TenantDb(started().get(PrismaService).client).run(
       { companyId, actor: adminUserId, correlationId: `c2a-db-${runId}` },
@@ -1506,6 +1639,14 @@ function cid(name: string): string {
 
 function orderOf(response: request.Response): Record<string, unknown> {
   return record(record(bodyOf(response)).order);
+}
+
+function storeNames(response: request.Response): string[] {
+  return arrayOf(record(bodyOf(response)).stores).map((store) => stringField(record(store), 'name'));
+}
+
+function assigneeNames(response: request.Response): string[] {
+  return arrayOf(record(bodyOf(response)).users).map((user) => stringField(record(user), 'displayName'));
 }
 
 function ordersOf(response: request.Response): Record<string, unknown>[] {

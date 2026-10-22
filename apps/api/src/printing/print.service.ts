@@ -24,7 +24,9 @@ import { requireActor } from '../commerce/http';
 import { getCorrelationId, uuidv7 } from '../correlation/correlation';
 import { PrismaService } from '../database/prisma.service';
 import type { RequestMeta } from '../identity/request-meta';
+import { orderScopes } from '../orders/order.scope';
 import { PRINT_PROVIDER } from './print.tokens';
+import { FIRST_PRINT_RELEASED_STATUSES } from './first-print';
 import { printJobLabel } from './print-label';
 import { STORAGE } from '../storage/storage.module';
 
@@ -89,6 +91,7 @@ export type PrintJobView = {
   submittedAt: string | null;
   completedAt: string | null;
   confirmedAt: string | null;
+  can?: { cancel: boolean; release: boolean };
 };
 
 export type PrinterView = {
@@ -206,8 +209,8 @@ export class PrintService {
           WHERE ${this.listWhere(ctx.companyId, query, scope)}
         `;
         const offset = (query.page - 1) * query.pageSize;
-        const rows = await tx.$queryRaw<{ id: string }[]>`
-          SELECT pj.id
+        const rows = await tx.$queryRaw<{ id: string; storeId: string | null; locationId: string | null }[]>`
+          SELECT pj.id, o.store_id AS "storeId", s.location_id AS "locationId"
           FROM print_job pj
           LEFT JOIN sales_order o
             ON pj.source_type = 'order'::"print_source_type"
@@ -222,7 +225,10 @@ export class PrintService {
         for (const row of rows) {
           const loaded = await this.loadJob(tx, ctx.companyId, row.id);
           if (loaded) {
-            jobs.push(loaded);
+            jobs.push({
+              ...loaded,
+              can: printJobCapabilities(ctx.grants, loaded.sourceType, row.storeId, row.locationId),
+            });
           }
         }
         return {
@@ -480,6 +486,38 @@ export class PrintService {
         return this.mustLoad(tx, ctx.companyId, id);
       });
       return { printJob };
+    } catch (error) {
+      return this.fail(ctx, meta, error);
+    }
+  }
+
+  async listMappings(
+    ctx: RequestContext,
+    meta: RequestMeta,
+  ): Promise<{
+    mappings: {
+      locationId: string;
+      documentType: string;
+      printerId: string;
+      paperSize: string;
+      copies: number;
+    }[];
+  }> {
+    try {
+      const mappings = await this.tenants.run(this.context(ctx), (tx) =>
+        tx.printerMapping.findMany({
+          where: { companyId: ctx.companyId },
+          orderBy: [{ locationId: 'asc' }, { documentType: 'asc' }, { id: 'asc' }],
+          select: {
+            locationId: true,
+            documentType: true,
+            printerId: true,
+            paperSize: true,
+            copies: true,
+          },
+        }),
+      );
+      return { mappings };
     } catch (error) {
       return this.fail(ctx, meta, error);
     }
@@ -980,7 +1018,7 @@ export class PrintService {
           sourceId: input.sourceId.toLowerCase(),
           documentType: input.documentType,
           isReprint: false,
-          status: { notIn: ['failed', 'cancelled', 'not_printed'] },
+          status: { notIn: [...FIRST_PRINT_RELEASED_STATUSES] },
         },
         select: { id: true },
       });
@@ -1134,6 +1172,22 @@ export class PrintService {
     }
     throw error;
   }
+}
+
+function printJobCapabilities(
+  grants: RequestContext['grants'],
+  sourceType: string,
+  storeId: string | null,
+  locationId: string | null,
+): { cancel: boolean; release: boolean } {
+  const scopes =
+    sourceType === 'order' && storeId && locationId
+      ? orderScopes(storeId, locationId)
+      : [{ type: 'company' as const, id: null }];
+  return {
+    cancel: can(grants, 'print.submit', scopes),
+    release: can(grants, 'automation.replay', scopes),
+  };
 }
 
 function jobView(row: PrintRow): PrintJobView {
