@@ -1,6 +1,6 @@
 # n8n workflow catalogue
 
-Every workflow is exported in sanitised form to `workflows/n8n/<id>.json` (no credentials, no pinned data) for the pinned n8n version. The status column says honestly whether an export exists and how it was tested.
+Every workflow is exported in sanitised form to `workflows/n8n/exports/<id>.json` (no credentials, no pinned data) for the pinned n8n version. The status column says honestly whether an export exists and how it was tested.
 
 Common contract for every workflow:
 

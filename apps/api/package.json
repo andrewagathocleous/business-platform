@@ -2,6 +2,7 @@
   "name": "@bp/api",
   "version": "0.0.0",
   "private": true,
+  "files": ["dist"],
   "scripts": {
     "dev": "tsx --conditions=bp-source src/main.ts",
     "dev:worker": "tsx --conditions=bp-source src/main.worker.ts",

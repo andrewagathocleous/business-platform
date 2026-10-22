@@ -2,7 +2,7 @@ import { type INestApplication } from '@nestjs/common';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { json, urlencoded, type Express, type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
-import { APP_CONFIG, type AppConfig } from '../config/env';
+import { APP_CONFIG, type AppConfig, type AppEnv } from '../config/env';
 import { API_GLOBAL_PREFIX } from './api-prefix';
 import { CorrelationMiddleware } from '../correlation/correlation.middleware';
 import { CORRELATION_HEADER, getCorrelationId, uuidv7 } from '../correlation/correlation';
@@ -20,7 +20,11 @@ export function configureHttp(app: INestApplication): void {
   const correlation = new CorrelationMiddleware();
   // The adapter is created with this already on. Setting it again covers a router
   // created after this call. `/API/...` must not match `/api/...`.
-  (app.getHttpAdapter().getInstance() as Express).set('case sensitive routing', true);
+  const http = app.getHttpAdapter().getInstance() as Express;
+  http.set('case sensitive routing', true);
+  if (config.trustProxyHops > 0) {
+    http.set('trust proxy', config.trustProxyHops);
+  }
   app.setGlobalPrefix(API_GLOBAL_PREFIX);
   app.use((req: Request, res: Response, next: NextFunction) => {
     correlation.use(req, res, next);
@@ -41,7 +45,18 @@ export function configureHttp(app: INestApplication): void {
   mountSwagger(app, config);
 }
 
-function apiHelmet(config: AppConfig) {
+export function apiSecurityHeaders(
+  config: Pick<AppConfig, 'appEnv'>,
+): (req: Request, res: Response, next: NextFunction) => void {
+  return apiHelmet(config);
+}
+
+export function strictTransportSecurityEnabled(appEnv: AppEnv): boolean {
+  return appEnv === 'uat' || appEnv === 'production';
+}
+
+function apiHelmet(config: Pick<AppConfig, 'appEnv'>) {
+  const strictTransportSecurity = strictTransportSecurityEnabled(config.appEnv);
   const strict = helmet({
     contentSecurityPolicy: {
       useDefaults: false,
@@ -55,6 +70,7 @@ function apiHelmet(config: AppConfig) {
     },
     crossOriginResourcePolicy: { policy: 'same-origin' },
     referrerPolicy: { policy: 'no-referrer' },
+    strictTransportSecurity,
   });
   // Swagger UI needs inline scripts. Only the docs page in development and test gets them.
   const docs = helmet({
@@ -73,6 +89,7 @@ function apiHelmet(config: AppConfig) {
       },
     },
     crossOriginResourcePolicy: { policy: 'same-origin' },
+    strictTransportSecurity,
   });
   return (req: Request, res: Response, next: NextFunction): void => {
     const docsPage =

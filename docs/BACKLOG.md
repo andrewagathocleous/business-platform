@@ -11,6 +11,8 @@ Prioritised, by phase. IDs are stable; reference them in commits and in STATUS. 
 | P1-C | Clients, catalogue, invoice drafts + PDF, mock Shopify import contract, orders and transitions, documents, mock printing, jobs, switches, credential vault | C |
 | P1-D | Angular staff app | D |
 | P1-E | Production-like Compose, Dockerfiles, Caddy, milestone verification, runbooks, M1 report | E |
+| P1-F | First production platform owner. `compose.prod.yml` has no seed and no dev login. A fresh production database has no staff user. Not implemented | blocked before a real deploy |
+| P1-G | Break-glass recovery runbook named by ADR-0004. The runbook does not exist. Not implemented | blocked before a real deploy |
 
 ## Phase 2: stores, printing and Nutbox operations
 

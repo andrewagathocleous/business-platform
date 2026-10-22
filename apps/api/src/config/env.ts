@@ -44,6 +44,7 @@ const envSchema = z.object({
   THROTTLE_AUTH_LIMIT: z.string().optional(),
   THROTTLE_AUTOMATION_LIMIT: z.string().optional(),
   THROTTLE_ENABLED_IN_TEST: z.string().optional(),
+  TRUST_PROXY_HOPS: z.string().optional(),
   STORAGE_ROOT: z.string().optional(),
   MOCK_PRINT_ROOT: z.string().optional(),
 });
@@ -68,6 +69,8 @@ export type AppConfig = {
   throttleAutomationLimit: number;
   /** Honoured only when APP_ENV is test. Production limits always run. */
   throttleEnabledInTest: boolean;
+  /** Express `trust proxy` hop count. 0 trusts nothing. */
+  trustProxyHops: number;
   /** Absolute directory for stored document bytes. Created on write. */
   storageRoot: string;
   /** Absolute directory for simulated print PDFs. Created on write. */
@@ -127,6 +130,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   const throttleEnabledInTest =
     appEnv === 'test' &&
     parseBoolean(raw.THROTTLE_ENABLED_IN_TEST, false, 'THROTTLE_ENABLED_IN_TEST', problems);
+  const trustProxyHops = parseTrustProxyHops(raw.TRUST_PROXY_HOPS, problems);
   const storageRoot = parseDirectory(raw.STORAGE_ROOT, 'STORAGE_ROOT', 'var/storage', problems);
   const mockPrintRoot = parseDirectory(
     raw.MOCK_PRINT_ROOT,
@@ -196,6 +200,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     throttleAuthLimit,
     throttleAutomationLimit,
     throttleEnabledInTest,
+    trustProxyHops,
     storageRoot,
     mockPrintRoot,
   };
@@ -289,6 +294,18 @@ function parseOptionalBoolean(
   }
   problems.push(`${name} must be true or false`);
   return undefined;
+}
+
+function parseTrustProxyHops(value: string | undefined, problems: string[]): number {
+  if (value === undefined || value.trim() === '') {
+    return 0;
+  }
+  const trimmed = value.trim();
+  if (trimmed !== '0' && trimmed !== '1' && trimmed !== '2') {
+    problems.push('TRUST_PROXY_HOPS must be an integer from 0 to 2');
+    return 0;
+  }
+  return Number(trimmed);
 }
 
 function parseHost(value: string | undefined, problems: string[]): string {

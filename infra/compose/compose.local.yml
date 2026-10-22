@@ -1,0 +1,185 @@
+# Override for the production stack on this Mac.
+# Project name business-platform-local, so the dev project `business-platform`
+# and its volumes are not used. Published ports are 127.0.0.1 only.
+#
+# The 4 GiB Colima VM cannot hold this stack and the dev stack together.
+# Stop the dev stack with `pnpm dev:infra:down` (that keeps its volumes) before
+# `up`, and start it again afterwards.
+#
+# Local ceilings, so the set fits after the dev stack is stopped:
+#
+# | service         | memory | cpus |
+# | caddy           | 64m    | 0.25 |
+# | api             | 384m   | 0.50 |
+# | worker          | 384m   | 0.50 |
+# | migrate         | 256m   | 0.25 |
+# | postgres        | 512m   | 0.75 |
+# | n8n             | 512m   | 0.50 |
+# | n8n-runner      | 128m   | 0.25 |
+# | seed            | 256m   | 0.25 |
+# | import-fixtures | 384m   | 0.50 |
+#
+# N8N_SECURE_COOKIE=false is local only. The editor is plain HTTP on loopback,
+# so a Secure cookie would never be stored. It is not in compose.prod.yml.
+#
+# Caddy and n8n-runner do not load .env.local-stack. Compose interpolates
+# N8N_RUNNERS_AUTH_TOKEN for the runner from --env-file. Caddy gets APP_DOMAIN only.
+
+name: business-platform-local
+
+services:
+  caddy:
+    build:
+      context: ../..
+      dockerfile: infra/docker/web.Dockerfile
+    env_file: !reset []
+    environment:
+      APP_DOMAIN: localhost
+    ports: !override
+      - "127.0.0.1:8443:443"
+    volumes:
+      - ../caddy/Caddyfile.local:/etc/caddy/Caddyfile:ro
+      - ../caddy/app.caddy:/etc/caddy/app.caddy:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64M
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/api.Dockerfile
+      target: runtime
+    env_file: !override
+      - ../../.env.local-stack
+    environment:
+      APP_ENV: development
+      AUTH_DEV_LOGIN_ENABLED: "true"
+      SESSION_COOKIE_SECURE: "true"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 384M
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/docker/api.Dockerfile
+      target: runtime
+    env_file: !override
+      - ../../.env.local-stack
+    environment:
+      APP_ENV: development
+      AUTH_DEV_LOGIN_ENABLED: "true"
+      SESSION_COOKIE_SECURE: "true"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 384M
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: infra/docker/api.Dockerfile
+      target: migrate
+    env_file: !override
+      - ../../.env.local-stack
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+
+  postgres:
+    env_file: !override
+      - ../../.env.local-stack
+    environment:
+      BP_OWNER_CREATEDB: "off"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 512M
+
+  n8n:
+    env_file: !override
+      - ../../.env.local-stack
+    environment:
+      N8N_SECURE_COOKIE: "false"
+    ports: !override
+      - "127.0.0.1:15678:5678"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+
+  n8n-runner:
+    env_file: !reset []
+    environment:
+      N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN:?N8N_RUNNERS_AUTH_TOKEN is required}
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+
+  seed:
+    profiles: ["demo"]
+    image: bp-tools:${BP_IMAGE_TAG:?BP_IMAGE_TAG is required}
+    build:
+      context: ../..
+      dockerfile: infra/docker/api.Dockerfile
+      target: tools
+    command: ["pnpm", "db:seed"]
+    env_file:
+      - ../../.env.local-stack
+    networks:
+      - internal
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+    restart: "no"
+
+  import-fixtures:
+    profiles: ["demo"]
+    image: bp-tools:${BP_IMAGE_TAG:?BP_IMAGE_TAG is required}
+    build:
+      context: ../..
+      dockerfile: infra/docker/api.Dockerfile
+      target: tools
+    command:
+      [
+        "sh",
+        "-c",
+        "pnpm demo:import-fixtures --company A --with-prestashop-order && pnpm demo:import-fixtures --company B",
+      ]
+    env_file:
+      - ../../.env.local-stack
+    environment:
+      DEMO_API_ORIGIN: http://api:3000
+    networks:
+      - internal
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 384M
+    restart: "no"
+
+networks:
+  edge:
+  internal:

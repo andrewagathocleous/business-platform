@@ -82,6 +82,7 @@ describe('loadConfig', () => {
     expect(development.throttleAuthLimit).toBe(20);
     expect(development.throttleAutomationLimit).toBe(120);
     expect(development.throttleEnabledInTest).toBe(false);
+    expect(development.trustProxyHops).toBe(0);
     expect(development.masterKeys.k1).toHaveLength(32);
     expect(loadConfig(developmentEnv({ HOST: '0.0.0.0' })).host).toBe('0.0.0.0');
     expect(loadConfig(developmentEnv({ THROTTLE_AUTH_LIMIT: '7' })).throttleAuthLimit).toBe(7);
@@ -132,6 +133,16 @@ describe('loadConfig', () => {
     expect(() => loadConfig(developmentEnv({ MOCK_PRINT_ROOT: 's3://bucket/prints' }))).toThrow(
       /MOCK_PRINT_ROOT/,
     );
+  });
+
+  it('trusts no proxy hops unless TRUST_PROXY_HOPS is 1 or 2', () => {
+    expect(loadConfig(developmentEnv()).trustProxyHops).toBe(0);
+    expect(loadConfig(developmentEnv({ TRUST_PROXY_HOPS: '1' })).trustProxyHops).toBe(1);
+    expect(loadConfig(developmentEnv({ TRUST_PROXY_HOPS: '2' })).trustProxyHops).toBe(2);
+    expect(loadConfig(productionEnv()).trustProxyHops).toBe(0);
+    expect(() => loadConfig(developmentEnv({ TRUST_PROXY_HOPS: '3' }))).toThrow(/TRUST_PROXY_HOPS/);
+    expect(() => loadConfig(developmentEnv({ TRUST_PROXY_HOPS: '-1' }))).toThrow(/TRUST_PROXY_HOPS/);
+    expect(() => loadConfig(productionEnv({ TRUST_PROXY_HOPS: 'no' }))).toThrow(/TRUST_PROXY_HOPS/);
   });
 
   it('rejects a master key that is not 32 bytes', () => {

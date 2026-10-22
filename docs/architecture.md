@@ -54,8 +54,10 @@ packages/documents    PDF rendering (invoices, packing slips, gift messages), fo
 packages/integrations Provider adapters behind interfaces: printnode, shopify,
                       prestashop, storage, plus clearly labelled mock implementations
 workflows/n8n         Sanitised workflow exports, import/export scripts, fixtures
-infra/compose         compose.dev.yml, compose.prod.yml, Caddyfile, postgres init
-infra/scripts         Operational scripts (backup/restore later)
+infra/compose         compose.dev.yml, compose.prod.yml, compose.local.yml
+infra/caddy           Caddyfile, Caddyfile.local, app.caddy
+infra/docker          api.Dockerfile, web.Dockerfile
+infra/postgres        roles.sql and init/01-roles-and-dbs.sh
 docs/                 Architecture, ADRs, security, finance rules, integrations, runbooks
 ```
 

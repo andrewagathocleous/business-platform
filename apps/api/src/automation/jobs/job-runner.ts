@@ -72,6 +72,7 @@ import { AuditService } from '../../audit/audit.service';
 import { correlationStorage, uuidv7 } from '../../correlation/correlation';
 import { PrismaService } from '../../database/prisma.service';
 import { backoffMs } from './backoff';
+import { WORKER_HEARTBEAT_PATH, touchWorkerHeartbeat } from './worker-heartbeat';
 
 export type JobOutcome = { failed?: string };
 
@@ -194,6 +195,14 @@ export class JobRunner {
     renew: (job: ClaimedJob) => Promise<void>;
     verify: (job: ClaimedJob) => Promise<boolean>;
   } | null = null;
+  /**
+   * Replaces reclaim and claim. A claim that never settles must not keep the
+   * file heartbeat fresh. Production leaves this null.
+   */
+  tickIo: {
+    reclaim: () => Promise<void>;
+    claim: () => Promise<ClaimedJob | null>;
+  } | null = null;
 
   private readonly prisma;
   private readonly tenants: TenantDb;
@@ -207,6 +216,15 @@ export class JobRunner {
   private timer: ReturnType<typeof setInterval> | undefined;
   private tickBusy = false;
   private stopping = false;
+  /**
+   * Touched when a tick starts, after reclaim finishes, after each successful
+   * claim, and when that tick finishes. A claim that never settles does not
+   * refresh it. The finish touch is skipped once `stop()` has begun. The
+   * compose healthcheck fails when the file is older than 60s.
+   */
+  heartbeatFile = WORKER_HEARTBEAT_PATH;
+  /** Clock for the file heartbeat. Production uses the host clock. */
+  heartbeatClock: () => Date = () => new Date();
 
   constructor(
     @Inject(PrismaService) prisma: PrismaService,
@@ -225,10 +243,20 @@ export class JobRunner {
       return;
     }
     this.logger.log('job loop started');
-    void this.tick();
-    this.timer = setInterval(() => {
+    const beat = (): void => {
       void this.tick();
-    }, this.pollMs);
+    };
+    beat();
+    this.timer = setInterval(beat, this.pollMs);
+  }
+
+  private beat(): void {
+    try {
+      touchWorkerHeartbeat(this.heartbeatFile, this.heartbeatClock());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'heartbeat failed';
+      this.logger.warn(`worker heartbeat was not written: ${message}`);
+    }
   }
 
   /**
@@ -570,7 +598,13 @@ export class JobRunner {
           if (!current) {
             return false;
           }
-          await this.requeueOrUncertain(tx, row.id, row.type, current.attempts, current.maxAttempts);
+          await this.requeueOrUncertain(
+            tx,
+            row.id,
+            row.type,
+            current.attempts,
+            current.maxAttempts,
+          );
           return true;
         },
       ),
@@ -771,14 +805,21 @@ export class JobRunner {
     if (this.stopping || this.tickBusy) {
       return;
     }
+    this.beat();
     this.tickBusy = true;
     try {
-      await this.reclaimExpired();
+      if (this.tickIo) {
+        await this.tickIo.reclaim();
+      } else {
+        await this.reclaimExpired();
+      }
+      this.beat();
       while (!this.stopped()) {
-        const job = await this.claimOne();
+        const job = this.tickIo ? await this.tickIo.claim() : await this.claimOne();
         if (!job) {
           return;
         }
+        this.beat();
         if (this.stopped()) {
           await this.settleShutdown(job, false);
           return;
@@ -789,6 +830,9 @@ export class JobRunner {
       this.logger.error(error instanceof Error ? error.message : 'job tick failed');
     } finally {
       this.tickBusy = false;
+      if (!this.stopped()) {
+        this.beat();
+      }
     }
   }
 
@@ -1106,7 +1150,9 @@ export class JobRunner {
     } catch (error) {
       detached = true;
       if (!controller.signal.aborted) {
-        controller.abort(error instanceof Error ? error : new DOMException('job timed out', 'TimeoutError'));
+        controller.abort(
+          error instanceof Error ? error : new DOMException('job timed out', 'TimeoutError'),
+        );
       }
       throw error;
     }
@@ -1455,7 +1501,11 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-function raceAbortOrDeadline(work: Promise<void>, signal: AbortSignal, deadline: Date): Promise<void> {
+function raceAbortOrDeadline(
+  work: Promise<void>,
+  signal: AbortSignal,
+  deadline: Date,
+): Promise<void> {
   if (signal.aborted) {
     return Promise.reject(reasonError(signal));
   }
@@ -1476,11 +1526,14 @@ function raceAbortOrDeadline(work: Promise<void>, signal: AbortSignal, deadline:
         reject(reasonError(signal));
       });
     };
-    const timer = setTimeout(() => {
-      finish(() => {
-        reject(new DOMException('job timed out', 'TimeoutError'));
-      });
-    }, Math.max(0, remaining));
+    const timer = setTimeout(
+      () => {
+        finish(() => {
+          reject(new DOMException('job timed out', 'TimeoutError'));
+        });
+      },
+      Math.max(0, remaining),
+    );
     signal.addEventListener('abort', onAbort, { once: true });
     work.then(
       () => {

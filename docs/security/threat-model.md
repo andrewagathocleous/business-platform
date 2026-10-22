@@ -26,8 +26,8 @@ Version 0.1, 2026-10-19 (Phase 0). Reviewed at every phase end and before produc
 
 | ID | Threat (STRIDE) | Mitigation | Phase | Status |
 |---|---|---|---|---|
-| T1 | Cross-company data access via guessed IDs (I) | URL company plus membership check; RLS forced for `bp_app`; 404 on foreign objects; integration tests with guessed IDs on list, get, download, print and automation routes | 1 | planned |
-| T2 | Privilege escalation by company admin (E) | platform owner flag isn't a permission; grant-subset rule; no self-modification; tests | 1 | planned |
+| T1 | Cross-company data access via guessed IDs (I) | URL company plus membership check; RLS forced for `bp_app`; 404 on foreign objects; integration tests with guessed IDs on list, get, download, print and automation routes | 1 | tested: `apps/api/src/isolation.integration.test.ts` `returns 404 when admin.b sends company A object ids to every company-scoped route`; `apps/api/src/tenancy.integration.test.ts` `gives another company 404 and audits the denial`; `packages/db/src/rls.integration.test.ts` `shows only the current company, including to the table owner when context is set` |
+| T2 | Privilege escalation by company admin (E) | platform owner flag isn't a permission; grant-subset rule; no self-modification; tests | 1 | tested: `apps/api/src/tenancy.integration.test.ts` `refuses a grant the actor does not hold and audits a role change` and `lets only a platform owner suspend the last member.manage holder`; `packages/domain/src/authz/evaluate.test.ts` `refuses a grant when the actor is missing a permission or only holds a narrower scope` |
 | T3 | Session theft or fixation (S) | HttpOnly, Secure, SameSite cookies; new token issued at login; only the hash stored; idle and absolute expiry; revocation; CSRF tokens | 1 | planned |
 | T4 | Dev login enabled in production (S/E) | startup refuses dev login when `APP_ENV` is `uat` or `production`, and refuses a missing `APP_ENV`; test | 1 | planned |
 | T5 | Forged webhooks or replayed events (S/T) | HMAC over the raw body with a constant-time compare; timestamp/event-id dedupe in the inbox; out-of-order detection | 1 (mock) / 2 | planned |

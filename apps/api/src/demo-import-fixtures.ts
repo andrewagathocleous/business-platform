@@ -7,6 +7,11 @@ import { AppModule } from './app.module';
 import { loadRootEnv } from './config/load-env';
 import { PrismaService } from './database/prisma.service';
 import { JobRunner } from './automation/jobs/job-runner';
+import {
+  PRESTASHOP_MILESTONE_EXTERNAL_ID,
+  PRESTASHOP_MILESTONE_NUMBER,
+  parseDemoArgs,
+} from './demo-import-args';
 
 /**
  * Posts the mock Shopify fixtures through the running API, then drains the job queue.
@@ -56,7 +61,8 @@ if (entry.endsWith('demo-import-fixtures.ts') || entry.endsWith('demo-import-fix
 }
 
 async function main(): Promise<void> {
-  const key = companyKey();
+  const args = parseDemoArgs(process.argv.slice(2));
+  const key = args.company;
   const spec = COMPANIES[key];
   const base = apiOrigin();
   const app = await NestFactory.createApplicationContext(AppModule, {
@@ -112,6 +118,10 @@ async function main(): Promise<void> {
         throw new Error(`${fileName} returned an unexpected status`);
       }
     }
+    if (args.prestashopOrder) {
+      await ensurePrestashopOrder(app.get(PrismaService), companyId);
+      console.log(`prestashop order ${PRESTASHOP_MILESTONE_NUMBER}`);
+    }
     const drained = await app.get(JobRunner).drainOnce();
     const orders = await listOrders(app.get(PrismaService), companyId);
     console.log(`company ${key} (${spec.legalName})`);
@@ -130,15 +140,75 @@ async function main(): Promise<void> {
   }
 }
 
-function companyKey(): CompanyKey {
-  const args = process.argv.slice(2);
-  const index = args.indexOf('--company');
-  const inline = args.find((arg) => arg.startsWith('--company='));
-  const value = index >= 0 ? args[index + 1] : inline?.slice('--company='.length);
-  if (value === 'A' || value === 'B') {
-    return value;
-  }
-  throw new Error('usage: pnpm demo:import-fixtures --company A|B');
+const PRESTASHOP_STORE = 'Nutbox Demo PrestaShop';
+const PRESTASHOP_GIFT = 'Δοκιμαστικό μήνυμα.\nΜόνο για τον έλεγχο απομόνωσης.';
+
+async function ensurePrestashopOrder(prisma: PrismaService, companyId: string): Promise<void> {
+  await new TenantDb(prisma.client).run(
+    { companyId, actor: 'demo-import', correlationId: 'demo-import-prestashop' },
+    async (tx) => {
+      const existing = await tx.salesOrder.findFirst({
+        where: { companyId, externalId: PRESTASHOP_MILESTONE_EXTERNAL_ID },
+        select: { id: true },
+      });
+      if (existing) {
+        return;
+      }
+      const store = await tx.store.findFirst({
+        where: { companyId, name: PRESTASHOP_STORE, platform: 'prestashop' },
+      });
+      if (!store) {
+        throw new Error(`store ${PRESTASHOP_STORE} was not found`);
+      }
+      const connection = await tx.storeConnection.findFirst({
+        where: { companyId, storeId: store.id, status: 'active', mode: 'mock' },
+      });
+      if (!connection) {
+        throw new Error(`mock connection for ${PRESTASHOP_STORE} was not found`);
+      }
+      await tx.salesOrder.create({
+        data: {
+          companyId,
+          storeId: store.id,
+          connectionId: connection.id,
+          externalId: PRESTASHOP_MILESTONE_EXTERNAL_ID,
+          externalNumber: PRESTASHOP_MILESTONE_NUMBER,
+          sourcePlatform: 'prestashop',
+          sourceStatus: { displayFulfillmentStatus: null, cancelledAt: null },
+          sourceCreatedAt: new Date('2026-03-02T10:00:00.000Z'),
+          sourceUpdatedAt: new Date('2026-03-02T10:00:00.000Z'),
+          paymentStatus: 'paid',
+          fulfilmentStatus: 'new',
+          integrationStatus: 'synced',
+          deliveryMethod: 'courier_cy',
+          currency: 'EUR',
+          subtotal: '12.00',
+          shippingTotal: '0.00',
+          taxTotal: '2.28',
+          total: '14.28',
+          version: 1,
+          giftMessage: PRESTASHOP_GIFT,
+          customer: {
+            displayName: 'Presta Milestone (fictional)',
+            email: 'presta.milestone@example.test',
+            phone: null,
+            id: null,
+          },
+          lines: {
+            create: [
+              {
+                companyId,
+                title: 'Fictional PrestaShop tin',
+                quantity: '1.0000',
+                unitPrice: '12.0000',
+                total: '12.00',
+              },
+            ],
+          },
+        },
+      });
+    },
+  );
 }
 
 async function shopifyConnectionId(prisma: PrismaService, companyId: string, storeName: string): Promise<string> {

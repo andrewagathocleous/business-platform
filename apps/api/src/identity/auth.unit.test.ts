@@ -235,6 +235,7 @@ function providerConfig(
     throttleAuthLimit: 20,
     throttleAutomationLimit: 120,
     throttleEnabledInTest: false,
+    trustProxyHops: 0,
     storageRoot: '/tmp/bp-storage',
     mockPrintRoot: '/tmp/bp-mock-print',
     ...overrides,

@@ -1,0 +1,38 @@
+# Shared site. Production adds HSTS in Caddyfile. The local stack does not.
+# style-src 'unsafe-inline': PrimeNG sets style attributes and injects theme CSS at runtime.
+# script-src stays 'self'. The production build sets styles.inlineCritical to false so Angular
+# does not add an inline onload handler, which this CSP would block.
+# 1MiB is 1,048,576 bytes, the same limit as Express json({ limit: '1mb' }).
+# Hashed names are the production build in dist/apps/web/browser: main-*.js, chunk-*.js,
+# styles-*.css and media/*. This build does not emit polyfills-*.js (it is inside main).
+# The matcher still names it. A missing hashed file is served by file_server and stays 404.
+(app) {
+	encode gzip
+	request_body {
+		max_size 1MiB
+	}
+	header {
+		>X-Content-Type-Options nosniff
+		>Referrer-Policy strict-origin-when-cross-origin
+		>Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+	@hashed path /main-*.js /chunk-*.js /polyfills-*.js /styles-*.css /media/*
+	handle @hashed {
+		header >Cache-Control "public, max-age=31536000, immutable"
+		root * /srv
+		file_server
+	}
+	handle {
+		header {
+			>Cache-Control "no-cache"
+			>Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		}
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
