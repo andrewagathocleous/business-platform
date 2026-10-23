@@ -109,16 +109,14 @@ Latest run: 2026-10-22 to 2026-10-23, E fix rounds 3–5 and the Milestone 1 run
 
 ## Next step
 
-1. Push `develop` when you choose; the Step E fix-round commit is local only.
-2. Before a real deployment (Phase 1 blockers):
-   - P1-F: create the first production platform owner without the fictional seed.
-   - P1-G: write the break-glass recovery runbook named by ADR-0004.
-3. Hygiene found by the M1 run, not blocking:
+On 2026-10-23 the user replaced Phases 2–5 with separate feature releases ([docs/BACKLOG.md](BACKLOG.md)). The order is: R0 go-live base, R1 PrestaShop orders and printing, R2 invoicing, R3 Shopify orders, then couriers, email and social.
+
+1. Push `develop` when the user chooses; the Step E fix-round commit is local only.
+2. R0 ([docs/plan/release-0.md](plan/release-0.md)): first owner (P1-F), company setup screens, backups, health notifications, the laptop host and first deploy, the recovery runbook (P1-G), and real Entra sign-in. The live host is a dedicated M4 MacBook Air (32 GB), used only through its own browser; a server comes later. It waits on the user for the laptop set-up, a backup folder off the laptop and Microsoft 365 admin rights (U2). The `email_verified` and `amr` claims the login relies on are not verified with real Entra yet and may need an ADR-0004 decision.
+3. R1 ([docs/plan/release-1.md](plan/release-1.md)): the outbound HTTP client, integration settings, the PrestaShop 1.7.7.2 read-only reader, the PrintNode provider, integration health and the gift-card template. The code can be built before R0 is live. It waits on the user for PrintNode and the shop's Windows PC that drives the printer (U6), the card stock (U7), and a GET-only Webservice key at the live check (U4). Printing stays manual (the user's choice); automatic printing (R1-02) is deferred.
+   Build order, one step at a time (implement, verify, review, fix): R1-A outbound HTTP client, R1-D PrintNode provider, R1-C PrestaShop reader, R1-B integration settings, R1-E integration health, R0-A first owner, R0-B company setup, then R0-C to R0-F (laptop host, backups, health notifications, runbooks). R0-G and the R1 live checks need the user.
+4. Hygiene found by the M1 run, not blocking:
    - `bp-migrate` carries a 2.6 MB root-owned Node compile cache in `/tmp`, written by npm during the build. Clear it in the same `RUN` layer.
    - Only `api` should build `bp-api` (the `worker` service references the image), so a parallel classic-builder `build` cannot race on the tag.
    - Free disk is 14 GB, below the 15 GB build gate.
-4. Phase 2 (`docs/BACKLOG.md`): write `docs/plan/phase-2.md`. Start the provider accounts and approvals now, because they have lead time: Shopify app access and scopes (U3), the PrestaShop version and a Webservice key (U4), a PrintNode account and the card stock (U6, U7), courier API access (U5).
-5. Still open after Phase 1:
-   - Invoice issuance has no issue endpoint.
-   - Shopify and printing stay mock providers until their live credentials exist.
-   - The `pdf` queue handler is not registered.
+5. Start the slow approvals now: Meta business verification and app review, LinkedIn API access (R6-01).

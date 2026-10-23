@@ -172,12 +172,12 @@ Business-data connectors live in the application, not n8n. n8n Community has no 
 
 | # | Unknown | Blocks | Owner |
 |---|---|---|---|
-| U1 | Real legal-company details, VAT registration, invoice series in use, whether store invoices are authoritative today | real invoicing (Phase 3) | user + accountant |
-| U2 | Entra tenant: admin access, licences, whether Security Defaults or Conditional Access are available; how MFA shows up in ID token claims | real staff login | user |
-| U3 | Shopify app type and access (custom app in the admin vs dev dashboard app), protected customer data approval, historical order access | Shopify read-only sync (Phase 2) | user |
-| U4 | PrestaShop installed version, Webservice enabled, HTTPS, hosting constraints | PrestaShop sync (Phase 2) | user |
-| U5 | Svelta/EasyCourier and Cyprus Post ePost: account access, API availability, export formats | courier workflows (Phase 2) | user |
-| U6 | PrintNode account/plan, and the shop PC's availability schedule | real printing (Phase 2) | user |
-| U7 | Gift-message card stock size and printer tray setup on the HP LaserJet M209dw | gift-message template defaults | user |
-| U8 | VPS provider, domain/DNS, off-site backup destination | deployment (Phase 5) | user |
-| U9 | Brevo plan, sender domains; Meta/LinkedIn app review status | Phase 4 | user |
+| U1 | Real legal-company details, VAT registration, invoice series in use, whether store invoices are authoritative today | real invoicing (R2) | user + accountant |
+| U2 | Entra tenant: admin access, licences, whether Security Defaults or Conditional Access are available; how MFA shows up in ID token claims | real staff login (R0) | user |
+| U3 | Shopify app type and access (custom app in the admin vs dev dashboard app), protected customer data approval, historical order access | Shopify read-only sync (R3) | user |
+| U4 | Answered 2026-10-23: PrestaShop 1.7.7.2, PHP 7.3.33, MariaDB 10.6.19, LiteSpeed shared hosting, Webservice enabled, gift message is the built-in field. Still open: the GET-only key and the shop timezone, set at the R1 live check | PrestaShop reader (R1) | user |
+| U5 | Svelta/EasyCourier and Cyprus Post ePost: account access, API availability, export formats | courier workflows (R4) | user |
+| U6 | PrintNode account/plan, and the shop PC's availability schedule | real printing (R1) | user |
+| U7 | Gift-message card stock size and printer tray setup on the HP LaserJet M209dw | gift-message template defaults (R1) | user |
+| U8 | VPS provider, domain/DNS, off-site backup destination | deployment (R0) | user |
+| U9 | Brevo plan, sender domains; Meta/LinkedIn app review status | marketing and social (R6) | user |
