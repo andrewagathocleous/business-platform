@@ -3,9 +3,13 @@
 Owner: planner (Claude Code). Implementer: Cursor CLI. Reviewer: Codex CLI.
 Written 2026-10-23. The code can be built before R0 is live; it goes live on the R0 base, which is a dedicated laptop for now. Every call in R1 is outbound, so the laptop works as the host.
 
-**Goal.** New orders from the PrestaShop shop appear in the platform within a few minutes, with the gift message exactly as the customer typed it. Staff print the gift card and the packing slip on the shop's HP LaserJet M209dw through PrintNode. Shopify orders join the same flow in R3.
+**Goal.** New orders from the PrestaShop shop appear in the platform within a few minutes, with the gift message exactly as the customer typed it. Staff print the gift card on the shop's Zebra label printer and the packing slip on its HP LaserJet, both through PrintNode. Shopify orders join the same flow in R3.
 
 **Known about the shop (user, 2026-10-23).**
+- One Windows 10 Enterprise desktop PC drives two printers:
+  - **HP LaserJet M209dw** (A4 laser): packing slips and orders, and invoices from R2.
+  - **Zebra ZD230 thermal-transfer label printer**, `ZD23042-30EC00EZ` (203 dpi, 104 mm print width, USB and Ethernet): gift cards and, from R4, courier labels, both **100 × 150 mm**.
+- **Routing by document type is the platform's job, not PrintNode's.** One PrintNode account and one PrintNode client on the PC expose both printers. Discovery brings both into the platform, and the existing printer mappings (per location and document type: `gift_message`, `packing_slip`, `shipping_label`, `invoice`) choose the printer, paper size and copies. PrintNode prints wherever the platform tells it.
 - PrestaShop 1.7.7.2, PHP 7.3.33, MariaDB 10.6.19, LiteSpeed, shared hosting (CloudLinux).
 - The Webservice is already enabled.
 - The gift message is PrestaShop's built-in one: it shows under the order's Carriers tab as "Gift message", not from a module.
@@ -35,8 +39,8 @@ Written 2026-10-23. The code can be built before R0 is live; it goes live on the
 
 | # | Item | When |
 |---|---|---|
-| U6 | A PrintNode account. The PrintNode client installed on the shop's Windows desktop PC that drives the M209dw, and the hours that PC is on | before R1-D live checks |
-| U7 | The gift-card size, how cards are fed (tray or manual slot), and a few blank cards for tests | before R1-F |
+| U6 | A PrintNode account. The PrintNode client installed on the shop's Windows 10 Enterprise desktop PC, which drives both printers, and the hours that PC is on | before R1-D live checks |
+| U7 | Gift cards print on the Zebra ZD230 at **100 × 150 mm** (2026-10-23). Still needed: the media (labels or tags, 0.08–0.19 mm thick), the ribbon, whether courier labels share the roll, and a few blanks for tests. See R1-F | before R1-F |
 | U4 | A new Webservice key, **GET only**, on `orders`, `customers`, `addresses`, `countries`, `carriers`, `order_states` and `currencies`. Nothing else, and never `configurations`. The user types it into the platform's settings screen, never into chat | at R1-H |
 | — | The shop's timezone (Localization → Configuration) | at R1-H |
 | — | Which order states mean "paid" and which mean "cancelled". The settings screen lists the shop's states once the key works | at R1-H |
@@ -45,22 +49,25 @@ The `customers` resource also carries the password hash and secure key. The clie
 
 ## R1-A. Outbound HTTP client (P2-05)
 
-`packages/integrations/src/http/safe-fetch.ts`. Every connector uses it; nothing else calls `fetch` for providers.
+`packages/integrations/src/http/` (`createSafeFetch`, `isBlockedAddress`, typed errors). Every connector uses it. ESLint bans the global `fetch` and `http`/`https` imports elsewhere in `packages/integrations/src`.
 
-- HTTPS only. Resolve the host first and reject loopback, private, link-local, CGNAT, multicast, unspecified, IPv6 unique-local and IPv4-mapped forms of those.
-- Connect to the address that was checked: an undici `Agent` with a `lookup` that returns the validated address. A DNS answer cannot change between the check and the connection.
-- `redirect: 'manual'`. At most 3 redirects, each re-validated, never from HTTPS to HTTP. Credentials are dropped on a cross-origin redirect.
-- Timeouts for connect and total time, and a response size cap (default 10 MB). Clear typed errors: `BlockedDestination`, `TimeoutBeforeSend`, `TimeoutAfterSend`, `ResponseTooLarge`, `HttpStatus`.
-- No credential in a URL; a URL with userinfo is refused. The logger redacts `authorization` and every header named in the call's `secretHeaders`.
-- **Tests (unit):**
-  - every blocked range;
-  - a DNS answer that changes between lookups;
-  - a redirect to a private address;
-  - HTTPS to HTTP;
-  - the size cap;
-  - redaction.
-
-  Local test servers need `allowLoopbackForTests`, which is accepted only when `APP_ENV=test`. A test proves the flag is refused otherwise.
+- HTTPS only, on allowed ports (default 443), with no userinfo in the URL.
+- **Address check.** The host is resolved once per hop. If any answer is in a blocked range, the request is refused. Blocked ranges:
+  - IPv4: loopback, private, link-local, CGNAT, documentation, benchmarking, multicast and reserved;
+  - IPv6: unspecified, loopback, discard, Teredo, documentation, unique-local, link-local and multicast;
+  - IPv4 embedded in mapped, NAT64 or 6to4 addresses, judged as that IPv4.
+- **No re-resolving.** The connection uses a per-hop undici `Agent` whose `lookup` returns only the checked addresses. TLS still verifies the hostname.
+- **Redirects:** at most 3, for GET and HEAD only, each re-checked. Never from HTTPS to HTTP. `authorization`, `cookie` and `proxy-authorization` are dropped on a cross-origin hop. A redirect answering any other method is an error, and the body is never re-sent.
+- **Timeouts and size:** a connect timeout, a total timeout, and a response size cap (default 10 MB).
+- **Every HTTP status is returned, not thrown.** The call uses undici `request` with the per-hop agent, not `fetch`, so 407 and 421 come back as responses and a 421 is not sent again. Callers decide what 401, 409 or 429 mean.
+- **Typed errors carry `sent`.** `sent` follows the connection stage only, never an error code or an abort reason. Before undici's connector returns a socket (after the TLS handshake, or the TCP connect for loopback HTTP in tests), nothing has been written. After it, anything may have been.
+  - `sent: false` (safe to retry): `BlockedDestination`, `DnsFailure` (including a timeout or abort during resolution), and `ConnectFailure` (anything before the connection: refused, connect timeout, TLS handshake failure, or an abort).
+  - `sent: true` (may have taken effect, so a side effect becomes `uncertain`): `RequestUncertain` (anything after the connection, including a TLS alert or an abort), `ResponseTooLarge`, `TooManyRedirects` and `UnexpectedRedirect`.
+  - Only errors created for the current call are passed through unchanged. A `SafeFetchError` from an earlier call is classified by this call's connection stage, so it cannot make a sent request look retryable.
+- Cleanup destroys the per-hop agent, so nothing outlives the total timeout. Response headers are a null-prototype record.
+- Error messages contain only the code, method, origin and path: no headers, bodies, query values or userinfo. The module never logs.
+- **Test mode:** `allowLoopbackForTests` allows loopback addresses and `http:` to loopback hosts. It is accepted only with `appEnv: 'test'`.
+- Tested (unit): every range, embedded forms, pinning, blocked DNS answers, redirects, the POST redirect, timeout classification, the size cap, a reused error, HTTP 421 (POST, PUT, PATCH and DELETE) and HTTP 407, and that no secret appears in any error.
 
 ## R1-B. Integration settings (R1-01)
 
@@ -204,16 +211,33 @@ On the Integrations screen, for each connection:
 
 For PrintNode: account ok, computers online or offline, last refresh. Read-only, `integration.view`.
 
-## R1-F. Gift-card template (P2-11)
+## R1-F. Printer set-up and gift-card template (P2-11)
 
-With the real card size and feed from U7, set the template's page size, margins, fonts and minimum font size. Match a PrintNode paper name, creating a custom paper on the PC driver if the card size is not listed.
+**Mappings for the shop location:**
 
-The first physical print needs the user's explicit approval. Then print one card per test message:
+| Document type | Printer | Paper | From |
+|---|---|---|---|
+| `gift_message` | Zebra ZD230 | 100 × 150 mm label size | R1 |
+| `packing_slip` | HP LaserJet M209dw | A4 | R1 |
+| `shipping_label` | Zebra ZD230 | 100 × 150 mm | R4 |
+| `invoice` | HP LaserJet M209dw | A4 | R2 |
+
+**Zebra ZD230 limits** (Zebra's spec sheet, and a reseller listing for this part number):
+- Thermal transfer with a ribbon, 203 dpi, black only.
+- Maximum print width 104 mm; media up to about 112 mm wide.
+- Media thickness **0.08–0.19 mm**. Thin tags and labels work; thick greeting-card stock does not.
+- Media can be die-cut or continuous, labels or tag stock.
+
+**Windows set-up:** in the ZDesigner driver, define a 100 × 150 mm label stock and the matching media type (thermal transfer, with gap or black mark). It then appears in PrintNode's `capabilities.papers` for the Zebra and can be mapped. Keep the HP on A4.
+
+**Template:** set the gift-message template to a 100 × 150 mm page (portrait, unless the user wants landscape), with margins of at least 3 mm, black text only, and a minimum font size that is still legible at 203 dpi. Test with:
 - a short Greek message;
 - a long English message near the overflow limit;
 - line breaks.
 
-Record photos or notes in the R1 report.
+**One roll at a time.** If gift cards and courier labels use different media (for example tags versus shipping labels), staff swap the roll between them. Decide this with the user before R4.
+
+The first physical print on each printer needs the user's explicit approval. Record photos or notes, with no customer text, in the R1 report.
 
 ## R1-G. Automatic printing (R1-02, deferred)
 
@@ -235,7 +259,7 @@ On the live laptop after R0, with `printing` off. Real customer data stays on th
 1. A new order placed in PrestaShop appears in the platform within 2 poll intervals, with an exact gift message.
 2. Editing that order in PrestaShop updates the platform's source fields only. A gift-message change after printing sends it to review.
 3. The poll never sends the key in a URL and never writes to the shop.
-4. A gift card and a packing slip print on the M209dw through PrintNode. The job shows "sent to printer (not confirmed)" until a person confirms it.
+4. A gift card prints on the Zebra and a packing slip on the HP, both through PrintNode and chosen by the printer mapping, not by hand. The job shows "sent to printer (not confirmed)" until a person confirms it.
 5. A second first print is refused, and a reprint needs a reason.
 6. With `printing` off, a job is held, not printed.
 7. The health screen shows the last sync and turns red when the poll stops.

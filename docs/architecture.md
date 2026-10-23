@@ -177,7 +177,7 @@ Business-data connectors live in the application, not n8n. n8n Community has no 
 | U3 | Shopify app type and access (custom app in the admin vs dev dashboard app), protected customer data approval, historical order access | Shopify read-only sync (R3) | user |
 | U4 | Answered 2026-10-23: PrestaShop 1.7.7.2, PHP 7.3.33, MariaDB 10.6.19, LiteSpeed shared hosting, Webservice enabled, gift message is the built-in field. Still open: the GET-only key and the shop timezone, set at the R1 live check | PrestaShop reader (R1) | user |
 | U5 | Svelta/EasyCourier and Cyprus Post ePost: account access, API availability, export formats | courier workflows (R4) | user |
-| U6 | PrintNode account/plan, and the shop PC's availability schedule | real printing (R1) | user |
-| U7 | Gift-message card stock size and printer tray setup on the HP LaserJet M209dw | gift-message template defaults (R1) | user |
+| U6 | PrintNode account/plan, and the shop PC's availability schedule. Known: one Windows 10 Enterprise desktop PC at the shop drives an HP LaserJet M209dw (A4: packing slips, invoices) and a Zebra ZD230 thermal-transfer label printer (100 × 150 mm: gift cards, courier labels) | real printing (R1) | user |
+| U7 | Gift-card media for the Zebra ZD230: 100 × 150 mm, 0.08–0.19 mm thick, labels or tags, and whether courier labels share the roll | gift-message template defaults (R1) | user |
 | U8 | VPS provider, domain/DNS, off-site backup destination | deployment (R0) | user |
 | U9 | Brevo plan, sender domains; Meta/LinkedIn app review status | marketing and social (R6) | user |

@@ -12,6 +12,7 @@
     }
   },
   "dependencies": {
-    "@bp/domain": "workspace:*"
+    "@bp/domain": "workspace:*",
+    "undici": "7.29.0"
   }
 }

@@ -79,4 +79,67 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    files: ['packages/integrations/src/**/*.ts'],
+    ignores: ['packages/integrations/src/http/**', 'packages/integrations/src/**/*.test.ts'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        {
+          name: 'fetch',
+          message: 'use createSafeFetch from http/safe-fetch',
+        },
+      ],
+      'no-restricted-properties': [
+        'error',
+        {
+          object: 'globalThis',
+          property: 'fetch',
+          message: 'use createSafeFetch from http/safe-fetch',
+        },
+        {
+          object: 'global',
+          property: 'fetch',
+          message: 'use createSafeFetch from http/safe-fetch',
+        },
+        {
+          object: 'self',
+          property: 'fetch',
+          message: 'use createSafeFetch from http/safe-fetch',
+        },
+        {
+          object: 'window',
+          property: 'fetch',
+          message: 'use createSafeFetch from http/safe-fetch',
+        },
+      ],
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'node:http',
+              message: 'use createSafeFetch from http/safe-fetch',
+            },
+            {
+              name: 'node:https',
+              message: 'use createSafeFetch from http/safe-fetch',
+            },
+            {
+              name: 'http',
+              message: 'use createSafeFetch from http/safe-fetch',
+            },
+            {
+              name: 'https',
+              message: 'use createSafeFetch from http/safe-fetch',
+            },
+            {
+              name: 'undici',
+              message: 'use createSafeFetch from http/safe-fetch',
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

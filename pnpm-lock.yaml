@@ -448,6 +448,9 @@ importers:
       '@bp/domain':
         specifier: workspace:*
         version: link:../domain
+      undici:
+        specifier: 7.29.0
+        version: 7.29.0
 
   workflows/n8n:
     devDependencies:

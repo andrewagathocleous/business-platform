@@ -30,3 +30,22 @@ export type {
   PrintSubmitInput,
   ProviderJobState,
 } from './printing/provider';
+
+export { isBlockedAddress } from './http/address-policy';
+export {
+  BlockedDestination,
+  ConnectFailure,
+  DnsFailure,
+  RequestUncertain,
+  ResponseTooLarge,
+  SafeFetchError,
+  TooManyRedirects,
+  UnexpectedRedirect,
+} from './http/errors';
+export { createSafeFetch } from './http/safe-fetch';
+export type {
+  ResolvedAddress,
+  SafeFetchConfig,
+  SafeFetchRequest,
+  SafeResponse,
+} from './http/safe-fetch';
