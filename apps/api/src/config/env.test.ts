@@ -141,8 +141,40 @@ describe('loadConfig', () => {
     expect(loadConfig(developmentEnv({ TRUST_PROXY_HOPS: '2' })).trustProxyHops).toBe(2);
     expect(loadConfig(productionEnv()).trustProxyHops).toBe(0);
     expect(() => loadConfig(developmentEnv({ TRUST_PROXY_HOPS: '3' }))).toThrow(/TRUST_PROXY_HOPS/);
-    expect(() => loadConfig(developmentEnv({ TRUST_PROXY_HOPS: '-1' }))).toThrow(/TRUST_PROXY_HOPS/);
+    expect(() => loadConfig(developmentEnv({ TRUST_PROXY_HOPS: '-1' }))).toThrow(
+      /TRUST_PROXY_HOPS/,
+    );
     expect(() => loadConfig(productionEnv({ TRUST_PROXY_HOPS: 'no' }))).toThrow(/TRUST_PROXY_HOPS/);
+  });
+
+  it('refuses PrintNode and loopback overrides unless APP_ENV is test', () => {
+    expect(() => loadConfig(developmentEnv({ PRINTNODE_BASE_URL: 'http://127.0.0.1:9' }))).toThrow(
+      /PRINTNODE_BASE_URL is refused unless APP_ENV is test/,
+    );
+    expect(() => loadConfig(developmentEnv({ OUTBOUND_ALLOW_LOOPBACK_FOR_TESTS: 'true' }))).toThrow(
+      /OUTBOUND_ALLOW_LOOPBACK_FOR_TESTS is refused unless APP_ENV is test/,
+    );
+    expect(() =>
+      loadConfig(productionEnv({ PRINTNODE_BASE_URL: 'https://api.printnode.com' })),
+    ).toThrow(/PRINTNODE_BASE_URL is refused unless APP_ENV is test/);
+    expect(() => loadConfig(productionEnv({ OUTBOUND_ALLOW_LOOPBACK_FOR_TESTS: 'false' }))).toThrow(
+      /OUTBOUND_ALLOW_LOOPBACK_FOR_TESTS is refused unless APP_ENV is test/,
+    );
+    expect(loadConfig(developmentEnv()).printNodeBaseUrl).toBeNull();
+    expect(loadConfig(developmentEnv()).outboundAllowLoopbackForTests).toBe(false);
+    const test = loadConfig(
+      developmentEnv({
+        APP_ENV: 'test',
+        PRINTNODE_BASE_URL: 'http://127.0.0.1:9',
+        OUTBOUND_ALLOW_LOOPBACK_FOR_TESTS: 'true',
+      }),
+    );
+    expect(test.printNodeBaseUrl).toBe('http://127.0.0.1:9');
+    expect(test.outboundAllowLoopbackForTests).toBe(true);
+    expect(loadConfig(developmentEnv({ APP_ENV: 'test' })).outboundAllowLoopbackForTests).toBe(
+      false,
+    );
+    expect(loadConfig(developmentEnv({ APP_ENV: 'test' })).printNodeBaseUrl).toBeNull();
   });
 
   it('rejects a master key that is not 32 bytes', () => {

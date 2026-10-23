@@ -11,6 +11,7 @@ import {
   type PrintProvider,
   type PrintSubmitInput,
   type ProviderJobState,
+  type ProviderJobStatus,
 } from './provider';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -150,33 +151,46 @@ export class MockPrintProvider implements PrintProvider {
     return { providerJobId };
   }
 
-  async getJobState(providerJobId: string): Promise<ProviderJobState> {
-    const parsed = parseProviderJobId(providerJobId);
+  async getJobState(input: {
+    companyId: string;
+    providerJobId: string;
+  }): Promise<ProviderJobStatus> {
+    const parsed = parseProviderJobId(input.providerJobId);
     if (!parsed) {
       throw new ProviderRejected('unknown_provider_job');
     }
     const paths = outputPaths(this.root, parsed.companyId, parsed.printJobId);
     const state = await readState(paths.statePath);
-    if (!state || state.providerJobId !== providerJobId) {
+    if (!state || state.providerJobId !== input.providerJobId) {
       throw new ProviderRejected('unknown_provider_job');
     }
     if (state.state === 'submitted') {
       state.state = 'done';
       await writeExclusive(paths.statePath, Buffer.from(JSON.stringify(state)), true);
     }
-    return state.state;
+    return reportedStatus(state.state);
   }
 }
 
+/** `submitted` was the pre-completion mock state. Callers see it as delivered to the printer. */
+function reportedStatus(state: ProviderJobState): ProviderJobStatus {
+  return state === 'submitted' ? { state: 'delivered' } : { state: 'done' };
+}
+
 export function behaviourOf(externalPrinterId: string): Behaviour | null {
-  return MOCK_PRINTERS.find((printer) => printer.externalPrinterId === externalPrinterId)?.behaviour ?? null;
+  return (
+    MOCK_PRINTERS.find((printer) => printer.externalPrinterId === externalPrinterId)?.behaviour ??
+    null
+  );
 }
 
 function providerJobIdFor(companyId: string, printJobId: string): string {
   return `mock:${companyId.toLowerCase()}:${printJobId.toLowerCase()}`;
 }
 
-function parseProviderJobId(providerJobId: string): { companyId: string; printJobId: string } | null {
+function parseProviderJobId(
+  providerJobId: string,
+): { companyId: string; printJobId: string } | null {
   const match = /^mock:([0-9a-f-]{36}):([0-9a-f-]{36})$/i.exec(providerJobId);
   if (!match?.[1] || !match[2] || !UUID.test(match[1]) || !UUID.test(match[2])) {
     return null;
@@ -184,7 +198,11 @@ function parseProviderJobId(providerJobId: string): { companyId: string; printJo
   return { companyId: match[1].toLowerCase(), printJobId: match[2].toLowerCase() };
 }
 
-function outputPaths(root: string, companyId: string, printJobId: string): {
+function outputPaths(
+  root: string,
+  companyId: string,
+  printJobId: string,
+): {
   directory: string;
   pdfPath: string;
   statePath: string;

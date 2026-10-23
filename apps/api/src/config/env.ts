@@ -47,6 +47,10 @@ const envSchema = z.object({
   TRUST_PROXY_HOPS: z.string().optional(),
   STORAGE_ROOT: z.string().optional(),
   MOCK_PRINT_ROOT: z.string().optional(),
+  /** Test-only. Refused unless APP_ENV is test. Not listed in `.env.example`. */
+  OUTBOUND_ALLOW_LOOPBACK_FOR_TESTS: z.string().optional(),
+  /** Test-only. Refused unless APP_ENV is test. Not listed in `.env.example`. */
+  PRINTNODE_BASE_URL: z.string().optional(),
 });
 
 export type AppConfig = {
@@ -75,6 +79,13 @@ export type AppConfig = {
   storageRoot: string;
   /** Absolute directory for simulated print PDFs. Created on write. */
   mockPrintRoot: string;
+  /**
+   * Allows the outbound client to call loopback. True only when APP_ENV is test
+   * and OUTBOUND_ALLOW_LOOPBACK_FOR_TESTS is true.
+   */
+  outboundAllowLoopbackForTests: boolean;
+  /** PrintNode origin for tests. Null uses https://api.printnode.com. */
+  printNodeBaseUrl: string | null;
 };
 
 export const APP_CONFIG = Symbol('APP_CONFIG');
@@ -138,6 +149,18 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     'var/mock-print-output',
     problems,
   );
+  const loopbackRaw = refuseOutsideTest(
+    raw.OUTBOUND_ALLOW_LOOPBACK_FOR_TESTS,
+    'OUTBOUND_ALLOW_LOOPBACK_FOR_TESTS',
+    appEnv,
+    problems,
+  );
+  const outboundAllowLoopbackForTests =
+    loopbackRaw === undefined
+      ? false
+      : parseBoolean(loopbackRaw, false, 'OUTBOUND_ALLOW_LOOPBACK_FOR_TESTS', problems);
+  const printNodeBaseUrl =
+    refuseOutsideTest(raw.PRINTNODE_BASE_URL, 'PRINTNODE_BASE_URL', appEnv, problems) ?? null;
   const oidcIssuer = raw.OIDC_ISSUER?.trim() ?? '';
   const oidcClientId = raw.OIDC_CLIENT_ID?.trim() ?? '';
   const oidcClientSecret = raw.OIDC_CLIENT_SECRET?.trim() ?? '';
@@ -203,6 +226,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     trustProxyHops,
     storageRoot,
     mockPrintRoot,
+    outboundAllowLoopbackForTests,
+    printNodeBaseUrl,
   };
 }
 
@@ -235,6 +260,23 @@ function parseDirectory(
     return resolve(baseDir, fallback);
   }
   return resolve(baseDir, chosen);
+}
+
+function refuseOutsideTest(
+  value: string | undefined,
+  name: string,
+  appEnv: AppEnv,
+  problems: string[],
+): string | undefined {
+  const trimmed = value?.trim() ?? '';
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  if (appEnv !== 'test') {
+    problems.push(`${name} is refused unless APP_ENV is test`);
+    return undefined;
+  }
+  return trimmed;
 }
 
 function isLockedDown(appEnv: AppEnv): boolean {

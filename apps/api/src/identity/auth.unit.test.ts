@@ -238,6 +238,8 @@ function providerConfig(
     trustProxyHops: 0,
     storageRoot: '/tmp/bp-storage',
     mockPrintRoot: '/tmp/bp-mock-print',
+    outboundAllowLoopbackForTests: false,
+    printNodeBaseUrl: null,
     ...overrides,
   };
 }

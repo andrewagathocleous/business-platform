@@ -82,7 +82,19 @@ export async function settleCommerceError(
         ...(typeof printJobId === 'string' ? { printJobId } : {}),
       });
     }
+    if (error.reason === 'print_provider_not_configured') {
+      throw new ConflictException({
+        code: 'print_provider_not_configured',
+        message: error.message,
+      });
+    }
     throw new ConflictException(error.message);
+  }
+  if (error.reason === 'print_provider_unavailable') {
+    throw new BadRequestException({
+      code: 'print_provider_unavailable',
+      message: error.message,
+    });
   }
   throw new BadRequestException(error.message);
 }

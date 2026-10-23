@@ -9,10 +9,11 @@ import {
   type GiftMessageTemplate,
 } from '@bp/documents';
 import {
+  ProviderRejected,
   SIMULATED_PRINTING_LABEL,
   storageKey,
   type ListedPrinter,
-  type PrintProvider,
+  type PrintProviderName,
   type StorageAdapter,
 } from '@bp/integrations';
 import { AuditService } from '../audit/audit.service';
@@ -25,7 +26,8 @@ import { getCorrelationId, uuidv7 } from '../correlation/correlation';
 import { PrismaService } from '../database/prisma.service';
 import type { RequestMeta } from '../identity/request-meta';
 import { orderScopes } from '../orders/order.scope';
-import { PRINT_PROVIDER } from './print.tokens';
+import { PrintProviderRegistry } from './print-providers';
+import { PrintNodeCredentials } from './printnode-credentials';
 import { FIRST_PRINT_RELEASED_STATUSES } from './first-print';
 import { printJobLabel } from './print-label';
 import { STORAGE } from '../storage/storage.module';
@@ -149,7 +151,8 @@ export class PrintService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(STORAGE) private readonly storage: StorageAdapter,
-    @Inject(PRINT_PROVIDER) private readonly printing: PrintProvider,
+    @Inject(PrintProviderRegistry) private readonly providers: PrintProviderRegistry,
+    @Inject(PrintNodeCredentials) private readonly printNodeKeys: PrintNodeCredentials,
   ) {
     this.tenants = new TenantDb(prisma.client);
   }
@@ -209,7 +212,9 @@ export class PrintService {
           WHERE ${this.listWhere(ctx.companyId, query, scope)}
         `;
         const offset = (query.page - 1) * query.pageSize;
-        const rows = await tx.$queryRaw<{ id: string; storeId: string | null; locationId: string | null }[]>`
+        const rows = await tx.$queryRaw<
+          { id: string; storeId: string | null; locationId: string | null }[]
+        >`
           SELECT pj.id, o.store_id AS "storeId", s.location_id AS "locationId"
           FROM print_job pj
           LEFT JOIN sales_order o
@@ -243,12 +248,22 @@ export class PrintService {
     }
   }
 
-  async get(ctx: RequestContext, id: string, meta: RequestMeta): Promise<{ printJob: PrintJobView }> {
+  async get(
+    ctx: RequestContext,
+    id: string,
+    meta: RequestMeta,
+  ): Promise<{ printJob: PrintJobView }> {
     try {
       const printJob = await this.tenants.run(this.context(ctx), async (tx) => {
         const job = await this.loadJob(tx, ctx.companyId, id);
         if (!job) {
-          throw new CommerceError(404, 'not_found', 'print_job', isUuid(id) ? id.toLowerCase() : null, 'Not found');
+          throw new CommerceError(
+            404,
+            'not_found',
+            'print_job',
+            isUuid(id) ? id.toLowerCase() : null,
+            'Not found',
+          );
         }
         return job;
       });
@@ -343,12 +358,18 @@ export class PrintService {
     }
   }
 
-  async release(ctx: RequestContext, id: string, meta: RequestMeta): Promise<{ printJob: PrintJobView }> {
+  async release(
+    ctx: RequestContext,
+    id: string,
+    meta: RequestMeta,
+  ): Promise<{ printJob: PrintJobView }> {
     const actor = requireActor(ctx);
     try {
       const printJob = await this.tenants.run(this.context(ctx, actor), async (tx) => {
         const jobId = this.jobId(id);
-        const locked = await tx.$queryRaw<{ id: string; status: string; queueJobId: string | null }[]>`
+        const locked = await tx.$queryRaw<
+          { id: string; status: string; queueJobId: string | null }[]
+        >`
           SELECT id, status::text AS status, queue_job_id AS "queueJobId"
           FROM print_job
           WHERE company_id = ${ctx.companyId}::uuid
@@ -360,7 +381,14 @@ export class PrintService {
           throw new CommerceError(404, 'not_found', 'print_job', jobId, 'Not found');
         }
         if (current.status !== 'held') {
-          throw new CommerceError(409, 'print_not_held', 'print_job', jobId, 'print_not_held', 'print_job.release');
+          throw new CommerceError(
+            409,
+            'print_not_held',
+            'print_job',
+            jobId,
+            'print_not_held',
+            'print_job.release',
+          );
         }
         const updated = await tx.$queryRaw<{ id: string }[]>`
           UPDATE print_job
@@ -373,7 +401,14 @@ export class PrintService {
           RETURNING id
         `;
         if (updated.length === 0) {
-          throw new CommerceError(409, 'print_not_held', 'print_job', jobId, 'print_not_held', 'print_job.release');
+          throw new CommerceError(
+            409,
+            'print_not_held',
+            'print_job',
+            jobId,
+            'print_not_held',
+            'print_job.release',
+          );
         }
         if (current.queueJobId) {
           await tx.$queryRaw`
@@ -417,7 +452,11 @@ export class PrintService {
     }
   }
 
-  async cancel(ctx: RequestContext, id: string, meta: RequestMeta): Promise<{ printJob: PrintJobView }> {
+  async cancel(
+    ctx: RequestContext,
+    id: string,
+    meta: RequestMeta,
+  ): Promise<{ printJob: PrintJobView }> {
     const actor = requireActor(ctx);
     try {
       const printJob = await this.tenants.run(this.context(ctx, actor), async (tx) => {
@@ -531,7 +570,9 @@ export class PrintService {
           orderBy: [{ name: 'asc' }, { id: 'asc' }],
         });
         const allowed = this.allowedLocations(ctx);
-        return rows.filter((row) => allowed === 'all' || allowed.has(row.locationId)).map(printerView);
+        return rows
+          .filter((row) => allowed === 'all' || allowed.has(row.locationId))
+          .map(printerView);
       });
       return { printers };
     } catch (error) {
@@ -542,17 +583,27 @@ export class PrintService {
   async discover(
     ctx: RequestContext,
     locationId: string | undefined,
+    provider: PrintProviderName | undefined,
     meta: RequestMeta,
   ): Promise<{ printers: PrinterView[] }> {
     const actor = requireActor(ctx);
-    const listed = await this.printing.listPrinters({ companyId: ctx.companyId });
     try {
+      const chosen = await this.chooseProvider(ctx.companyId, provider);
+      let listed: readonly ListedPrinter[];
+      try {
+        listed = await this.providers.get(chosen).listPrinters({ companyId: ctx.companyId });
+      } catch (error) {
+        if (error instanceof ProviderRejected) {
+          throw discoveryError(error);
+        }
+        throw error;
+      }
       const printers = await this.tenants.run(this.context(ctx, actor), async (tx) => {
         const locations = await this.discoverLocations(tx, ctx.companyId, locationId);
         const saved: PrinterView[] = [];
         for (const location of locations) {
           for (const printer of listed) {
-            saved.push(await this.upsertPrinter(tx, ctx, actor, meta, location, printer));
+            saved.push(await this.upsertPrinter(tx, ctx, location, printer, chosen));
           }
         }
         await this.audit.record(tx, {
@@ -567,7 +618,7 @@ export class PrintService {
           ip: meta.ip,
           userAgent: meta.userAgent,
           details: {
-            provider: 'mock',
+            provider: chosen,
             locationIds: locations,
             count: saved.length,
           },
@@ -603,13 +654,25 @@ export class PrintService {
           select: { id: true },
         });
         if (!location) {
-          throw new CommerceError(404, 'not_found', 'location', input.locationId.toLowerCase(), 'Not found');
+          throw new CommerceError(
+            404,
+            'not_found',
+            'location',
+            input.locationId.toLowerCase(),
+            'Not found',
+          );
         }
         const printer = await tx.printer.findFirst({
           where: { id: input.printerId.toLowerCase(), companyId: ctx.companyId },
         });
         if (!printer) {
-          throw new CommerceError(404, 'not_found', 'printer', input.printerId.toLowerCase(), 'Not found');
+          throw new CommerceError(
+            404,
+            'not_found',
+            'printer',
+            input.printerId.toLowerCase(),
+            'Not found',
+          );
         }
         if (!printer.paperSizes.includes(input.paperSize)) {
           throw new CommerceError(
@@ -779,7 +842,14 @@ export class PrintService {
     }
     const copies = input.copies ?? mapping.copies;
     if (!Number.isInteger(copies) || copies < 1 || copies > 5) {
-      throw new CommerceError(422, 'copies_not_allowed', 'print_job', null, 'copies_not_allowed', 'print_job.requested');
+      throw new CommerceError(
+        422,
+        'copies_not_allowed',
+        'print_job',
+        null,
+        'copies_not_allowed',
+        'print_job.requested',
+      );
     }
     let reprintOfId: string | null = null;
     if (input.reprint) {
@@ -787,7 +857,12 @@ export class PrintService {
         where: { id: input.reprint.ofPrintJobId.toLowerCase(), companyId: ctx.companyId },
         select: { id: true, sourceType: true, sourceId: true, documentType: true },
       });
-      if (!prior || prior.sourceType !== 'order' || prior.sourceId !== order.id || prior.documentType !== input.documentType) {
+      if (
+        !prior ||
+        prior.sourceType !== 'order' ||
+        prior.sourceId !== order.id ||
+        prior.documentType !== input.documentType
+      ) {
         throw new CommerceError(
           404,
           'not_found',
@@ -803,7 +878,8 @@ export class PrintService {
       orderBy: { id: 'asc' },
       select: { sku: true, title: true, variantTitle: true, quantity: true },
     });
-    const template = documentType === 'gift_message' ? await this.loadTemplate(tx, ctx.companyId) : null;
+    const template =
+      documentType === 'gift_message' ? await this.loadTemplate(tx, ctx.companyId) : null;
     const rendered = await this.render(documentType, order, store.name, company, lines, template);
     if (rendered.review) {
       throw new CommerceError(
@@ -932,13 +1008,22 @@ export class PrintService {
     return this.mustLoad(tx, ctx.companyId, printJobId);
   }
 
-  private async loadTemplate(tx: TenantTransaction, companyId: string): Promise<GiftMessageTemplate> {
+  private async loadTemplate(
+    tx: TenantTransaction,
+    companyId: string,
+  ): Promise<GiftMessageTemplate> {
     const row = await tx.giftMessageTemplate.findFirst({
       where: { companyId, isDefault: true },
       orderBy: { id: 'asc' },
     });
     if (!row) {
-      throw new CommerceError(404, 'template_not_found', 'gift_message_template', null, 'Not found');
+      throw new CommerceError(
+        404,
+        'template_not_found',
+        'gift_message_template',
+        null,
+        'Not found',
+      );
     }
     return {
       pageWidthMm: fixed(row.pageWidthMm, 2),
@@ -965,7 +1050,12 @@ export class PrintService {
     },
     storeName: string,
     company: { legalName: string; tradingName: string; documentLanguage: string },
-    lines: { sku: string | null; title: string; variantTitle: string | null; quantity: { toFixed(digits: number): string } }[],
+    lines: {
+      sku: string | null;
+      title: string;
+      variantTitle: string | null;
+      quantity: { toFixed(digits: number): string };
+    }[],
     template: GiftMessageTemplate | null,
   ): Promise<{ pdf: Buffer; review: { fits: boolean; unsupportedChars: string[] } | null }> {
     if (documentType === 'gift_message') {
@@ -973,11 +1063,20 @@ export class PrintService {
         throw new CommerceError(404, 'gift_message_missing', 'sales_order', null, 'Not found');
       }
       if (!template) {
-        throw new CommerceError(404, 'template_not_found', 'gift_message_template', null, 'Not found');
+        throw new CommerceError(
+          404,
+          'template_not_found',
+          'gift_message_template',
+          null,
+          'Not found',
+        );
       }
       const card = await renderGiftMessage(order.giftMessage, template);
       if (!card.fits || card.unsupportedChars.length > 0) {
-        return { pdf: card.pdf, review: { fits: card.fits, unsupportedChars: card.unsupportedChars } };
+        return {
+          pdf: card.pdf,
+          review: { fits: card.fits, unsupportedChars: card.unsupportedChars },
+        };
       }
       return { pdf: card.pdf, review: null };
     }
@@ -1033,7 +1132,8 @@ export class PrintService {
   ): Prisma.Sql {
     const status = query.status ?? null;
     const sourceId = query.sourceId ?? null;
-    const scopeSql = scope.kind === 'all' ? Prisma.sql`TRUE` : scopeFilter(scope.storeIds, scope.locationIds);
+    const scopeSql =
+      scope.kind === 'all' ? Prisma.sql`TRUE` : scopeFilter(scope.storeIds, scope.locationIds);
     return Prisma.sql`
       pj.company_id = ${companyId}::uuid
       AND (${status}::text IS NULL OR pj.status::text = ${status})
@@ -1044,7 +1144,10 @@ export class PrintService {
 
   private listScope(
     ctx: RequestContext,
-  ): { kind: 'all' } | { kind: 'none' } | { kind: 'ids'; storeIds: string[]; locationIds: string[] } {
+  ):
+    | { kind: 'all' }
+    | { kind: 'none' }
+    | { kind: 'ids'; storeIds: string[]; locationIds: string[] } {
     if (can(ctx.grants, 'automation.view') || can(ctx.grants, 'print.submit')) {
       return { kind: 'all' };
     }
@@ -1070,14 +1173,24 @@ export class PrintService {
     return new Set(locations.ids);
   }
 
-  private async discoverLocations(tx: TenantTransaction, companyId: string, locationId: string | undefined): Promise<string[]> {
+  private async discoverLocations(
+    tx: TenantTransaction,
+    companyId: string,
+    locationId: string | undefined,
+  ): Promise<string[]> {
     if (locationId) {
       const location = await tx.location.findFirst({
         where: { id: locationId.toLowerCase(), companyId },
         select: { id: true },
       });
       if (!location) {
-        throw new CommerceError(404, 'not_found', 'location', locationId.toLowerCase(), 'Not found');
+        throw new CommerceError(
+          404,
+          'not_found',
+          'location',
+          locationId.toLowerCase(),
+          'Not found',
+        );
       }
       return [location.id];
     }
@@ -1089,26 +1202,58 @@ export class PrintService {
     return rows.map((row) => row.id);
   }
 
+  private async chooseProvider(
+    companyId: string,
+    requested: PrintProviderName | undefined,
+  ): Promise<PrintProviderName> {
+    if (requested) {
+      if (!this.providers.available().includes(requested)) {
+        throw new CommerceError(
+          400,
+          'print_provider_unavailable',
+          'printer',
+          null,
+          'print_provider_unavailable',
+          'printer.discovered',
+        );
+      }
+      return requested;
+    }
+    if (await this.printNodeKeys.hasUsableKey(companyId)) {
+      return 'printnode';
+    }
+    if (this.providers.available().includes('mock')) {
+      return 'mock';
+    }
+    throw new CommerceError(
+      409,
+      'print_provider_not_configured',
+      'printer',
+      null,
+      'print_provider_not_configured',
+      'printer.discovered',
+    );
+  }
+
   private async upsertPrinter(
     tx: TenantTransaction,
     ctx: RequestContext,
-    _actor: string,
-    _meta: RequestMeta,
     locationId: string,
     printer: ListedPrinter,
+    provider: PrintProviderName,
   ): Promise<PrinterView> {
     const saved = await tx.printer.upsert({
       where: {
         companyId_provider_externalPrinterId: {
           companyId: ctx.companyId,
-          provider: 'mock',
+          provider,
           externalPrinterId: printer.externalPrinterId,
         },
       },
       create: {
         companyId: ctx.companyId,
         locationId,
-        provider: 'mock',
+        provider,
         externalPrinterId: printer.externalPrinterId,
         name: printer.name,
         description: printer.description,
@@ -1135,7 +1280,11 @@ export class PrintService {
     return id.toLowerCase();
   }
 
-  private async mustLoad(tx: TenantTransaction, companyId: string, id: string): Promise<PrintJobView> {
+  private async mustLoad(
+    tx: TenantTransaction,
+    companyId: string,
+    id: string,
+  ): Promise<PrintJobView> {
     const job = await this.loadJob(tx, companyId, id);
     if (!job) {
       throw new CommerceError(404, 'not_found', 'print_job', id.toLowerCase(), 'Not found');
@@ -1143,7 +1292,11 @@ export class PrintService {
     return job;
   }
 
-  private async loadJob(tx: TenantTransaction, companyId: string, id: string): Promise<PrintJobView | null> {
+  private async loadJob(
+    tx: TenantTransaction,
+    companyId: string,
+    id: string,
+  ): Promise<PrintJobView | null> {
     if (!isUuid(id)) {
       return null;
     }
@@ -1154,7 +1307,11 @@ export class PrintService {
     return row ? jobView(row) : null;
   }
 
-  private context(ctx: RequestContext, actor = requireActor(ctx), correlationId = this.correlation()) {
+  private context(
+    ctx: RequestContext,
+    actor = requireActor(ctx),
+    correlationId = this.correlation(),
+  ) {
     return { companyId: ctx.companyId, actor, correlationId };
   }
 
@@ -1246,6 +1403,27 @@ function printerView(row: {
   };
 }
 
+function discoveryError(error: ProviderRejected): CommerceError {
+  if (error.message === 'not_configured') {
+    return new CommerceError(
+      409,
+      'print_provider_not_configured',
+      'printer',
+      null,
+      'print_provider_not_configured',
+      'printer.discovered',
+    );
+  }
+  return new CommerceError(
+    422,
+    error.message,
+    'printer',
+    null,
+    error.message,
+    'printer.discovered',
+  );
+}
+
 function recipientOf(value: unknown): { name: string; lines: string[] } {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return { name: '', lines: [] };
@@ -1261,7 +1439,9 @@ function recipientOf(value: unknown): { name: string; lines: string[] } {
       lines.push(line);
     }
   }
-  const place = [stringField(record, 'zip'), stringField(record, 'city')].filter((part) => part.length > 0).join(' ');
+  const place = [stringField(record, 'zip'), stringField(record, 'city')]
+    .filter((part) => part.length > 0)
+    .join(' ');
   if (place.length > 0) {
     lines.push(place);
   }

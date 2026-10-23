@@ -17,18 +17,23 @@ export {
 export type { MappedOrderLine, MappedShopifyOrder, StoreOrderConfig } from './shopify/map-order';
 
 export { MockPrintProvider, MOCK_PRINTERS, behaviourOf } from './printing/mock';
+export { PrintNodeProvider } from './printing/printnode';
+export type { SafeFetch } from './printing/printnode';
 export {
   PrinterOffline,
   ProviderRejected,
   ProviderTimeout,
+  ProviderUncertain,
   SIMULATED_PRINTING_LABEL,
 } from './printing/provider';
 export type {
   ListedPrinter,
   PrintAccount,
   PrintProvider,
+  PrintProviderName,
   PrintSubmitInput,
   ProviderJobState,
+  ProviderJobStatus,
 } from './printing/provider';
 
 export { isBlockedAddress } from './http/address-policy';

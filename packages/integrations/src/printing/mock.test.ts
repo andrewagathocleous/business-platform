@@ -24,17 +24,27 @@ describe('MockPrintProvider', () => {
     expect(submitted.providerJobId).toBe(`mock:${COMPANY}:${JOB}`);
     const written = await readFile(join(roots[0] ?? '', COMPANY, `${JOB}.pdf`));
     expect(written.equals(pdf)).toBe(true);
-    expect(await provider.getJobState(submitted.providerJobId)).toBe('done');
-    expect(await provider.getJobState(submitted.providerJobId)).toBe('done');
+    expect(
+      await provider.getJobState({ companyId: COMPANY, providerJobId: submitted.providerJobId }),
+    ).toEqual({ state: 'done' });
+    expect(
+      await provider.getJobState({ companyId: COMPANY, providerJobId: submitted.providerJobId }),
+    ).toEqual({ state: 'done' });
     const again = await provider.submit(input(pdf, 'mock-laserjet-online'));
     expect(again.providerJobId).toBe(submitted.providerJobId);
   });
 
   it('fails offline and times out the flaky printer without writing a PDF', async () => {
     const provider = await make();
-    await expect(provider.submit(input(Buffer.from('%PDF'), 'mock-offline'))).rejects.toBeInstanceOf(PrinterOffline);
-    await expect(provider.submit(input(Buffer.from('%PDF'), 'mock-flaky'))).rejects.toBeInstanceOf(ProviderTimeout);
-    await expect(readFile(join(roots[0] ?? '', COMPANY, `${JOB}.pdf`))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      provider.submit(input(Buffer.from('%PDF'), 'mock-offline')),
+    ).rejects.toBeInstanceOf(PrinterOffline);
+    await expect(provider.submit(input(Buffer.from('%PDF'), 'mock-flaky'))).rejects.toBeInstanceOf(
+      ProviderTimeout,
+    );
+    await expect(readFile(join(roots[0] ?? '', COMPANY, `${JOB}.pdf`))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
     const listed = await provider.listPrinters({ companyId: COMPANY });
     expect(listed.map((printer) => printer.externalPrinterId)).toEqual([
       'mock-laserjet-online',

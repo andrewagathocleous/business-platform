@@ -6,8 +6,10 @@ import {
   PrinterOffline,
   ProviderRejected,
   ProviderTimeout,
+  ProviderUncertain,
   StoragePathError,
-  type PrintProvider,
+  type PrintProviderName,
+  type ProviderJobStatus,
   type StorageAdapter,
 } from '@bp/integrations';
 import { AuditService } from '../audit/audit.service';
@@ -21,7 +23,8 @@ import {
 import { uuidv7 } from '../correlation/correlation';
 import { orderScopes } from '../orders/order.scope';
 import { STORAGE } from '../storage/storage.module';
-import { PRINT_PROVIDER } from './print.tokens';
+import { PrintProviderRegistry } from './print-providers';
+import { refreshDelaySeconds } from './refresh-delay';
 
 /**
  * One print job calls the provider at most once, and never after a cancel has
@@ -57,6 +60,7 @@ type ClaimedPrint = {
   printJobId: string;
   storageKey: string;
   externalPrinterId: string;
+  provider: PrintProviderName;
   copies: number;
   paperSize: string;
   idempotencyKey: string;
@@ -64,9 +68,9 @@ type ClaimedPrint = {
   title: string;
 };
 
-type SubmitStep =
-  | { kind: 'stop' }
-  | { kind: 'claimed'; print: ClaimedPrint };
+const REFRESHABLE = ['submitted', 'delivered_to_printer'] as const;
+
+type SubmitStep = { kind: 'stop' } | { kind: 'claimed'; print: ClaimedPrint };
 
 @Injectable()
 export class PrintProcessor {
@@ -77,19 +81,22 @@ export class PrintProcessor {
   constructor(
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(STORAGE) private readonly storage: StorageAdapter,
-    @Inject(PRINT_PROVIDER) private readonly printing: PrintProvider,
+    @Inject(PrintProviderRegistry) private readonly providers: PrintProviderRegistry,
   ) {}
 
   async runSubmit(job: ClaimedJob, external: ExternalJobs): Promise<void> {
     const companyId = requiredCompany(job);
     const payload = submitPayload(job.payload);
-    const located = await external.transaction((tx) => this.locate(tx, companyId, payload.printJobId));
+    const located = await external.transaction((tx) =>
+      this.locate(tx, companyId, payload.printJobId),
+    );
     let pdf: Buffer | null = null;
     if (located) {
       try {
         pdf = await readStream(await this.storage.get(located.storageKey));
       } catch (error) {
-        const reason = error instanceof StoragePathError || isFsMiss(error) ? 'file_missing' : 'file_unreadable';
+        const reason =
+          error instanceof StoragePathError || isFsMiss(error) ? 'file_missing' : 'file_unreadable';
         await this.failUnread(external, companyId, payload.printJobId, reason);
         return;
       }
@@ -104,7 +111,17 @@ export class PrintProcessor {
     }
     if (!pdf) {
       await this.persist(null, () =>
-        this.record(external, job, companyId, payload.printJobId, 'failed', null, null, 'file_missing'),
+        this.record(
+          external,
+          job,
+          companyId,
+          payload.printJobId,
+          'failed',
+          null,
+          null,
+          'file_missing',
+          step.print.provider,
+        ),
       );
       return;
     }
@@ -113,49 +130,82 @@ export class PrintProcessor {
 
   async runRefresh(job: ClaimedJob, external: ExternalJobs): Promise<void> {
     const companyId = requiredCompany(job);
-    const printJobId = refreshTarget(job.payload);
+    const target = refreshTarget(job.payload);
     const ready = await external.fenced(async (tx) => {
-      const rows = await tx.$queryRaw<{ id: string; status: string; providerJobId: string | null }[]>`
-        SELECT id, status::text AS status, provider_job_id AS "providerJobId"
-        FROM print_job
-        WHERE company_id = ${companyId}::uuid AND id = ${printJobId}::uuid
-        FOR UPDATE
+      const rows = await tx.$queryRaw<
+        { id: string; status: string; providerJobId: string | null; provider: string }[]
+      >`
+        SELECT pj.id,
+               pj.status::text AS status,
+               pj.provider_job_id AS "providerJobId",
+               pr.provider::text AS provider
+        FROM print_job pj
+        JOIN printer pr ON pr.company_id = pj.company_id AND pr.id = pj.printer_id
+        WHERE pj.company_id = ${companyId}::uuid AND pj.id = ${target.printJobId}::uuid
+        FOR UPDATE OF pj
       `;
       const owned = await external.lockQueue(tx);
       if (!owned) {
         throw new LeaseLost();
       }
       const row = rows[0];
-      if (!row || (row.status !== 'submitted' && row.status !== 'delivered_to_printer') || !row.providerJobId) {
+      if (!row || !isRefreshable(row.status) || !row.providerJobId) {
         await finishOrLose(external, tx, 'succeeded', null);
         return null;
       }
-      return row.providerJobId;
+      const provider = asPrintProvider(row.provider);
+      if (await this.stopRefreshIfAged(tx, companyId, target.printJobId, provider)) {
+        await finishOrLose(external, tx, 'succeeded', null);
+        return null;
+      }
+      return { providerJobId: row.providerJobId, provider };
     });
     if (!ready) {
       return;
     }
-    const state = await this.printing.getJobState(ready);
+    const state = await this.providers
+      .get(ready.provider)
+      .getJobState({ companyId, providerJobId: ready.providerJobId }, external.signal);
     await external.transaction(async (tx) => {
       await tx.$queryRaw`
         SELECT id FROM print_job
-        WHERE company_id = ${companyId}::uuid AND id = ${printJobId}::uuid
+        WHERE company_id = ${companyId}::uuid AND id = ${target.printJobId}::uuid
         FOR UPDATE
       `;
       await this.hooks?.duringRecord?.();
       await tx.$queryRaw`SELECT id FROM job WHERE id = ${job.id}::uuid FOR UPDATE`;
-      const next = state === 'done' ? 'done_reported' : 'delivered_to_printer';
+      await this.applyRefresh(tx, companyId, target, ready.provider, state, job.correlationId);
+      await external.finish(tx, 'succeeded', null);
+    });
+  }
+
+  private async applyRefresh(
+    tx: TenantTransaction,
+    companyId: string,
+    target: { printJobId: string; refresh: number },
+    provider: PrintProviderName,
+    state: ProviderJobStatus,
+    correlationId: string,
+  ): Promise<void> {
+    const providerState = state.raw ?? state.state;
+    if (state.state === 'pending') {
+      const updated = await touchProviderState(tx, companyId, target.printJobId, providerState);
+      if (updated) {
+        await this.followRefresh(tx, companyId, target, provider, correlationId);
+      }
+      return;
+    }
+    if (state.state === 'failed') {
+      const lastError = failureText(state);
       const updated = await tx.$queryRaw<{ id: string }[]>`
         UPDATE print_job
-        SET status = ${next}::"print_job_status",
-            provider_state = ${state},
-            completed_at = CASE
-              WHEN ${next} = 'done_reported' THEN clock_timestamp()
-              ELSE completed_at
-            END,
+        SET status = 'failed'::"print_job_status",
+            provider_state = ${providerState},
+            last_error = ${lastError},
+            completed_at = clock_timestamp(),
             updated_at = clock_timestamp()
         WHERE company_id = ${companyId}::uuid
-          AND id = ${printJobId}::uuid
+          AND id = ${target.printJobId}::uuid
           AND status::text IN ('submitted', 'delivered_to_printer')
         RETURNING id
       `;
@@ -164,18 +214,105 @@ export class PrintProcessor {
           companyId,
           actorType: 'system',
           actorLabel: 'job-runner',
-          action: next === 'done_reported' ? 'print_job.done_reported' : 'print_job.delivered_to_printer',
+          action: 'print_job.failed',
           objectType: 'print_job',
-          objectId: printJobId,
-          outcome: 'success',
-          details: { providerState: state, provider: 'mock' },
+          objectId: target.printJobId,
+          outcome: 'failure',
+          details: { provider, reason: state.reason },
         });
       }
-      if (state !== 'done' && updated.length > 0) {
-        await enqueueRefresh(tx, companyId, printJobId, job.correlationId, true);
-      }
-      await external.finish(tx, 'succeeded', null);
+      return;
+    }
+    const next = state.state === 'done' ? 'done_reported' : 'delivered_to_printer';
+    const updated = await tx.$queryRaw<{ id: string }[]>`
+      UPDATE print_job
+      SET status = ${next}::"print_job_status",
+          provider_state = ${providerState},
+          completed_at = CASE
+            WHEN ${next} = 'done_reported' THEN clock_timestamp()
+            ELSE completed_at
+          END,
+          updated_at = clock_timestamp()
+      WHERE company_id = ${companyId}::uuid
+        AND id = ${target.printJobId}::uuid
+        AND status::text IN ('submitted', 'delivered_to_printer')
+      RETURNING id
+    `;
+    if (updated.length > 0) {
+      await this.audit.record(tx, {
+        companyId,
+        actorType: 'system',
+        actorLabel: 'job-runner',
+        action:
+          next === 'done_reported' ? 'print_job.done_reported' : 'print_job.delivered_to_printer',
+        objectType: 'print_job',
+        objectId: target.printJobId,
+        outcome: 'success',
+        details: { providerState, provider },
+      });
+    }
+    if (state.state === 'delivered' && updated.length > 0) {
+      await this.followRefresh(tx, companyId, target, provider, correlationId);
+    }
+  }
+
+  private async followRefresh(
+    tx: TenantTransaction,
+    companyId: string,
+    target: { printJobId: string; refresh: number },
+    provider: PrintProviderName,
+    correlationId: string,
+  ): Promise<void> {
+    if (await this.stopRefreshIfAged(tx, companyId, target.printJobId, provider)) {
+      return;
+    }
+    await enqueueRefresh(tx, companyId, target.printJobId, correlationId, target.refresh + 1, true);
+  }
+
+  /**
+   * More than 26 hours after `submitted_at`: do not read the provider and do not
+   * change the print status. The queue job is finished by the caller. The audit
+   * is written at most once per print job.
+   */
+  private async stopRefreshIfAged(
+    tx: TenantTransaction,
+    companyId: string,
+    printJobId: string,
+    provider: PrintProviderName,
+  ): Promise<boolean> {
+    const aged = await tx.$queryRaw<{ aged: boolean }[]>`
+      SELECT (
+        submitted_at IS NOT NULL
+        AND submitted_at < clock_timestamp() - interval '26 hours'
+      ) AS aged
+      FROM print_job
+      WHERE company_id = ${companyId}::uuid AND id = ${printJobId}::uuid
+    `;
+    if (aged[0]?.aged !== true) {
+      return false;
+    }
+    const existing = await tx.auditEvent.findFirst({
+      where: {
+        companyId,
+        action: 'print_job.refresh_stopped',
+        objectType: 'print_job',
+        objectId: printJobId,
+      },
+      select: { id: true },
     });
+    if (!existing) {
+      await this.audit.record(tx, {
+        companyId,
+        actorType: 'system',
+        actorLabel: 'job-runner',
+        action: 'print_job.refresh_stopped',
+        objectType: 'print_job',
+        objectId: printJobId,
+        outcome: 'success',
+        details: { provider },
+      });
+    }
+    return true;
   }
 
   private async claim(
@@ -185,7 +322,9 @@ export class PrintProcessor {
     companyId: string,
     payload: SubmitPayload,
   ): Promise<SubmitStep> {
-    const locked = await tx.$queryRaw<{ id: string; status: string; sourceId: string; documentType: string }[]>`
+    const locked = await tx.$queryRaw<
+      { id: string; status: string; sourceId: string; documentType: string }[]
+    >`
       SELECT id,
              status::text AS status,
              source_id AS "sourceId",
@@ -246,7 +385,14 @@ export class PrintProcessor {
     const requesterOk =
       order !== null &&
       store !== null &&
-      (await stillAuthorised(tx, companyId, payload.requestedById, permission, order.storeId, store.locationId));
+      (await stillAuthorised(
+        tx,
+        companyId,
+        payload.requestedById,
+        permission,
+        order.storeId,
+        store.locationId,
+      ));
     const releaserOk =
       payload.releasedById === null ||
       (order !== null &&
@@ -325,7 +471,7 @@ export class PrintProcessor {
     });
     const printer = await tx.printer.findFirst({
       where: { id: row.printerId, companyId },
-      select: { externalPrinterId: true },
+      select: { externalPrinterId: true, provider: true },
     });
     if (!file || !printer) {
       await tx.$executeRaw`
@@ -356,7 +502,7 @@ export class PrintProcessor {
       objectType: 'print_job',
       objectId: row.id,
       outcome: 'success',
-      details: { provider: 'mock' },
+      details: { provider: printer.provider },
     });
     return {
       kind: 'claimed',
@@ -364,6 +510,7 @@ export class PrintProcessor {
         printJobId: row.id,
         storageKey: file.storageKey,
         externalPrinterId: printer.externalPrinterId,
+        provider: printer.provider,
         copies: row.copies,
         paperSize: row.paperSize,
         idempotencyKey: row.idempotencyKey,
@@ -383,7 +530,7 @@ export class PrintProcessor {
   ): Promise<void> {
     let submitted: { providerJobId: string };
     try {
-      submitted = await this.printing.submit(
+      submitted = await this.providers.get(print.provider).submit(
         {
           companyId,
           printJobId,
@@ -399,12 +546,32 @@ export class PrintProcessor {
     } catch (error) {
       const outcome = providerOutcome(error);
       await this.persist(null, () =>
-        this.record(external, job, companyId, printJobId, outcome.status, null, null, outcome.reason),
+        this.record(
+          external,
+          job,
+          companyId,
+          printJobId,
+          outcome.status,
+          null,
+          null,
+          outcome.reason,
+          print.provider,
+        ),
       );
       return;
     }
     await this.persist(submitted.providerJobId, () =>
-      this.record(external, job, companyId, printJobId, 'submitted', submitted.providerJobId, 'submitted', null),
+      this.record(
+        external,
+        job,
+        companyId,
+        printJobId,
+        'submitted',
+        submitted.providerJobId,
+        'submitted',
+        null,
+        print.provider,
+      ),
     );
   }
 
@@ -540,6 +707,7 @@ export class PrintProcessor {
     providerJobId: string | null,
     providerState: string | null,
     lastError: string | null,
+    provider: PrintProviderName,
   ): Promise<void> {
     const queueStatus: QueueFinish = status === 'submitted' ? 'succeeded' : status;
     await external.transaction(async (tx) => {
@@ -577,7 +745,7 @@ export class PrintProcessor {
         `;
         applied = updated.length > 0;
         if (applied && status === 'submitted') {
-          await enqueueRefresh(tx, companyId, printJobId, job.correlationId, false);
+          await enqueueRefresh(tx, companyId, printJobId, job.correlationId, 0, false);
         }
       } else if (current === 'uncertain' && providerJobId) {
         await tx.$executeRaw`
@@ -600,7 +768,7 @@ export class PrintProcessor {
         objectId: printJobId,
         outcome: status === 'submitted' ? 'success' : 'failure',
         details: {
-          provider: 'mock',
+          provider,
           providerJobId,
           applied,
           ...(lastError ? { reason: lastError } : {}),
@@ -616,10 +784,13 @@ function providerOutcome(error: unknown): { status: 'failed' | 'uncertain'; reas
     return { status: 'failed', reason: 'printer_offline' };
   }
   if (error instanceof ProviderRejected) {
-    return { status: 'failed', reason: 'provider_rejected' };
+    return { status: 'failed', reason: error.message };
   }
   if (error instanceof ProviderTimeout) {
     return { status: 'uncertain', reason: 'provider_timeout' };
+  }
+  if (error instanceof ProviderUncertain) {
+    return { status: 'uncertain', reason: error.reason };
   }
   return { status: 'uncertain', reason: 'provider_unknown' };
 }
@@ -699,11 +870,13 @@ async function enqueueRefresh(
   companyId: string,
   printJobId: string,
   correlationId: string,
+  refresh: number,
   followUp: boolean,
 ): Promise<void> {
   const id = uuidv7();
   const key = followUp ? `print.refresh:${printJobId}:${id}` : `print.refresh:${printJobId}`;
-  const payload = JSON.stringify({ printJobId });
+  const payload = JSON.stringify({ printJobId, refresh });
+  const delaySeconds = refreshDelaySeconds(refresh);
   await tx.$executeRaw`
     INSERT INTO job (
       id, company_id, type, payload, status, attempts, max_attempts, run_after,
@@ -716,7 +889,7 @@ async function enqueueRefresh(
       'queued'::"job_status",
       0,
       ${REFRESH_ATTEMPTS},
-      clock_timestamp() + interval '2 seconds',
+      clock_timestamp() + make_interval(secs => ${delaySeconds}),
       ${REFRESH_TIMEOUT_MS},
       ${correlationId},
       ${key},
@@ -750,15 +923,53 @@ function submitPayload(value: unknown): SubmitPayload {
   };
 }
 
-function refreshTarget(value: unknown): string {
+function refreshTarget(value: unknown): { printJobId: string; refresh: number } {
   if (typeof value !== 'object' || value === null) {
     throw new Error('print_payload_invalid');
   }
-  const printJobId = (value as Record<string, unknown>).printJobId;
-  if (typeof printJobId !== 'string') {
+  const record = value as Record<string, unknown>;
+  if (typeof record.printJobId !== 'string') {
     throw new Error('print_payload_invalid');
   }
-  return printJobId;
+  const refresh =
+    typeof record.refresh === 'number' && Number.isInteger(record.refresh) && record.refresh >= 0
+      ? record.refresh
+      : 0;
+  return { printJobId: record.printJobId, refresh };
+}
+
+function asPrintProvider(value: string): PrintProviderName {
+  if (value === 'mock' || value === 'printnode') {
+    return value;
+  }
+  throw new ProviderRejected('provider_unavailable');
+}
+
+function isRefreshable(status: string): boolean {
+  return (REFRESHABLE as readonly string[]).includes(status);
+}
+
+async function touchProviderState(
+  tx: TenantTransaction,
+  companyId: string,
+  printJobId: string,
+  providerState: string,
+): Promise<boolean> {
+  const updated = await tx.$queryRaw<{ id: string }[]>`
+    UPDATE print_job
+    SET provider_state = ${providerState},
+        updated_at = clock_timestamp()
+    WHERE company_id = ${companyId}::uuid
+      AND id = ${printJobId}::uuid
+      AND status::text IN ('submitted', 'delivered_to_printer')
+    RETURNING id
+  `;
+  return updated.length > 0;
+}
+
+function failureText(state: Extract<ProviderJobStatus, { state: 'failed' }>): string {
+  const text = state.message ? `${state.reason}: ${state.message}` : state.reason;
+  return text.length > 240 ? text.slice(0, 240) : text;
 }
 
 async function readStream(stream: Readable): Promise<Buffer> {

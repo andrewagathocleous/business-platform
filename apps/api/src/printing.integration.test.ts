@@ -28,7 +28,7 @@ import { configureHttp } from './http/configure-http';
 import { caseSensitiveAdapter } from './http/express-adapter';
 import { LOG_STREAM } from './logging/logging.module';
 import { PrintProcessor } from './printing/print.processor';
-import { PRINT_PROVIDER } from './printing/print.tokens';
+import { MOCK_PRINT_PROVIDER } from './printing/print.tokens';
 
 const COMPANY_A = 'Demo Company A Ltd (fictional)';
 const COMPANY_B = 'Demo Company B Ltd (fictional)';
@@ -85,13 +85,17 @@ describe('printing with the mock provider', () => {
     delete process.env.THROTTLE_ENABLED_IN_TEST;
     app = await bootApp();
     const prisma = app.get(PrismaService);
-    const databases = await prisma.client.$queryRaw<{ current_database: string; current_user: string }[]>`
+    const databases = await prisma.client.$queryRaw<
+      { current_database: string; current_user: string }[]
+    >`
       SELECT current_database() AS current_database, current_user AS current_user
     `;
     assertDatabaseNameIsTest(databases[0]?.current_database, 'DATABASE_URL');
     expect(databases[0]?.current_user).toBe('bp_app');
-    companyA = (await prisma.client.company.findFirstOrThrow({ where: { legalName: COMPANY_A } })).id;
-    companyB = (await prisma.client.company.findFirstOrThrow({ where: { legalName: COMPANY_B } })).id;
+    companyA = (await prisma.client.company.findFirstOrThrow({ where: { legalName: COMPANY_A } }))
+      .id;
+    companyB = (await prisma.client.company.findFirstOrThrow({ where: { legalName: COMPANY_B } }))
+      .id;
     adminUserId = (
       await prisma.client.userAccount.findFirstOrThrow({ where: { email: 'admin.a@example.test' } })
     ).id;
@@ -117,7 +121,9 @@ describe('printing with the mock provider', () => {
       )
     ).id;
     const shopifyB = await withCompany(companyB, (tx) =>
-      tx.store.findFirstOrThrow({ where: { companyId: companyB, name: 'Olive Grove Demo Shopify' } }),
+      tx.store.findFirstOrThrow({
+        where: { companyId: companyB, name: 'Olive Grove Demo Shopify' },
+      }),
     );
     shopifyStoreB = shopifyB.id;
     shopifyConnectionB = (
@@ -131,15 +137,20 @@ describe('printing with the mock provider', () => {
     adminB = await login(app, 'admin.b@example.test');
     fulfil = await login(app, 'fulfil.a@example.test');
     fulfilB = await login(app, 'fulfil.b@example.test');
-    provider = app.get<MockPrintProvider>(PRINT_PROVIDER);
+    provider = app.get<MockPrintProvider>(MOCK_PRINT_PROVIDER);
     const printersA = await printerList(adminA, companyA);
     onlineA = printerId(printersA, 'mock-laserjet-online');
     offlineA = printerId(printersA, 'mock-offline');
     flakyA = printerId(printersA, 'mock-flaky');
     const printersB = await printerList(adminB, companyB);
     onlineB = printerId(printersB, 'mock-laserjet-online');
-    locationB = stringField(printersB.find((row) => stringField(row, 'id') === onlineB) ?? {}, 'locationId');
-    await started().get(PrismaService).client.job.deleteMany({ where: { status: 'queued', type: 'inbox.process' } });
+    locationB = stringField(
+      printersB.find((row) => stringField(row, 'id') === onlineB) ?? {},
+      'locationId',
+    );
+    await started()
+      .get(PrismaService)
+      .client.job.deleteMany({ where: { status: 'queued', type: 'inbox.process' } });
   });
 
   afterEach(() => {
@@ -190,7 +201,11 @@ describe('printing with the mock provider', () => {
       printJobId: created.id,
     });
     const dupAudit = await auditEvents(app, cid('dup'), companyA);
-    expect(dupAudit.some((event) => event.action === 'print_job.requested' && event.outcome === 'failure')).toBe(true);
+    expect(
+      dupAudit.some(
+        (event) => event.action === 'print_job.requested' && event.outcome === 'failure',
+      ),
+    ).toBe(true);
     const finished = await finishPrint(fulfil, companyA, stringField(created, 'id'));
     expect(provider.submitCount).toBe(before + 1);
     expect(finished.status).toBe('done_reported');
@@ -198,7 +213,9 @@ describe('printing with the mock provider', () => {
     expect(String(finished.label)).not.toMatch(/^printed$/i);
     expect(finished.provider).toBe('mock');
     expect(finished.simulationLabel).toBe('Simulated — no physical printing');
-    const pdf = await readFile(join(mockRoot, companyA.toLowerCase(), `${String(created.id).toLowerCase()}.pdf`));
+    const pdf = await readFile(
+      join(mockRoot, companyA.toLowerCase(), `${String(created.id).toLowerCase()}.pdf`),
+    );
     expect(pdf.subarray(0, 5).toString('utf8')).toBe('%PDF-');
     const detail = await send(fulfil, 'get', `/api/c/${companyA}/orders/${order.id}`);
     expect(detail.status, text(detail)).toBe(200);
@@ -208,12 +225,21 @@ describe('printing with the mock provider', () => {
     expect(record(slot).provider).toBe('mock');
     const requested = await auditEvents(app, correlationId, companyA);
     expect(requested.map((event) => event.action)).toEqual(
-      expect.arrayContaining(['print_job.requested', 'print_job.submitting', 'print_job.submitted', 'print_job.done_reported']),
+      expect.arrayContaining([
+        'print_job.requested',
+        'print_job.submitting',
+        'print_job.submitted',
+        'print_job.done_reported',
+      ]),
     );
     const activity = await send(fulfil, 'get', `/api/c/${companyA}/orders/${order.id}/activity`);
     expect(activity.status, text(activity)).toBe(200);
-    const actions = arrayOf(record(activity.body).events).map((event) => stringField(record(event), 'action'));
-    expect(actions).toEqual(expect.arrayContaining(['print_job.requested', 'print_job.done_reported']));
+    const actions = arrayOf(record(activity.body).events).map((event) =>
+      stringField(record(event), 'action'),
+    );
+    expect(actions).toEqual(
+      expect.arrayContaining(['print_job.requested', 'print_job.done_reported']),
+    );
     const confirmId = cid('first-confirm');
     const confirmed = await send(
       adminA,
@@ -224,7 +250,12 @@ describe('printing with the mock provider', () => {
     );
     expect(confirmed.status, text(confirmed)).toBe(200);
     expect(record(record(confirmed.body).printJob).status).toBe('confirmed_printed');
-    expectOutcome(await auditEvents(app, confirmId, companyA), confirmId, 'print_job.confirmed', 'success');
+    expectOutcome(
+      await auditEvents(app, confirmId, companyA),
+      confirmId,
+      'print_job.confirmed',
+      'success',
+    );
   });
 
   it('lets ten concurrent first prints create exactly one job', async () => {
@@ -244,17 +275,32 @@ describe('printing with the mock provider', () => {
     expect(conflicts).toHaveLength(9);
     for (const conflict of conflicts) {
       expect(record(record(conflict.body).error).code).toBe('already_printed');
-      expect(record(record(conflict.body).error).printJobId).toBe(record(record(created[0]?.body).printJob).id);
+      expect(record(record(conflict.body).error).printJobId).toBe(
+        record(record(created[0]?.body).printJob).id,
+      );
     }
-    const listed = await send(fulfil, 'get', `/api/c/${companyA}/print-jobs?sourceId=${order.id}&pageSize=100`);
+    const listed = await send(
+      fulfil,
+      'get',
+      `/api/c/${companyA}/print-jobs?sourceId=${order.id}&pageSize=100`,
+    );
     expect(listed.status, text(listed)).toBe(200);
     expect(arrayOf(record(listed.body).printJobs)).toHaveLength(1);
   });
 
   it('lets a reprint-only user read their job and still refuses a user with no print permission', async () => {
     const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
-    const created = await requestPrint(fulfil, companyA, order.id, 'packing_slip', cid('reprint-read'));
-    const reprintOnly = await installStaff(`reprint-only-${runId}@example.test`, ['order.view', 'print.reprint']);
+    const created = await requestPrint(
+      fulfil,
+      companyA,
+      order.id,
+      'packing_slip',
+      cid('reprint-read'),
+    );
+    const reprintOnly = await installStaff(`reprint-only-${runId}@example.test`, [
+      'order.view',
+      'print.reprint',
+    ]);
     const read = await send(
       reprintOnly,
       'get',
@@ -263,10 +309,18 @@ describe('printing with the mock provider', () => {
     );
     expect(read.status, text(read)).toBe(200);
     expect(stringField(record(record(read.body).printJob), 'id')).toBe(String(created.id));
-    const listed = await send(reprintOnly, 'get', `/api/c/${companyA}/print-jobs?pageSize=100`, cid('reprint-list'));
+    const listed = await send(
+      reprintOnly,
+      'get',
+      `/api/c/${companyA}/print-jobs?pageSize=100`,
+      cid('reprint-list'),
+    );
     await expectDenied(listed, 403, cid('reprint-list'), companyA, 'permission_missing');
 
-    const confirmOnly = await installStaff(`confirm-only-${runId}@example.test`, ['order.view', 'print.confirm']);
+    const confirmOnly = await installStaff(`confirm-only-${runId}@example.test`, [
+      'order.view',
+      'print.confirm',
+    ]);
     const confirmed = await send(
       confirmOnly,
       'get',
@@ -276,40 +330,74 @@ describe('printing with the mock provider', () => {
     expect(confirmed.status, text(confirmed)).toBe(200);
 
     const viewer = await installStaff(`view-only-${runId}@example.test`, ['order.view']);
-    const denied = await send(viewer, 'get', `/api/c/${companyA}/print-jobs/${String(created.id)}`, cid('view-only-get'));
+    const denied = await send(
+      viewer,
+      'get',
+      `/api/c/${companyA}/print-jobs/${String(created.id)}`,
+      cid('view-only-get'),
+    );
     await expectDenied(denied, 403, cid('view-only-get'), companyA, 'permission_missing');
   });
 
   it('refuses a reprint without print.reprint and accepts one with a reason', async () => {
     const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
-    const first = await requestPrint(fulfil, companyA, order.id, 'gift_message', cid('reprint-base'));
+    const first = await requestPrint(
+      fulfil,
+      companyA,
+      order.id,
+      'gift_message',
+      cid('reprint-base'),
+    );
     const submitOnly = await installStaff(`submit-only-${runId}@example.test`, ['print.submit']);
-    const denied = await send(submitOnly, 'post', `/api/c/${companyA}/print-requests`, cid('reprint-denied'), {
-      documentType: 'gift_message',
-      sourceType: 'order',
-      sourceId: order.id,
-      reprint: { ofPrintJobId: first.id, reason: 'card was smudged' },
-    });
+    const denied = await send(
+      submitOnly,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('reprint-denied'),
+      {
+        documentType: 'gift_message',
+        sourceType: 'order',
+        sourceId: order.id,
+        reprint: { ofPrintJobId: first.id, reason: 'card was smudged' },
+      },
+    );
     await expectDenied(denied, 403, cid('reprint-denied'), companyA, 'permission_missing');
-    const reprinted = await send(fulfil, 'post', `/api/c/${companyA}/print-requests`, cid('reprint-ok'), {
-      documentType: 'gift_message',
-      sourceType: 'order',
-      sourceId: order.id,
-      reprint: { ofPrintJobId: first.id, reason: 'card was smudged' },
-    });
+    const reprinted = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('reprint-ok'),
+      {
+        documentType: 'gift_message',
+        sourceType: 'order',
+        sourceId: order.id,
+        reprint: { ofPrintJobId: first.id, reason: 'card was smudged' },
+      },
+    );
     expect(reprinted.status, text(reprinted)).toBe(200);
     const job = record(record(reprinted.body).printJob);
     expect(job.isReprint).toBe(true);
     expect(job.reprintOfId).toBe(first.id);
     expect(job.id).not.toBe(first.id);
     const reprintId = cid('reprint-ok');
-    expectOutcome(await auditEvents(app, reprintId, companyA), reprintId, 'print_job.requested', 'success');
-    const shortReason = await send(fulfil, 'post', `/api/c/${companyA}/print-requests`, cid('reprint-short'), {
-      documentType: 'gift_message',
-      sourceType: 'order',
-      sourceId: order.id,
-      reprint: { ofPrintJobId: first.id, reason: 'no' },
-    });
+    expectOutcome(
+      await auditEvents(app, reprintId, companyA),
+      reprintId,
+      'print_job.requested',
+      'success',
+    );
+    const shortReason = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('reprint-short'),
+      {
+        documentType: 'gift_message',
+        sourceType: 'order',
+        sourceId: order.id,
+        reprint: { ofPrintJobId: first.id, reason: 'no' },
+      },
+    );
     expect(shortReason.status, text(shortReason)).toBe(400);
   });
 
@@ -326,13 +414,19 @@ describe('printing with the mock provider', () => {
     expect(failedFirst.isReprint).toBe(false);
     expect(await firstPrint(adminA, companyA, order.id, 'packing_slip')).toBe(true);
 
-    const reprinted = await send(fulfil, 'post', `/api/c/${companyA}/print-requests`, cid('fp-reprint'), {
-      documentType: 'packing_slip',
-      sourceType: 'order',
-      sourceId: order.id,
-      printerId: offlineA,
-      reprint: { ofPrintJobId: stringField(first, 'id'), reason: 'first copy failed' },
-    });
+    const reprinted = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('fp-reprint'),
+      {
+        documentType: 'packing_slip',
+        sourceType: 'order',
+        sourceId: order.id,
+        printerId: offlineA,
+        reprint: { ofPrintJobId: stringField(first, 'id'), reason: 'first copy failed' },
+      },
+    );
     expect(reprinted.status, text(reprinted)).toBe(200);
     const reprintJob = record(record(reprinted.body).printJob);
     expect(reprintJob.isReprint).toBe(true);
@@ -355,33 +449,65 @@ describe('printing with the mock provider', () => {
 
   it('fails an offline printer and leaves a timeout uncertain without a second submit', async () => {
     const offlineOrder = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, null);
-    const offline = await requestPrint(fulfil, companyA, offlineOrder.id, 'packing_slip', cid('offline'), {
-      printerId: offlineA,
-    });
+    const offline = await requestPrint(
+      fulfil,
+      companyA,
+      offlineOrder.id,
+      'packing_slip',
+      cid('offline'),
+      {
+        printerId: offlineA,
+      },
+    );
     const offlineDone = await finishPrint(fulfil, companyA, stringField(offline, 'id'));
     expect(offlineDone.status).toBe('failed');
     expect(offlineDone.lastError).toBe('printer_offline');
     expect(provider.submittedIds.filter((id) => id === offline.id)).toHaveLength(1);
-    expectOutcome(await auditEvents(app, cid('offline'), companyA), cid('offline'), 'print_job.failed', 'failure');
+    expectOutcome(
+      await auditEvents(app, cid('offline'), companyA),
+      cid('offline'),
+      'print_job.failed',
+      'failure',
+    );
     const flakyOrder = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, null);
-    const flaky = await requestPrint(fulfil, companyA, flakyOrder.id, 'packing_slip', cid('flaky'), {
-      printerId: flakyA,
-    });
+    const flaky = await requestPrint(
+      fulfil,
+      companyA,
+      flakyOrder.id,
+      'packing_slip',
+      cid('flaky'),
+      {
+        printerId: flakyA,
+      },
+    );
     const flakyDone = await finishPrint(fulfil, companyA, stringField(flaky, 'id'));
     expect(flakyDone.status).toBe('uncertain');
     expect(flakyDone.label).toBe('Uncertain — check the printer before reprinting');
     expect(provider.submittedIds.filter((id) => id === flaky.id)).toHaveLength(1);
-    expectOutcome(await auditEvents(app, cid('flaky'), companyA), cid('flaky'), 'print_job.uncertain', 'failure');
-    const again = await send(fulfil, 'post', `/api/c/${companyA}/print-requests`, cid('flaky-again'), {
-      documentType: 'packing_slip',
-      sourceType: 'order',
-      sourceId: flakyOrder.id,
-    });
+    expectOutcome(
+      await auditEvents(app, cid('flaky'), companyA),
+      cid('flaky'),
+      'print_job.uncertain',
+      'failure',
+    );
+    const again = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('flaky-again'),
+      {
+        documentType: 'packing_slip',
+        sourceType: 'order',
+        sourceId: flakyOrder.id,
+      },
+    );
     expect(again.status, text(again)).toBe(409);
     expect(provider.submittedIds.filter((id) => id === flaky.id)).toHaveLength(1);
-    const submits = await started().get(PrismaService).client.job.count({
-      where: { idempotencyKey: `print.submit:${String(flaky.id)}`, status: 'queued' },
-    });
+    const submits = await started()
+      .get(PrismaService)
+      .client.job.count({
+        where: { idempotencyKey: `print.submit:${String(flaky.id)}`, status: 'queued' },
+      });
     expect(submits).toBe(0);
   });
 
@@ -395,15 +521,30 @@ describe('printing with the mock provider', () => {
       const held = await loadPrint(fulfil, companyA, stringField(queued, 'id'));
       expect(held.status).toBe('held');
       expect(provider.submitCount).toBe(before);
-      expectOutcome(await auditEvents(app, cid('hold'), companyA), cid('hold'), 'print_job.held', 'success');
+      expectOutcome(
+        await auditEvents(app, cid('hold'), companyA),
+        cid('hold'),
+        'print_job.held',
+        'success',
+      );
       await setPrinting(true);
-      const released = await send(adminA, 'post', `/api/c/${companyA}/print-jobs/${String(queued.id)}/release`, cid('release'));
+      const released = await send(
+        adminA,
+        'post',
+        `/api/c/${companyA}/print-jobs/${String(queued.id)}/release`,
+        cid('release'),
+      );
       expect(released.status, text(released)).toBe(200);
       expect(record(record(released.body).printJob).status).toBe('queued');
       const finished = await finishPrint(fulfil, companyA, stringField(queued, 'id'));
       expect(finished.status).toBe('done_reported');
       expect(provider.submitCount).toBe(before + 1);
-      expectOutcome(await auditEvents(app, cid('release'), companyA), cid('release'), 'print_job.released', 'success');
+      expectOutcome(
+        await auditEvents(app, cid('release'), companyA),
+        cid('release'),
+        'print_job.released',
+        'success',
+      );
     } finally {
       await setPrinting(true);
     }
@@ -435,7 +576,14 @@ describe('printing with the mock provider', () => {
     created.id = externalId;
     created.name = name;
     created.updatedAt = '2026-03-01T10:15:00.000Z';
-    const posted = await postEvent(token.token, companyA, shopifyConnectionA, `print-create-${runId}`, 'orders/create', created);
+    const posted = await postEvent(
+      token.token,
+      companyA,
+      shopifyConnectionA,
+      `print-create-${runId}`,
+      'orders/create',
+      created,
+    );
     expect(posted.status, text(posted.response)).toBe(202);
     await jobs().drainOnce();
     const order = await orderByNumber(adminA, companyA, name);
@@ -456,27 +604,53 @@ describe('printing with the mock provider', () => {
     await jobs().drainOnce();
     const after = await orderByNumber(adminA, companyA, name);
     expect(numberField(after, 'version')).toBeGreaterThan(numberField(order, 'version'));
-    const second = await send(fulfil, 'post', `/api/c/${companyA}/print-requests`, cid('version-again'), {
-      documentType: 'gift_message',
-      sourceType: 'order',
-      sourceId: orderId,
-    });
+    const second = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('version-again'),
+      {
+        documentType: 'gift_message',
+        sourceType: 'order',
+        sourceId: orderId,
+      },
+    );
     expect(second.status, text(second)).toBe(409);
     expect(record(record(second.body).error).printJobId).toBe(first.id);
-    const noted = await send(fulfil, 'post', `/api/c/${companyA}/orders/${orderId}/notes`, cid('note'), {
-      body: `packed ${runId}`,
-    });
+    const noted = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/orders/${orderId}/notes`,
+      cid('note'),
+      {
+        body: `packed ${runId}`,
+      },
+    );
     expect(noted.status, text(noted)).toBe(200);
     const version = numberField(record(record(noted.body).order), 'version');
-    const moved = await send(fulfil, 'post', `/api/c/${companyA}/orders/${orderId}/transitions`, cid('move'), {
-      to: 'preparing',
-      expectedVersion: version,
-    });
+    const moved = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/orders/${orderId}/transitions`,
+      cid('move'),
+      {
+        to: 'preparing',
+        expectedVersion: version,
+      },
+    );
     expect(moved.status, text(moved)).toBe(200);
     const activity = await send(fulfil, 'get', `/api/c/${companyA}/orders/${orderId}/activity`);
-    const actions = arrayOf(record(activity.body).events).map((event) => stringField(record(event), 'action'));
+    const actions = arrayOf(record(activity.body).events).map((event) =>
+      stringField(record(event), 'action'),
+    );
     expect(actions).toEqual(
-      expect.arrayContaining(['order.imported', 'order.source_updated', 'order.note_added', 'order.transition', 'print_job.requested']),
+      expect.arrayContaining([
+        'order.imported',
+        'order.source_updated',
+        'order.note_added',
+        'order.transition',
+        'print_job.requested',
+      ]),
     );
   }, 60_000);
 
@@ -484,9 +658,15 @@ describe('printing with the mock provider', () => {
     const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
     const before = provider.submitCount;
     const queued = await requestPrint(fulfil, companyA, order.id, 'gift_message', cid('revoked'));
-    const suspended = await send(adminA, 'patch', `/api/c/${companyA}/members/${fulfilMembershipId}`, cid('suspend'), {
-      status: 'suspended',
-    });
+    const suspended = await send(
+      adminA,
+      'patch',
+      `/api/c/${companyA}/members/${fulfilMembershipId}`,
+      cid('suspend'),
+      {
+        status: 'suspended',
+      },
+    );
     expect(suspended.status, text(suspended)).toBe(200);
     try {
       await jobs().drainOnce();
@@ -531,9 +711,20 @@ describe('printing with the mock provider', () => {
 
   it('never both cancels and submits, including a blocked claim', async () => {
     const earlyOrder = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
-    const early = await requestPrint(fulfil, companyA, earlyOrder.id, 'gift_message', cid('cancel-early'));
+    const early = await requestPrint(
+      fulfil,
+      companyA,
+      earlyOrder.id,
+      'gift_message',
+      cid('cancel-early'),
+    );
     const before = provider.submitCount;
-    const cancelled = await send(fulfil, 'post', `/api/c/${companyA}/print-jobs/${String(early.id)}/cancel`, cid('cancel-early-do'));
+    const cancelled = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/print-jobs/${String(early.id)}/cancel`,
+      cid('cancel-early-do'),
+    );
     expect(cancelled.status, text(cancelled)).toBe(200);
     expectOutcome(
       await auditEvents(app, cid('cancel-early-do'), companyA),
@@ -546,7 +737,13 @@ describe('printing with the mock provider', () => {
     expect((await loadPrint(fulfil, companyA, stringField(early, 'id'))).status).toBe('cancelled');
 
     const blockedOrder = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
-    const blocked = await requestPrint(fulfil, companyA, blockedOrder.id, 'gift_message', cid('cancel-late'));
+    const blocked = await requestPrint(
+      fulfil,
+      companyA,
+      blockedOrder.id,
+      'gift_message',
+      cid('cancel-late'),
+    );
     let release = (): void => undefined;
     const entered = deferred();
     provider.beforeSubmit = () => {
@@ -558,7 +755,12 @@ describe('printing with the mock provider', () => {
     const draining = jobs().drainOnce();
     try {
       await entered.promise;
-      const late = await send(fulfil, 'post', `/api/c/${companyA}/print-jobs/${String(blocked.id)}/cancel`, cid('cancel-late-do'));
+      const late = await send(
+        fulfil,
+        'post',
+        `/api/c/${companyA}/print-jobs/${String(blocked.id)}/cancel`,
+        cid('cancel-late-do'),
+      );
       expect(late.status, text(late)).toBe(409);
       expectOutcome(
         await auditEvents(app, cid('cancel-late-do'), companyA),
@@ -575,9 +777,20 @@ describe('printing with the mock provider', () => {
 
     for (let index = 0; index < 25; index += 1) {
       const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
-      const queued = await requestPrint(fulfil, companyA, order.id, 'gift_message', cid(`cancel-race-${String(index)}`));
+      const queued = await requestPrint(
+        fulfil,
+        companyA,
+        order.id,
+        'gift_message',
+        cid(`cancel-race-${String(index)}`),
+      );
       const [cancel] = await Promise.all([
-        send(fulfil, 'post', `/api/c/${companyA}/print-jobs/${String(queued.id)}/cancel`, cid(`cancel-race-do-${String(index)}`)),
+        send(
+          fulfil,
+          'post',
+          `/api/c/${companyA}/print-jobs/${String(queued.id)}/cancel`,
+          cid(`cancel-race-do-${String(index)}`),
+        ),
         jobs().drainOnce(),
       ]);
       const called = provider.submittedIds.includes(String(queued.id));
@@ -640,7 +853,13 @@ describe('printing with the mock provider', () => {
 
   it('does not call the provider when reclaim and cancel win between the claim and submit', async () => {
     const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
-    const queued = await requestPrint(fulfil, companyA, order.id, 'gift_message', cid('after-claim'));
+    const queued = await requestPrint(
+      fulfil,
+      companyA,
+      order.id,
+      'gift_message',
+      cid('after-claim'),
+    );
     const before = provider.submitCount;
     const processor = started().get(PrintProcessor);
     const claimed = deferred();
@@ -662,7 +881,9 @@ describe('printing with the mock provider', () => {
         WHERE id = ${String(queued.queueJobId)}::uuid
       `;
       expect(await jobs().reclaimExpired()).toBeGreaterThan(0);
-      expect((await loadPrint(adminA, companyA, stringField(queued, 'id'))).status).toBe('uncertain');
+      expect((await loadPrint(adminA, companyA, stringField(queued, 'id'))).status).toBe(
+        'uncertain',
+      );
       const cancelled = await send(
         fulfil,
         'post',
@@ -674,7 +895,9 @@ describe('printing with the mock provider', () => {
       await draining;
       expect(provider.submitCount).toBe(before);
       expect(provider.submittedIds.filter((id) => id === queued.id)).toHaveLength(0);
-      expect((await loadPrint(fulfil, companyA, stringField(queued, 'id'))).status).toBe('cancelled');
+      expect((await loadPrint(fulfil, companyA, stringField(queued, 'id'))).status).toBe(
+        'cancelled',
+      );
     } finally {
       release();
       processor.hooks = null;
@@ -684,32 +907,73 @@ describe('printing with the mock provider', () => {
 
   it('hides another store print job at the same location from a store grant', async () => {
     const placed = await withCompany(companyA, async (tx) => {
-      const shopify = await tx.store.findFirstOrThrow({ where: { id: shopifyStoreA, companyId: companyA } });
+      const shopify = await tx.store.findFirstOrThrow({
+        where: { id: shopifyStoreA, companyId: companyA },
+      });
       const presta = await tx.store.findFirstOrThrow({
         where: { companyId: companyA, name: 'Nutbox Demo PrestaShop' },
       });
       const connection = await tx.storeConnection.findFirstOrThrow({
         where: { companyId: companyA, storeId: presta.id, status: 'active', mode: 'mock' },
       });
-      return { shopifyLocationId: shopify.locationId, prestaId: presta.id, prestaLocationId: presta.locationId, connectionId: connection.id };
+      return {
+        shopifyLocationId: shopify.locationId,
+        prestaId: presta.id,
+        prestaLocationId: presta.locationId,
+        connectionId: connection.id,
+      };
     });
     expect(placed.prestaLocationId).toBe(placed.shopifyLocationId);
     const prestaOrder = await makeOrder(companyA, placed.prestaId, placed.connectionId, GREEK_GIFT);
-    const hidden = await requestPrint(adminA, companyA, prestaOrder.id, 'gift_message', cid('scope-presta'));
+    const hidden = await requestPrint(
+      adminA,
+      companyA,
+      prestaOrder.id,
+      'gift_message',
+      cid('scope-presta'),
+    );
     const viewer = await installStaff(`shopify-only-${runId}@example.test`, ['print.submit']);
     const listed = await send(viewer, 'get', `/api/c/${companyA}/print-jobs?pageSize=100`);
     expect(listed.status, text(listed)).toBe(200);
-    expect(arrayOf(record(listed.body).printJobs).map((job) => stringField(record(job), 'id'))).not.toContain(hidden.id);
-    const bySource = await send(viewer, 'get', `/api/c/${companyA}/print-jobs?sourceId=${prestaOrder.id}&pageSize=100`);
+    expect(
+      arrayOf(record(listed.body).printJobs).map((job) => stringField(record(job), 'id')),
+    ).not.toContain(hidden.id);
+    const bySource = await send(
+      viewer,
+      'get',
+      `/api/c/${companyA}/print-jobs?sourceId=${prestaOrder.id}&pageSize=100`,
+    );
     expect(bySource.status, text(bySource)).toBe(200);
     expect(arrayOf(record(bySource.body).printJobs)).toHaveLength(0);
     const ownOrder = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
-    const own = await requestPrint(adminA, companyA, ownOrder.id, 'gift_message', cid('scope-shopify'));
-    const ownList = await send(viewer, 'get', `/api/c/${companyA}/print-jobs?sourceId=${ownOrder.id}&pageSize=100`);
+    const own = await requestPrint(
+      adminA,
+      companyA,
+      ownOrder.id,
+      'gift_message',
+      cid('scope-shopify'),
+    );
+    const ownList = await send(
+      viewer,
+      'get',
+      `/api/c/${companyA}/print-jobs?sourceId=${ownOrder.id}&pageSize=100`,
+    );
     expect(ownList.status, text(ownList)).toBe(200);
-    expect(arrayOf(record(ownList.body).printJobs).map((job) => stringField(record(job), 'id'))).toContain(own.id);
-    await send(adminA, 'post', `/api/c/${companyA}/print-jobs/${stringField(hidden, 'id')}/cancel`, cid('scope-presta-cancel'));
-    await send(adminA, 'post', `/api/c/${companyA}/print-jobs/${stringField(own, 'id')}/cancel`, cid('scope-shopify-cancel'));
+    expect(
+      arrayOf(record(ownList.body).printJobs).map((job) => stringField(record(job), 'id')),
+    ).toContain(own.id);
+    await send(
+      adminA,
+      'post',
+      `/api/c/${companyA}/print-jobs/${stringField(hidden, 'id')}/cancel`,
+      cid('scope-presta-cancel'),
+    );
+    await send(
+      adminA,
+      'post',
+      `/api/c/${companyA}/print-jobs/${stringField(own, 'id')}/cancel`,
+      cid('scope-shopify-cancel'),
+    );
   });
 
   it('offers cancel only for print jobs inside the caller print.submit scope', async () => {
@@ -723,9 +987,21 @@ describe('printing with the mock provider', () => {
       return { prestaId: presta.id, connectionId: connection.id };
     });
     const prestaOrder = await makeOrder(companyA, placed.prestaId, placed.connectionId, GREEK_GIFT);
-    const prestaJob = await requestPrint(adminA, companyA, prestaOrder.id, 'packing_slip', cid('can-presta'));
+    const prestaJob = await requestPrint(
+      adminA,
+      companyA,
+      prestaOrder.id,
+      'packing_slip',
+      cid('can-presta'),
+    );
     const shopifyOrder = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
-    const shopifyJob = await requestPrint(adminA, companyA, shopifyOrder.id, 'packing_slip', cid('can-shopify'));
+    const shopifyJob = await requestPrint(
+      adminA,
+      companyA,
+      shopifyOrder.id,
+      'packing_slip',
+      cid('can-shopify'),
+    );
     const prestaJobId = stringField(prestaJob, 'id');
     const shopifyJobId = stringField(shopifyJob, 'id');
     const viewer = await installWideViewer(`print-scope-${runId}@example.test`);
@@ -741,8 +1017,18 @@ describe('printing with the mock provider', () => {
     expect(boolField(record(shopify.can), 'cancel')).toBe(true);
     expect(boolField(record(presta.can), 'release')).toBe(false);
     expect(boolField(record(shopify.can), 'release')).toBe(false);
-    await send(adminA, 'post', `/api/c/${companyA}/print-jobs/${prestaJobId}/cancel`, cid('can-presta-cancel'));
-    await send(adminA, 'post', `/api/c/${companyA}/print-jobs/${shopifyJobId}/cancel`, cid('can-shopify-cancel'));
+    await send(
+      adminA,
+      'post',
+      `/api/c/${companyA}/print-jobs/${prestaJobId}/cancel`,
+      cid('can-presta-cancel'),
+    );
+    await send(
+      adminA,
+      'post',
+      `/api/c/${companyA}/print-jobs/${shopifyJobId}/cancel`,
+      cid('can-shopify-cancel'),
+    );
   });
 
   it('settles a hanging submit as uncertain within the timeout and records the late result', async () => {
@@ -769,7 +1055,9 @@ describe('printing with the mock provider', () => {
       expect(Date.now() - startedAt).toBeLessThan(timeoutMs + 2_500);
       const mid = await loadPrint(adminA, companyA, stringField(queued, 'id'));
       expect(mid.status).toBe('uncertain');
-      expect(provider.submittedIds.filter((id) => id === queued.id).length - before).toBeLessThanOrEqual(1);
+      expect(
+        provider.submittedIds.filter((id) => id === queued.id).length - before,
+      ).toBeLessThanOrEqual(1);
       expect(provider.submittedIds.filter((id) => id === queued.id).length - before).toBe(1);
       release();
       const end = await waitForPrint(
@@ -800,7 +1088,13 @@ describe('printing with the mock provider', () => {
     const processor = started().get(PrintProcessor);
     for (let index = 0; index < 25; index += 1) {
       const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
-      const queued = await requestPrint(fulfil, companyA, order.id, 'gift_message', cid(`deadlock-${String(index)}`));
+      const queued = await requestPrint(
+        fulfil,
+        companyA,
+        order.id,
+        'gift_message',
+        cid(`deadlock-${String(index)}`),
+      );
       const entered = deferred();
       const recording = deferred();
       let releaseSubmit = (): void => undefined;
@@ -845,7 +1139,9 @@ describe('printing with the mock provider', () => {
         const cancelled = await cancelling;
         expect(cancelled.status, text(cancelled)).toBe(200);
         await draining;
-        expect((await loadPrint(adminA, companyA, stringField(queued, 'id'))).status).toBe('cancelled');
+        expect((await loadPrint(adminA, companyA, stringField(queued, 'id'))).status).toBe(
+          'cancelled',
+        );
         expect(provider.submittedIds.filter((id) => id === queued.id)).toHaveLength(1);
       } finally {
         releaseSubmit();
@@ -870,7 +1166,13 @@ describe('printing with the mock provider', () => {
         return Promise.resolve();
       },
     };
-    const queued = await requestPrint(fulfil, companyA, order.id, 'gift_message', cid('retry-record'));
+    const queued = await requestPrint(
+      fulfil,
+      companyA,
+      order.id,
+      'gift_message',
+      cid('retry-record'),
+    );
     try {
       const finished = await finishPrint(fulfil, companyA, stringField(queued, 'id'));
       expect(provider.submitCount).toBe(before + 1);
@@ -891,7 +1193,13 @@ describe('printing with the mock provider', () => {
       await runner.drainOnce();
       runner.drainDeadlineMs = 1_500;
       const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
-      const queued = await requestPrint(fulfil, companyA, order.id, 'gift_message', cid(`refresh-lock-${String(index)}`));
+      const queued = await requestPrint(
+        fulfil,
+        companyA,
+        order.id,
+        'gift_message',
+        cid(`refresh-lock-${String(index)}`),
+      );
       await runner.drainOnce();
       runner.drainDeadlineMs = 5_000;
       const printId = stringField(queued, 'id');
@@ -978,7 +1286,13 @@ describe('printing with the mock provider', () => {
     await jobs().drainOnce();
     const order = await orderByNumber(adminA, companyA, name);
     const orderId = stringField(order, 'id');
-    const queued = await requestPrint(fulfil, companyA, orderId, 'gift_message', cid('submitting-gift'));
+    const queued = await requestPrint(
+      fulfil,
+      companyA,
+      orderId,
+      'gift_message',
+      cid('submitting-gift'),
+    );
     const processor = started().get(PrintProcessor);
     const held = deferred();
     let release = (): void => undefined;
@@ -994,7 +1308,9 @@ describe('printing with the mock provider', () => {
     try {
       await held.promise;
       const mid = await withCompany(companyA, (tx) =>
-        tx.printJob.findFirstOrThrow({ where: { id: stringField(queued, 'id'), companyId: companyA } }),
+        tx.printJob.findFirstOrThrow({
+          where: { id: stringField(queued, 'id'), companyId: companyA },
+        }),
       );
       expect(mid.status).toBe('submitting');
       const later = cloneOrder(created);
@@ -1040,11 +1356,28 @@ describe('printing with the mock provider', () => {
     });
     const hiddenOrder = await makeOrder(companyA, placed.prestaId, placed.connectionId, GREEK_GIFT);
     const ownOrder = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
-    const hidden = await requestPrint(adminA, companyA, hiddenOrder.id, 'gift_message', cid('confirm-scope-presta'));
-    const own = await requestPrint(adminA, companyA, ownOrder.id, 'gift_message', cid('confirm-scope-shopify'));
+    const hidden = await requestPrint(
+      adminA,
+      companyA,
+      hiddenOrder.id,
+      'gift_message',
+      cid('confirm-scope-presta'),
+    );
+    const own = await requestPrint(
+      adminA,
+      companyA,
+      ownOrder.id,
+      'gift_message',
+      cid('confirm-scope-shopify'),
+    );
     try {
       const viewer = await installConfirmStaff(`confirm-scope-${runId}@example.test`);
-      const listed = await send(viewer, 'get', `/api/c/${companyA}/print-jobs?pageSize=100`, cid('confirm-scope-list'));
+      const listed = await send(
+        viewer,
+        'get',
+        `/api/c/${companyA}/print-jobs?pageSize=100`,
+        cid('confirm-scope-list'),
+      );
       expect(listed.status, text(listed)).toBe(200);
       const hiddenList = await send(
         viewer,
@@ -1059,13 +1392,25 @@ describe('printing with the mock provider', () => {
         `/api/c/${companyA}/print-jobs?sourceId=${ownOrder.id}&pageSize=100`,
       );
       expect(ownList.status, text(ownList)).toBe(200);
-      expect(arrayOf(record(ownList.body).printJobs).map((job) => stringField(record(job), 'id'))).toContain(own.id);
-      expect(arrayOf(record(ownList.body).printJobs).map((job) => stringField(record(job), 'id'))).not.toContain(
-        hidden.id,
-      );
+      expect(
+        arrayOf(record(ownList.body).printJobs).map((job) => stringField(record(job), 'id')),
+      ).toContain(own.id);
+      expect(
+        arrayOf(record(ownList.body).printJobs).map((job) => stringField(record(job), 'id')),
+      ).not.toContain(hidden.id);
     } finally {
-      await send(adminA, 'post', `/api/c/${companyA}/print-jobs/${stringField(hidden, 'id')}/cancel`, cid('confirm-scope-cancel-presta'));
-      await send(adminA, 'post', `/api/c/${companyA}/print-jobs/${stringField(own, 'id')}/cancel`, cid('confirm-scope-cancel-shopify'));
+      await send(
+        adminA,
+        'post',
+        `/api/c/${companyA}/print-jobs/${stringField(hidden, 'id')}/cancel`,
+        cid('confirm-scope-cancel-presta'),
+      );
+      await send(
+        adminA,
+        'post',
+        `/api/c/${companyA}/print-jobs/${stringField(own, 'id')}/cancel`,
+        cid('confirm-scope-cancel-shopify'),
+      );
     }
   });
 
@@ -1107,7 +1452,11 @@ describe('printing with the mock provider', () => {
     );
     await withCompany(companyA, (tx) =>
       tx.printerMapping.deleteMany({
-        where: { companyId: companyA, locationId: printer.locationId, documentType: 'shipping_label' },
+        where: {
+          companyId: companyA,
+          locationId: printer.locationId,
+          documentType: 'shipping_label',
+        },
       }),
     );
     const body = {
@@ -1125,7 +1474,11 @@ describe('printing with the mock provider', () => {
     expect(second.status, text(second)).toBe(200);
     const count = await withCompany(companyA, (tx) =>
       tx.printerMapping.count({
-        where: { companyId: companyA, locationId: printer.locationId, documentType: 'shipping_label' },
+        where: {
+          companyId: companyA,
+          locationId: printer.locationId,
+          documentType: 'shipping_label',
+        },
       }),
     );
     expect(count).toBe(1);
@@ -1134,7 +1487,9 @@ describe('printing with the mock provider', () => {
   it('lists locations for this company only', async () => {
     const listed = await send(adminA, 'get', `/api/c/${companyA}/locations`);
     expect(listed.status, text(listed)).toBe(200);
-    const names = arrayOf(record(listed.body).locations).map((row) => stringField(record(row), 'name'));
+    const names = arrayOf(record(listed.body).locations).map((row) =>
+      stringField(record(row), 'name'),
+    );
     expect(names).toContain('Demo Shop – Nicosia');
     expect(names).not.toContain('Demo Shop – Larnaca');
     const ids = arrayOf(record(listed.body).locations).map((row) => stringField(record(row), 'id'));
@@ -1143,7 +1498,9 @@ describe('printing with the mock provider', () => {
     expect(foreign.status, text(foreign)).toBe(404);
     const own = await send(adminB, 'get', `/api/c/${companyB}/locations`);
     expect(own.status, text(own)).toBe(200);
-    const ownNames = arrayOf(record(own.body).locations).map((row) => stringField(record(row), 'name'));
+    const ownNames = arrayOf(record(own.body).locations).map((row) =>
+      stringField(record(row), 'name'),
+    );
     expect(ownNames).toContain('Demo Shop – Larnaca');
     expect(ownNames).not.toContain('Demo Shop – Nicosia');
   });
@@ -1159,7 +1516,9 @@ describe('printing with the mock provider', () => {
     expect(denied.status, text(denied)).toBe(403);
     const other = await send(adminB, 'get', `/api/c/${companyB}/printer-mappings`);
     expect(other.status, text(other)).toBe(200);
-    const otherPrinters = arrayOf(record(other.body).mappings).map((row) => stringField(record(row), 'printerId'));
+    const otherPrinters = arrayOf(record(other.body).mappings).map((row) =>
+      stringField(record(row), 'printerId'),
+    );
     expect(otherPrinters).not.toContain(onlineA);
     const foreign = await send(adminB, 'get', `/api/c/${companyA}/printer-mappings`);
     expect(foreign.status, text(foreign)).toBe(404);
@@ -1177,7 +1536,9 @@ describe('printing with the mock provider', () => {
     expect(record(record(response.body).error).code).toBe('gift_message_needs_review');
     expect(provider.submitCount).toBe(before);
     const audited = await auditEvents(app, cid('emoji'), companyA);
-    const failure = audited.find((event) => event.action === 'print_job.requested' && event.outcome === 'failure');
+    const failure = audited.find(
+      (event) => event.action === 'print_job.requested' && event.outcome === 'failure',
+    );
     expect(failure).toBeTruthy();
     const details = record(failure?.details);
     expect(details.reason).toBe('gift_message_needs_review');
@@ -1189,48 +1550,100 @@ describe('printing with the mock provider', () => {
   it('isolates print resources, documents, files, templates, switches and jobs', async () => {
     const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
     const queued = await requestPrint(fulfil, companyA, order.id, 'gift_message', cid('iso'));
-    const preview = await send(adminB, 'get', `/api/c/${companyA}/orders/${order.id}/documents/packing-slip.pdf`, cid('iso-slip'));
+    const preview = await send(
+      adminB,
+      'get',
+      `/api/c/${companyA}/orders/${order.id}/documents/packing-slip.pdf`,
+      cid('iso-slip'),
+    );
     await expectDenied(preview, 404, cid('iso-slip'), companyA, 'not_a_member');
-    const gift = await send(adminB, 'get', `/api/c/${companyA}/orders/${order.id}/documents/gift-message.pdf`, cid('iso-gift'));
+    const gift = await send(
+      adminB,
+      'get',
+      `/api/c/${companyA}/orders/${order.id}/documents/gift-message.pdf`,
+      cid('iso-gift'),
+    );
     await expectDenied(gift, 404, cid('iso-gift'), companyA, 'not_a_member');
-    const templates = await send(adminB, 'get', `/api/c/${companyA}/gift-message-templates`, cid('iso-templates'));
+    const templates = await send(
+      adminB,
+      'get',
+      `/api/c/${companyA}/gift-message-templates`,
+      cid('iso-templates'),
+    );
     await expectDenied(templates, 404, cid('iso-templates'), companyA, 'not_a_member');
     const fileId = stringField(queued, 'fileId');
     const file = await send(adminB, 'get', `/api/c/${companyB}/files/${fileId}`, cid('iso-file'));
     await expectDenied(file, 404, cid('iso-file'), companyB, 'out_of_scope');
-    const crossRequest = await send(adminB, 'post', `/api/c/${companyA}/print-requests`, cid('iso-request'), {
-      documentType: 'gift_message',
-      sourceType: 'order',
-      sourceId: order.id,
-    });
+    const crossRequest = await send(
+      adminB,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('iso-request'),
+      {
+        documentType: 'gift_message',
+        sourceType: 'order',
+        sourceId: order.id,
+      },
+    );
     await expectDenied(crossRequest, 404, cid('iso-request'), companyA, 'not_a_member');
-    const crossJob = await send(adminB, 'get', `/api/c/${companyB}/print-jobs/${String(queued.id)}`, cid('iso-job'));
+    const crossJob = await send(
+      adminB,
+      'get',
+      `/api/c/${companyB}/print-jobs/${String(queued.id)}`,
+      cid('iso-job'),
+    );
     await expectDenied(crossJob, 404, cid('iso-job'), companyB, 'out_of_scope');
     const listed = await send(adminB, 'get', `/api/c/${companyB}/print-jobs?pageSize=100`);
     expect(listed.status, text(listed)).toBe(200);
-    expect(arrayOf(record(listed.body).printJobs).map((job) => stringField(record(job), 'id'))).not.toContain(queued.id);
+    expect(
+      arrayOf(record(listed.body).printJobs).map((job) => stringField(record(job), 'id')),
+    ).not.toContain(queued.id);
     const printers = await send(adminB, 'get', `/api/c/${companyB}/printers`);
     expect(printers.status, text(printers)).toBe(200);
-    expect(arrayOf(record(printers.body).printers).map((row) => stringField(record(row), 'id'))).not.toContain(onlineA);
-    const mapping = await send(adminB, 'put', `/api/c/${companyB}/printer-mappings`, cid('iso-map'), {
-      locationId: locationB,
-      documentType: 'gift_message',
-      printerId: onlineA,
-      paperSize: 'A6',
-    });
+    expect(
+      arrayOf(record(printers.body).printers).map((row) => stringField(record(row), 'id')),
+    ).not.toContain(onlineA);
+    const mapping = await send(
+      adminB,
+      'put',
+      `/api/c/${companyB}/printer-mappings`,
+      cid('iso-map'),
+      {
+        locationId: locationB,
+        documentType: 'gift_message',
+        printerId: onlineA,
+        paperSize: 'A6',
+      },
+    );
     await expectDenied(mapping, 404, cid('iso-map'), companyB, 'not_found');
-    const switches = await send(adminB, 'get', `/api/c/${companyA}/automation/switches`, cid('iso-switches'));
+    const switches = await send(
+      adminB,
+      'get',
+      `/api/c/${companyA}/automation/switches`,
+      cid('iso-switches'),
+    );
     await expectDenied(switches, 404, cid('iso-switches'), companyA, 'not_a_member');
     const jobsA = await send(adminB, 'get', `/api/c/${companyA}/automation/jobs`, cid('iso-jobs'));
     await expectDenied(jobsA, 404, cid('iso-jobs'), companyA, 'not_a_member');
     const jobsB = await send(adminB, 'get', `/api/c/${companyB}/automation/jobs?pageSize=100`);
     expect(jobsB.status, text(jobsB)).toBe(200);
-    expect(arrayOf(record(jobsB.body).jobs).map((job) => stringField(record(job), 'id'))).not.toContain(queued.queueJobId);
+    expect(
+      arrayOf(record(jobsB.body).jobs).map((job) => stringField(record(job), 'id')),
+    ).not.toContain(queued.queueJobId);
     const badStatus = await send(fulfil, 'get', `/api/c/${companyA}/print-jobs?status=nope`);
     expect(badStatus.status, text(badStatus)).toBe(400);
-    const badSource = await send(fulfil, 'get', `/api/c/${companyA}/print-jobs?sourceId=not-a-uuid`);
+    const badSource = await send(
+      fulfil,
+      'get',
+      `/api/c/${companyA}/print-jobs?sourceId=not-a-uuid`,
+    );
     expect(badSource.status, text(badSource)).toBe(400);
-    const badId = await send(fulfil, 'get', `/api/c/${companyA}/print-jobs/not-a-uuid`, cid('bad-id'));
+    const badId = await send(
+      fulfil,
+      'get',
+      `/api/c/${companyA}/print-jobs/not-a-uuid`,
+      cid('bad-id'),
+    );
     await expectDenied(badId, 404, cid('bad-id'), companyA, 'out_of_scope');
   });
 
@@ -1261,10 +1674,25 @@ describe('printing with the mock provider', () => {
           taxTotal: '0.00',
           total: '1.00',
           giftMessage,
-          recipient: { firstName: 'Μαρία', lastName: 'Παπαδοπούλου', address1: '1 Demo Street', city: 'Λευκωσία', zip: '1000', countryCodeV2: 'CY' },
+          recipient: {
+            firstName: 'Μαρία',
+            lastName: 'Παπαδοπούλου',
+            address1: '1 Demo Street',
+            city: 'Λευκωσία',
+            zip: '1000',
+            countryCodeV2: 'CY',
+          },
           version: 1,
           lines: {
-            create: [{ sku: 'NUTS', title: 'Mixed nuts', quantity: '1.0000', unitPrice: '1.0000', total: '1.00' }],
+            create: [
+              {
+                sku: 'NUTS',
+                title: 'Mixed nuts',
+                quantity: '1.0000',
+                unitPrice: '1.0000',
+                total: '1.00',
+              },
+            ],
           },
         },
         select: { id: true },
@@ -1420,10 +1848,16 @@ describe('printing with the mock provider', () => {
   }
 
   async function setPrinting(enabled: boolean): Promise<void> {
-    const response = await send(adminA, 'put', `/api/c/${companyA}/automation/switches/printing`, cid(`switch-${String(enabled)}`), {
-      enabled,
-      reason: `c2b2 printing ${String(enabled)} ${runId}`,
-    });
+    const response = await send(
+      adminA,
+      'put',
+      `/api/c/${companyA}/automation/switches/printing`,
+      cid(`switch-${String(enabled)}`),
+      {
+        enabled,
+        reason: `c2b2 printing ${String(enabled)} ${runId}`,
+      },
+    );
     expect(response.status, text(response)).toBe(200);
   }
 
@@ -1431,10 +1865,16 @@ describe('printing with the mock provider', () => {
     if (!app) {
       return;
     }
-    const response = await send(adminA, 'put', `/api/c/${companyA}/automation/switches/printing`, cid('switch-restore'), {
-      enabled: true,
-      reason: `c2b2 restore ${runId}`,
-    });
+    const response = await send(
+      adminA,
+      'put',
+      `/api/c/${companyA}/automation/switches/printing`,
+      cid('switch-restore'),
+      {
+        enabled: true,
+        reason: `c2b2 restore ${runId}`,
+      },
+    );
     expect(response.status, text(response)).toBe(200);
   }
 
@@ -1442,13 +1882,18 @@ describe('printing with the mock provider', () => {
     if (!app || !fulfilMembershipId) {
       return;
     }
-    await started().get(PrismaService).client.membership.update({
-      where: { id: fulfilMembershipId },
-      data: { status: 'active', suspendedAt: null },
-    });
+    await started()
+      .get(PrismaService)
+      .client.membership.update({
+        where: { id: fulfilMembershipId },
+        data: { status: 'active', suspendedAt: null },
+      });
   }
 
-  function withCompany<T>(companyId: string, fn: (tx: TenantTransaction) => Promise<T>): Promise<T> {
+  function withCompany<T>(
+    companyId: string,
+    fn: (tx: TenantTransaction) => Promise<T>,
+  ): Promise<T> {
     return new TenantDb(started().get(PrismaService).client).run(
       { companyId, actor: adminUserId || 'printing-test', correlationId: `c2b2-db-${runId}` },
       fn,
@@ -1476,17 +1921,27 @@ async function requestPrint(
   correlationId: string,
   extra?: { printerId?: string },
 ): Promise<PrintView> {
-  const response = await send(session, 'post', `/api/c/${companyId}/print-requests`, correlationId, {
-    documentType,
-    sourceType: 'order',
-    sourceId: orderId,
-    ...(extra?.printerId ? { printerId: extra.printerId } : {}),
-  });
+  const response = await send(
+    session,
+    'post',
+    `/api/c/${companyId}/print-requests`,
+    correlationId,
+    {
+      documentType,
+      sourceType: 'order',
+      sourceId: orderId,
+      ...(extra?.printerId ? { printerId: extra.printerId } : {}),
+    },
+  );
   expect(response.status, text(response)).toBe(200);
   return record(record(response.body).printJob);
 }
 
-async function finishPrint(session: Session, companyId: string, printJobId: string): Promise<PrintView> {
+async function finishPrint(
+  session: Session,
+  companyId: string,
+  printJobId: string,
+): Promise<PrintView> {
   await jobs().drainOnce();
   await started().get(PrismaService).client.$executeRaw`
     UPDATE job
@@ -1529,7 +1984,13 @@ async function login(application: INestApplication, email: string): Promise<Sess
   return { agent, xsrf: cookieValue(cookieHeader(response, 'XSRF-TOKEN'), 'XSRF-TOKEN') };
 }
 
-function send(session: Session, method: Method, url: string, correlationId?: string, payload?: unknown) {
+function send(
+  session: Session,
+  method: Method,
+  url: string,
+  correlationId?: string,
+  payload?: unknown,
+) {
   const call = session.agent[method](url).set('X-XSRF-TOKEN', session.xsrf);
   if (correlationId) {
     call.set('X-Correlation-Id', correlationId);
@@ -1540,12 +2001,22 @@ function send(session: Session, method: Method, url: string, correlationId?: str
   return call;
 }
 
-async function createToken(session: Session, companyId: string, label: string): Promise<{ token: string }> {
-  const response = await send(session, 'post', `/api/c/${companyId}/service-identities`, cid(`token-${label}`), {
-    name: `print-${label}-${runId}`,
-    purpose: 'store events',
-    permissions: ['store.events.ingest'],
-  });
+async function createToken(
+  session: Session,
+  companyId: string,
+  label: string,
+): Promise<{ token: string }> {
+  const response = await send(
+    session,
+    'post',
+    `/api/c/${companyId}/service-identities`,
+    cid(`token-${label}`),
+    {
+      name: `print-${label}-${runId}`,
+      purpose: 'store events',
+      permissions: ['store.events.ingest'],
+    },
+  );
   expect(response.status, text(response)).toBe(200);
   return { token: stringField(record(response.body), 'token') };
 }
@@ -1570,19 +2041,37 @@ async function postEvent(
   return { status: response.status, response };
 }
 
-async function orderByNumber(session: Session, companyId: string, externalNumber: string): Promise<Record<string, unknown>> {
-  const listed = await send(session, 'get', `/api/c/${companyId}/orders?q=${encodeURIComponent(externalNumber)}&pageSize=100`);
+async function orderByNumber(
+  session: Session,
+  companyId: string,
+  externalNumber: string,
+): Promise<Record<string, unknown>> {
+  const listed = await send(
+    session,
+    'get',
+    `/api/c/${companyId}/orders?q=${encodeURIComponent(externalNumber)}&pageSize=100`,
+  );
   expect(listed.status, text(listed)).toBe(200);
-  const found = arrayOf(record(listed.body).orders).map((row) => record(row)).find((order) => order.externalNumber === externalNumber);
+  const found = arrayOf(record(listed.body).orders)
+    .map((row) => record(row))
+    .find((order) => order.externalNumber === externalNumber);
   if (!found) {
     throw new Error(`order ${externalNumber} was not listed`);
   }
-  const detail = await send(session, 'get', `/api/c/${companyId}/orders/${stringField(found, 'id')}`);
+  const detail = await send(
+    session,
+    'get',
+    `/api/c/${companyId}/orders/${stringField(found, 'id')}`,
+  );
   expect(detail.status, text(detail)).toBe(200);
   return record(record(detail.body).order);
 }
 
-async function auditEvents(application: INestApplication | undefined, correlationId: string, companyId: string) {
+async function auditEvents(
+  application: INestApplication | undefined,
+  correlationId: string,
+  companyId: string,
+) {
   if (!application) {
     throw new Error('the API was not started');
   }
@@ -1619,7 +2108,9 @@ function expectOutcome(
   expect(
     events.some(
       (event) =>
-        event.action === action && event.outcome === outcome && event.correlationId === correlationId,
+        event.action === action &&
+        event.outcome === outcome &&
+        event.correlationId === correlationId,
     ),
   ).toBe(true);
 }
@@ -1738,10 +2229,10 @@ async function bootApp(): Promise<INestApplication> {
   });
   application.useLogger(application.get(Logger));
   configureHttp(application);
-    await application.init();
-    const server = application.getHttpServer() as { setMaxListeners(count: number): void };
-    server.setMaxListeners(0);
-    return application;
+  await application.init();
+  const server = application.getHttpServer() as { setMaxListeners(count: number): void };
+  server.setMaxListeners(0);
+  return application;
 }
 
 function started(): INestApplication {

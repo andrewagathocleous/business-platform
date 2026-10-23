@@ -34,6 +34,8 @@ function config(appEnv: AppConfig['appEnv']): AppConfig {
     trustProxyHops: 0,
     storageRoot: '/tmp/bp-storage',
     mockPrintRoot: '/tmp/bp-mock-print',
+    outboundAllowLoopbackForTests: false,
+    printNodeBaseUrl: null,
   };
 }
 
@@ -84,7 +86,11 @@ describe('throttler options', () => {
   });
 
   it('runs the limiters in test when the test switch is on', () => {
-    const options = buildThrottlerOptions({ ...config('test'), throttleEnabledInTest: true, throttleAuthLimit: 2 });
+    const options = buildThrottlerOptions({
+      ...config('test'),
+      throttleEnabledInTest: true,
+      throttleAuthLimit: 2,
+    });
     if (Array.isArray(options)) {
       throw new Error('expected throttler options object');
     }

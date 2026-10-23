@@ -74,6 +74,8 @@ function config(): AppConfig {
     trustProxyHops: 0,
     storageRoot: '/tmp/bp-storage',
     mockPrintRoot: '/tmp/bp-mock-print',
+    outboundAllowLoopbackForTests: false,
+    printNodeBaseUrl: null,
   };
 }
 
@@ -91,10 +93,16 @@ async function boot(
       { provide: AuditService, useValue: { recordDenial } },
       { provide: SessionService, useValue: { fromRequest } },
       { provide: APP_CONFIG, useValue: config() },
-      { provide: ServiceIdentityAuthenticator, useValue: { authenticate: vi.fn(), touch: vi.fn() } },
+      {
+        provide: ServiceIdentityAuthenticator,
+        useValue: { authenticate: vi.fn(), touch: vi.fn() },
+      },
       {
         provide: CompanyAccessService,
-        useValue: { enforce: vi.fn(() => Promise.resolve()), enforcePlatformOwner: vi.fn(() => Promise.resolve()) },
+        useValue: {
+          enforce: vi.fn(() => Promise.resolve()),
+          enforcePlatformOwner: vi.fn(() => Promise.resolve()),
+        },
       },
       { provide: PrismaService, useValue: { client: { company: { findUnique: vi.fn() } } } },
     ],
@@ -114,8 +122,8 @@ function httpServer(application: INestApplication): App {
 describe('AuthorizationGuard', () => {
   it('does not treat a @RequirePermission method on a @Public class as public', async () => {
     const recordDenial = vi.fn(() => Promise.resolve());
-    const fromRequest = vi.fn(
-      (): Promise<StaffAuth> => Promise.resolve({ ok: false, reason: 'missing', userId: null, sessionId: null }),
+    const fromRequest = vi.fn((): Promise<StaffAuth> =>
+      Promise.resolve({ ok: false, reason: 'missing', userId: null, sessionId: null }),
     );
     const app = await boot(MixedController, fromRequest, recordDenial);
     try {
@@ -139,12 +147,14 @@ describe('AuthorizationGuard', () => {
       denials.push(input);
       return Promise.resolve();
     });
-    const fromRequest = vi.fn(
-      (): Promise<StaffAuth> => Promise.reject(new Error('session must not be accepted when a bearer token is present')),
+    const fromRequest = vi.fn((): Promise<StaffAuth> =>
+      Promise.reject(new Error('session must not be accepted when a bearer token is present')),
     );
     const app = await boot(StaffController, fromRequest, recordDenial);
     try {
-      const response = await request(httpServer(app)).get('/staff').set('Authorization', 'Bearer bps_secret');
+      const response = await request(httpServer(app))
+        .get('/staff')
+        .set('Authorization', 'Bearer bps_secret');
       expect(response.status).toBe(401);
       expect(response.body).not.toEqual({ ok: true });
       expect(fromRequest).not.toHaveBeenCalled();
@@ -161,13 +171,15 @@ describe('AuthorizationGuard', () => {
       denials.push(input);
       return Promise.resolve();
     });
-    const fromRequest = vi.fn(
-      (): Promise<StaffAuth> => Promise.reject(new Error('session cookie must not authenticate an automation route')),
+    const fromRequest = vi.fn((): Promise<StaffAuth> =>
+      Promise.reject(new Error('session cookie must not authenticate an automation route')),
     );
     const app = await boot(AutomationController, fromRequest, recordDenial, true);
     try {
       const url = '/api/automation/v1/c/11111111-1111-4111-8111-111111111111/ping';
-      const withoutXsrf = await request(httpServer(app)).get(url).set('Cookie', 'bp_session=staff-cookie');
+      const withoutXsrf = await request(httpServer(app))
+        .get(url)
+        .set('Cookie', 'bp_session=staff-cookie');
       const withXsrf = await request(httpServer(app))
         .get(url)
         .set('Cookie', 'bp_session=staff-cookie')

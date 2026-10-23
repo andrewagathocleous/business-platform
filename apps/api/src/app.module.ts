@@ -13,6 +13,7 @@ import { DocumentsModule } from './documents/documents.module';
 import { HealthModule } from './health/health.module';
 import { InvoicesModule } from './invoices/invoices.module';
 import { OrdersModule } from './orders/orders.module';
+import { OutboundModule } from './outbound/outbound.module';
 import { VaultModule } from './vault/vault.module';
 import { ApiExceptionFilter } from './http/exception.filter';
 import { IdentityModule } from './identity/identity.module';
@@ -37,6 +38,7 @@ import { buildThrottlerOptions } from './throttler/throttler';
     CatalogModule,
     InvoicesModule,
     OrdersModule,
+    OutboundModule,
     VaultModule,
     HealthModule,
     ThrottlerModule.forRootAsync({

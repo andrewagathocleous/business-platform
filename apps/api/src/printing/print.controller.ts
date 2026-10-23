@@ -1,4 +1,14 @@
-import { BadRequestException, Controller, Get, HttpCode, Inject, Param, Post, Put, Req } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  HttpCode,
+  Inject,
+  Param,
+  Post,
+  Put,
+  Req,
+} from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { z } from 'zod';
@@ -56,6 +66,7 @@ const confirmBody = z
 const discoverBody = z
   .object({
     locationId: z.uuid().optional(),
+    provider: z.enum(['mock', 'printnode']).optional(),
   })
   .strict();
 
@@ -91,7 +102,7 @@ export class PrintController {
   @RequirePermission('print.submit', { anyOf: ['print.reprint'], scope: printRequestScope })
   @ApiOperation({
     summary:
-      'Queue a packing slip or gift message. Renders now. A second first print is 409 already_printed. provider is mock.',
+      'Queue a packing slip or gift message. Renders now. A second first print is 409 already_printed. The provider follows the mapped printer (mock in development and test only, otherwise printnode).',
   })
   async request(@Req() req: Request, @Param('companyId') companyId: string) {
     const parsed = requestBody.safeParse(unknownBody(req));
@@ -131,21 +142,38 @@ export class PrintController {
   @HttpCode(200)
   @idParam
   @RequirePermission('print.confirm', { scope: printJobScope })
-  @ApiOperation({ summary: 'Staff confirm printed or not_printed. not_printed allows another first print.' })
-  async confirm(@Req() req: Request, @Param('companyId') companyId: string, @Param('id') id: string) {
+  @ApiOperation({
+    summary: 'Staff confirm printed or not_printed. not_printed allows another first print.',
+  })
+  async confirm(
+    @Req() req: Request,
+    @Param('companyId') companyId: string,
+    @Param('id') id: string,
+  ) {
     const parsed = confirmBody.safeParse(unknownBody(req));
     if (!parsed.success) {
       throw new BadRequestException(issueMessage(parsed.error));
     }
-    return this.printing.confirm(requireContext(req, companyId), id, parsed.data.outcome, requestMeta(req));
+    return this.printing.confirm(
+      requireContext(req, companyId),
+      id,
+      parsed.data.outcome,
+      requestMeta(req),
+    );
   }
 
   @Post('print-jobs/:id/release')
   @HttpCode(200)
   @idParam
   @RequirePermission('automation.replay', { scope: printJobScope })
-  @ApiOperation({ summary: 'Release a held print job back to the queue after printing is enabled.' })
-  async release(@Req() req: Request, @Param('companyId') companyId: string, @Param('id') id: string) {
+  @ApiOperation({
+    summary: 'Release a held print job back to the queue after printing is enabled.',
+  })
+  async release(
+    @Req() req: Request,
+    @Param('companyId') companyId: string,
+    @Param('id') id: string,
+  ) {
     return this.printing.release(requireContext(req, companyId), id, requestMeta(req));
   }
 
@@ -156,13 +184,19 @@ export class PrintController {
   @ApiOperation({
     summary: 'Cancel a queued, held or uncertain job. 409 once it is submitting or later.',
   })
-  async cancel(@Req() req: Request, @Param('companyId') companyId: string, @Param('id') id: string) {
+  async cancel(
+    @Req() req: Request,
+    @Param('companyId') companyId: string,
+    @Param('id') id: string,
+  ) {
     return this.printing.cancel(requireContext(req, companyId), id, requestMeta(req));
   }
 
   @Get('printers')
   @RequirePermission('print.submit', { anyOf: ['printer.manage'], scope: printerListScope })
-  @ApiOperation({ summary: 'Printers visible to the caller. Mock printers are labelled simulated.' })
+  @ApiOperation({
+    summary: 'Printers visible to the caller. Mock printers are labelled simulated.',
+  })
   async printers(@Req() req: Request, @Param('companyId') companyId: string) {
     return this.printing.printers(requireContext(req, companyId), requestMeta(req));
   }
@@ -170,14 +204,22 @@ export class PrintController {
   @Post('printers/discover')
   @HttpCode(200)
   @RequirePermission('printer.manage')
-  @ApiOperation({ summary: 'Upsert the mock printer catalogue. Simulated — no physical printing.' })
+  @ApiOperation({
+    summary:
+      'Upsert printers from the selected provider. PrintNode when a key is stored, otherwise the simulated mock catalogue. Simulated — no physical printing.',
+  })
   async discover(@Req() req: Request, @Param('companyId') companyId: string) {
     const body = unknownBody(req);
     const parsed = discoverBody.safeParse(body === undefined || body === null ? {} : body);
     if (!parsed.success) {
       throw new BadRequestException(issueMessage(parsed.error));
     }
-    return this.printing.discover(requireContext(req, companyId), parsed.data.locationId, requestMeta(req));
+    return this.printing.discover(
+      requireContext(req, companyId),
+      parsed.data.locationId,
+      parsed.data.provider,
+      requestMeta(req),
+    );
   }
 
   @Get('printer-mappings')
@@ -189,7 +231,9 @@ export class PrintController {
 
   @Put('printer-mappings')
   @RequirePermission('printer.manage')
-  @ApiOperation({ summary: 'Map a document type at a location to a printer, paper size and copies.' })
+  @ApiOperation({
+    summary: 'Map a document type at a location to a printer, paper size and copies.',
+  })
   async mapping(@Req() req: Request, @Param('companyId') companyId: string) {
     const parsed = mappingBody.safeParse(unknownBody(req));
     if (!parsed.success) {

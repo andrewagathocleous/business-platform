@@ -656,7 +656,7 @@
             "description": ""
           }
         },
-        "summary": "Queue a packing slip or gift message. Renders now. A second first print is 409 already_printed. provider is mock.",
+        "summary": "Queue a packing slip or gift message. Renders now. A second first print is 409 already_printed. The provider follows the mapped printer (mock in development and test only, otherwise printnode).",
         "tags": [
           "printing"
         ]
@@ -867,7 +867,7 @@
             "description": ""
           }
         },
-        "summary": "Upsert the mock printer catalogue. Simulated — no physical printing.",
+        "summary": "Upsert printers from the selected provider. PrintNode when a key is stored, otherwise the simulated mock catalogue. Simulated — no physical printing.",
         "tags": [
           "printing"
         ]
