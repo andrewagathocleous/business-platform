@@ -59,4 +59,59 @@ describe('dockerignore', () => {
     expect(dockerignoreExcludes(reopened, 'apps/api/var/service-token.json')).toBe(false);
     expect(dockerignoreExcludes(reopened, 'apps/api/var/other.json')).toBe(true);
   });
+
+  it('supports character classes and escapes like filepath.Match', () => {
+    expect(dockerignoreExcludes('file[0-9].txt', 'file5.txt')).toBe(true);
+    expect(dockerignoreExcludes('file[0-9].txt', 'dir/file5.txt')).toBe(false);
+    expect(dockerignoreExcludes('file[0-9].txt', 'filex.txt')).toBe(false);
+
+    expect(dockerignoreExcludes('[abc].env', 'a.env')).toBe(true);
+    expect(dockerignoreExcludes('[abc].env', 'd.env')).toBe(false);
+    expect(dockerignoreExcludes('[^abc].env', 'd.env')).toBe(true);
+    expect(dockerignoreExcludes('[^abc].env', 'a.env')).toBe(false);
+
+    expect(dockerignoreExcludes('[!a]', '!')).toBe(true);
+    expect(dockerignoreExcludes('[!a]', 'a')).toBe(true);
+    expect(dockerignoreExcludes('[!a]', 'b')).toBe(false);
+
+    expect(dockerignoreExcludes('[\\]]x', ']x')).toBe(true);
+    expect(dockerignoreExcludes('\\[x\\]', '[x]')).toBe(true);
+    expect(dockerignoreExcludes('\\[x\\]', 'x')).toBe(false);
+    expect(dockerignoreExcludes('a\\*', 'a*')).toBe(true);
+    expect(dockerignoreExcludes('a\\*', 'ab')).toBe(false);
+
+    expect(dockerignoreExcludes('\\d', 'd')).toBe(true);
+    expect(dockerignoreExcludes('\\d', '1')).toBe(false);
+
+    expect(dockerignoreExcludes('**/.env.[a-z]*', 'apps/api/.env.production')).toBe(true);
+    expect(
+      dockerignoreExcludes('**/.env.[a-z]*\n!**/.env.[e]xample\n', 'apps/api/.env.example'),
+    ).toBe(false);
+
+    expect(dockerignoreExcludes('x^y', 'x^y')).toBe(true);
+
+    expect(dockerignoreExcludes('[😀]', '😀')).toBe(true);
+    expect(dockerignoreExcludes('[😀]', '😁')).toBe(false);
+    expect(dockerignoreExcludes('[😀-🙏]', '😁')).toBe(true);
+    expect(dockerignoreExcludes('[😀-🙏]', 'a')).toBe(false);
+    expect(dockerignoreExcludes('?.txt', '😀.txt')).toBe(true);
+    expect(dockerignoreExcludes('[^a]', '😀')).toBe(true);
+
+    for (const pattern of [
+      '[',
+      '[]',
+      '[^]',
+      '[a',
+      '[a-]',
+      '[-a]',
+      '[]a]',
+      '[z-a]',
+      'a\\',
+      '[a\\',
+    ]) {
+      expect(() => dockerignoreExcludes(pattern, 'a')).toThrow(
+        `invalid .dockerignore pattern: ${pattern}`,
+      );
+    }
+  });
 });

@@ -8,12 +8,14 @@ import {
   CSP_BINDING,
   ReportCollector,
   cspInitScript,
+  expectedConsoleError,
   invoiceEditorLoaded,
   invoicesLoaded,
   orderDetailLoaded,
   ordersLoaded,
 } from './csp-watch';
 import { repositoryRoot } from './root';
+import { E4_TOTALS, type InvoiceTotals } from './state';
 
 describe('csp reports', () => {
   it('delivers a violation to Node and keeps it when the document is replaced', () => {
@@ -37,6 +39,72 @@ describe('csp reports', () => {
     collector.add('console', 'late error');
     collector.add('pageerror', 'render failed');
     expect(collector.failures).toEqual(['console: late error', 'pageerror: render failed']);
+  });
+});
+
+describe('expected console error', () => {
+  const origin = 'https://localhost:8443';
+  const me = `${origin}/api/me`;
+  const text401 = 'Failed to load resource: the server responded with a status of 401 ()';
+
+  it('allows the pre-login session probe 401', () => {
+    expect(expectedConsoleError({ text: text401, url: me, signedIn: false, origin })).toBe(true);
+  });
+
+  it('rejects the same 401 after sign-in', () => {
+    expect(expectedConsoleError({ text: text401, url: me, signedIn: true, origin })).toBe(false);
+  });
+
+  it('rejects a query string on /api/me', () => {
+    expect(
+      expectedConsoleError({
+        text: text401,
+        url: `${origin}/api/me?x=1`,
+        signedIn: false,
+        origin,
+      }),
+    ).toBe(false);
+  });
+
+  it('rejects a 401 on another api path', () => {
+    expect(
+      expectedConsoleError({
+        text: text401,
+        url: `${origin}/api/auth/providers`,
+        signedIn: false,
+        origin,
+      }),
+    ).toBe(false);
+  });
+
+  it('rejects other status codes on /api/me', () => {
+    expect(
+      expectedConsoleError({
+        text: 'Failed to load resource: the server responded with a status of 403 ()',
+        url: me,
+        signedIn: false,
+        origin,
+      }),
+    ).toBe(false);
+    expect(
+      expectedConsoleError({
+        text: 'Failed to load resource: the server responded with a status of 500 ()',
+        url: me,
+        signedIn: false,
+        origin,
+      }),
+    ).toBe(false);
+  });
+
+  it('rejects a csp-style console message on /api/me', () => {
+    expect(
+      expectedConsoleError({
+        text: 'Refused to load the script',
+        url: me,
+        signedIn: false,
+        origin,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -76,11 +144,29 @@ describe('loaded screens', () => {
     expect(invoicesLoaded({ rows: 0, empty: false })).toBe(false);
     expect(invoicesLoaded({ rows: 0, empty: true })).toBe(true);
     expect(invoicesLoaded({ rows: 2, empty: false })).toBe(true);
-    expect(invoiceEditorLoaded({ totalsText: '', catalogOptions: 3 })).toBe(false);
+    expect(invoiceEditorLoaded({ totals: E4_TOTALS, expected: E4_TOTALS, catalogOptions: 1 })).toBe(
+      true,
+    );
+    expect(invoiceEditorLoaded({ totals: E4_TOTALS, expected: E4_TOTALS, catalogOptions: 0 })).toBe(
+      false,
+    );
     expect(
-      invoiceEditorLoaded({ totalsText: 'Totals not calculated yet', catalogOptions: 0 }),
+      invoiceEditorLoaded({
+        totals: { ...E4_TOTALS, total: '20.24' },
+        expected: E4_TOTALS,
+        catalogOptions: 1,
+      }),
     ).toBe(false);
-    expect(invoiceEditorLoaded({ totalsText: '17.00', catalogOptions: 1 })).toBe(true);
+    const pending: InvoiceTotals = {
+      subtotal: '',
+      discountTotal: '',
+      netTotal: '',
+      taxTotal: '',
+      total: '',
+    };
+    expect(invoiceEditorLoaded({ totals: pending, expected: E4_TOTALS, catalogOptions: 1 })).toBe(
+      false,
+    );
   });
 });
 

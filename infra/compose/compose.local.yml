@@ -16,7 +16,7 @@
 # | postgres        | 512m   | 0.75 |
 # | n8n             | 512m   | 0.50 |
 # | n8n-runner      | 128m   | 0.25 |
-# | seed            | 256m   | 0.25 |
+# | seed            | 512m   | 0.25 |
 # | import-fixtures | 384m   | 0.50 |
 #
 # N8N_SECURE_COOKIE=false is local only. The editor is plain HTTP on loopback,
@@ -146,7 +146,7 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: 256M
+          memory: 512M
     restart: "no"
 
   import-fixtures:
@@ -169,8 +169,6 @@ services:
     networks:
       - internal
     depends_on:
-      seed:
-        condition: service_completed_successfully
       api:
         condition: service_healthy
     deploy:

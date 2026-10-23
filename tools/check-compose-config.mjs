@@ -178,9 +178,17 @@ function localFlagFailures(config) {
   if (!isRecord(services.seed) || !isRecord(services['import-fixtures'])) {
     failures.push('local demo profile is missing seed or import-fixtures');
   }
-  const text = JSON.stringify(services['import-fixtures'] ?? {});
+  const importFixtures = services['import-fixtures'];
+  const text = JSON.stringify(importFixtures ?? {});
   if (!text.includes('with-prestashop-order')) {
     failures.push('local import-fixtures does not import the prestashop order');
+  }
+  if (
+    isRecord(importFixtures) &&
+    isRecord(importFixtures.depends_on) &&
+    Object.hasOwn(importFixtures.depends_on, 'seed')
+  ) {
+    failures.push('local import-fixtures must not depend on seed');
   }
   return failures;
 }

@@ -4,6 +4,8 @@
  * tried in order. A pattern matches the path or any parent directory.
  * The last matching pattern decides. A leading `!` includes the path.
  * A later exception can re-include a file under an excluded directory.
+ * Character classes follow Go filepath.Match. `?` and `*` match whole Unicode
+ * code points. POSIX bracket classes such as `[[:alpha:]]` are not supported.
  */
 
 export function parseDockerignore(text) {
@@ -74,17 +76,18 @@ function parentPaths(file) {
  * @returns {(path: string) => boolean}
  */
 function compilePattern(pattern) {
+  const chars = Array.from(pattern);
   let source = '^';
   let index = 0;
   let kind = 'exact';
-  while (index < pattern.length) {
-    if (pattern.startsWith('**', index)) {
+  while (index < chars.length) {
+    if (chars[index] === '*' && chars[index + 1] === '*') {
       const at = index;
       index += 2;
-      if (pattern[index] === '/') {
+      if (chars[index] === '/') {
         index += 1;
       }
-      if (index >= pattern.length) {
+      if (index >= chars.length) {
         kind = kind === 'exact' ? 'prefix' : 'regexp';
         if (kind === 'regexp') {
           source += '.*';
@@ -98,7 +101,14 @@ function compilePattern(pattern) {
       }
       continue;
     }
-    const char = pattern[index];
+    const char = chars[index];
+    if (char === '[') {
+      const compiled = compileClass(pattern, chars, index);
+      source += compiled.source;
+      index = compiled.next;
+      kind = 'regexp';
+      continue;
+    }
     index += 1;
     if (char === '*') {
       source += '[^/]*';
@@ -106,10 +116,13 @@ function compilePattern(pattern) {
     } else if (char === '?') {
       source += '[^/]';
       kind = 'regexp';
-    } else if ('.+()|{}$'.includes(char)) {
+    } else if ('.+()|{}$^]'.includes(char)) {
       source += `\\${char}`;
-    } else if (char === '\\' && index < pattern.length) {
-      source += `\\${pattern[index]}`;
+    } else if (char === '\\') {
+      if (index >= chars.length) {
+        throw invalidPattern(pattern);
+      }
+      source += escapeLiteral(chars[index]);
       index += 1;
       kind = 'regexp';
     } else {
@@ -127,6 +140,84 @@ function compilePattern(pattern) {
   if (kind === 'exact') {
     return (path) => path === pattern;
   }
-  const expression = new RegExp(`${source}$`);
+  const expression = new RegExp(`${source}$`, 'u');
   return (path) => expression.test(path);
+}
+
+function invalidPattern(pattern) {
+  return new Error(`invalid .dockerignore pattern: ${pattern}`);
+}
+
+/**
+ * `'[' [ '^' ] { character-range } ']'`, where a range is one code point, an
+ * escaped code point, or `lo-hi`. At least one range is required.
+ * @param {string} pattern
+ * @param {string[]} chars
+ * @param {number} start
+ * @returns {{ source: string, next: number }}
+ */
+function compileClass(pattern, chars, start) {
+  let index = start + 1;
+  let negated = false;
+  if (index < chars.length && chars[index] === '^') {
+    negated = true;
+    index += 1;
+  }
+  let body = '';
+  let ranges = 0;
+  while (index < chars.length && chars[index] !== ']') {
+    const lo = classChar(pattern, chars, index);
+    index = lo.next;
+    if (index < chars.length && chars[index] === '-') {
+      index += 1;
+      const hi = classChar(pattern, chars, index);
+      index = hi.next;
+      if (lo.char.codePointAt(0) > hi.char.codePointAt(0)) {
+        throw invalidPattern(pattern);
+      }
+      body += `${escapeClassChar(lo.char)}-${escapeClassChar(hi.char)}`;
+    } else {
+      body += escapeClassChar(lo.char);
+    }
+    ranges += 1;
+  }
+  if (ranges === 0 || index >= chars.length || chars[index] !== ']') {
+    throw invalidPattern(pattern);
+  }
+  return { source: `[${negated ? '^' : ''}${body}]`, next: index + 1 };
+}
+
+/**
+ * @param {string} pattern
+ * @param {string[]} chars
+ * @param {number} index
+ */
+function classChar(pattern, chars, index) {
+  if (index >= chars.length) {
+    throw invalidPattern(pattern);
+  }
+  if (chars[index] === '\\') {
+    if (index + 1 >= chars.length) {
+      throw invalidPattern(pattern);
+    }
+    return { char: chars[index + 1], next: index + 2 };
+  }
+  if (chars[index] === '-' || chars[index] === ']') {
+    throw invalidPattern(pattern);
+  }
+  return { char: chars[index], next: index + 1 };
+}
+
+function escapeClassChar(char) {
+  if (char === '\\' || char === ']' || char === '[' || char === '^' || char === '-') {
+    return `\\${char}`;
+  }
+  return char;
+}
+
+function escapeLiteral(char) {
+  if ('\\^$.*+?()[]{}|'.includes(char)) {
+    return `\\${char}`;
+  }
+  return char;
 }

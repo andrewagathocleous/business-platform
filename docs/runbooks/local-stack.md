@@ -35,12 +35,15 @@ docker compose -p business-platform-local -f infra/compose/compose.prod.yml -f i
 ```
 
 `--wait` returns when api, worker, caddy, postgres and n8n are healthy and migrate has exited 0.
-The worker is healthy when `/tmp/bp-worker-heartbeat` is newer than 60 seconds. The loop touches that file when a tick starts, after reclaim finishes, after each successful claim, and when that tick finishes. A claim that never settles does not refresh it, and the finish touch is skipped once shutdown has begun, so the healthcheck fails.
+The worker is healthy when `/tmp/bp-worker-heartbeat` is newer than 60 seconds. The loop touches that file when a tick starts, after reclaim finishes, after each successful claim, and when that tick finishes. A claim that never settles does not refresh it, and no touch happens once shutdown has begun.
 
 ```sh
 docker compose -p business-platform-local -f infra/compose/compose.prod.yml -f infra/compose/compose.local.yml --env-file .env.local-stack --profile demo run --rm seed
 docker compose -p business-platform-local -f infra/compose/compose.prod.yml -f infra/compose/compose.local.yml --env-file .env.local-stack --profile demo run --rm import-fixtures
 ```
+
+`import-fixtures` does not start `seed`; run `seed` first. Seed is idempotent, so running it
+again is harmless.
 
 Seed prints the fictional companies. Import prints `prestashop order #P-1001` for company A,
 then the company B fixture line. Neither command prints a service token.
@@ -92,13 +95,17 @@ pnpm exec playwright install chromium
 pnpm milestone:csp
 ```
 
-Logs in as `admin.a@example.test` and opens orders, order `#1001`, invoices and the invoice
-editor. It waits until orders show a data row, the order shows the gift message or the status
-block, invoices show a row or the empty state, and the invoice editor shows the totals panel
-with its text and a product or tax-code option. It then waits until no `/api/` request is in
-flight, plus a short settle. Console errors, page errors and `securitypolicyviolation` events
-are delivered to the Node process as they happen, so a later navigation does not drop them.
-Any collected item fails the check. `GET /api/health/ready` and each SPA document must not send HSTS.
+`pnpm milestone:csp` runs after `pnpm milestone:verify --phase=initial`. It reads
+`var/milestone-state.json`, logs in as `admin.a@example.test`, and opens orders, order `#1001`,
+invoices, and company A's milestone draft invoice. It waits until orders show a data row, the
+order shows the gift message or the status block, and invoices show a row or the empty state.
+The draft invoice's five totals must equal the stored totals, and a product or tax-code option
+must be present. It then waits until no `/api/` request is in flight, plus a short settle.
+Console errors, page errors and `securitypolicyviolation` events are delivered to the Node
+process as they happen, so a later navigation does not drop them. Any collected item fails the
+check. The only console error allowed is the SPA's pre-login `GET /api/me` 401 on the login
+page; any other console error, page error or CSP violation fails the check. `GET /api/health/ready`
+and each SPA document must not send HSTS.
 
 Playwright 1.64 has no per-context or per-launch CA option. `clientCertificates` is client
 authentication, not a server trust store. The check does not install the Caddy CA. Scoped

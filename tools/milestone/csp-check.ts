@@ -1,19 +1,21 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { chromium, type Response } from '@playwright/test';
+import { chromium, type Locator, type Response } from '@playwright/test';
 import {
   API_SETTLE_MS,
   ApiFlight,
   CSP_BINDING,
   ReportCollector,
   cspInitScript,
+  expectedConsoleError,
   invoiceEditorLoaded,
   invoicesLoaded,
   orderDetailLoaded,
   ordersLoaded,
 } from './csp-watch';
 import { repositoryRoot } from './root';
+import { readState, type InvoiceTotals } from './state';
 
 /**
  * Proves the local stack's SPA has no CSP violations.
@@ -44,6 +46,7 @@ if (entry.endsWith('csp-check.ts') || entry.endsWith('csp-check.js')) {
 
 async function main(): Promise<number> {
   const root = repositoryRoot();
+  const state = loadMilestoneState(root);
   const caPath = resolve(root, CA_PATH);
   if (!existsSync(caPath)) {
     throw new Error(`Caddy root CA is missing at ${CA_PATH}`);
@@ -85,8 +88,21 @@ async function main(): Promise<number> {
     page.on('requestfailed', (request) => {
       flight.finish(request.url());
     });
+    let signedIn = false;
+    let expectedErrors = 0;
     page.on('console', (message) => {
       if (message.type() === 'error') {
+        if (
+          expectedConsoleError({
+            text: message.text(),
+            url: message.location().url,
+            signedIn,
+            origin: ORIGIN,
+          })
+        ) {
+          expectedErrors += 1;
+          return;
+        }
         collector.add('console', message.text());
       }
     });
@@ -103,17 +119,14 @@ async function main(): Promise<number> {
     await settle();
     await page.getByRole('button', { name: 'admin.a@example.test' }).click();
     await page.waitForURL(/\/c\/[0-9a-f-]{36}/i);
-    const companyId = new URL(page.url()).pathname.split('/')[2] ?? '';
-    if (companyId.length === 0) {
-      throw new Error('company id was not in the URL');
-    }
-    const orders = await page.goto(`${ORIGIN}/c/${companyId}/orders`, {
+    signedIn = true;
+    const orders = await page.goto(`${ORIGIN}/c/${state.companyA}/orders`, {
       waitUntil: 'domcontentloaded',
     });
     assertDocumentHeaders(orders, 'orders');
-    await page.locator('.order-table tbody tr, .order-card').first().waitFor();
-    const orderRows = await page.locator('.order-table tbody tr, .order-card').count();
-    if (!ordersLoaded(orderRows)) {
+    const orderRows = page.locator('.order-table tbody tr, .order-card').filter({ visible: true });
+    await orderRows.first().waitFor();
+    if (!ordersLoaded(await orderRows.count())) {
       throw new Error('orders have no data row');
     }
     await settle();
@@ -125,43 +138,46 @@ async function main(): Promise<number> {
       waitUntil: 'domcontentloaded',
     });
     assertDocumentHeaders(order, 'order');
-    await page
-      .locator('[data-testid="gift-message"], [data-testid="fulfilment-status"]')
-      .first()
-      .waitFor();
-    const giftMessage = (await page.locator('[data-testid="gift-message"]').count()) > 0;
-    const statusBlock = (await page.locator('[data-testid="fulfilment-status"]').count()) > 0;
-    if (!orderDetailLoaded({ giftMessage, statusBlock })) {
+    const giftMessage = page.locator('[data-testid="gift-message"]').filter({ visible: true });
+    const fulfilmentStatus = page
+      .locator('[data-testid="fulfilment-status"]')
+      .filter({ visible: true });
+    await giftMessage.or(fulfilmentStatus).first().waitFor();
+    if (
+      !orderDetailLoaded({
+        giftMessage: (await giftMessage.count()) > 0,
+        statusBlock: (await fulfilmentStatus.count()) > 0,
+      })
+    ) {
       throw new Error('order detail has no gift message or status');
     }
     await settle();
-    const invoices = await page.goto(`${ORIGIN}/c/${companyId}/invoices`, {
+    const invoices = await page.goto(`${ORIGIN}/c/${state.companyA}/invoices`, {
       waitUntil: 'domcontentloaded',
     });
     assertDocumentHeaders(invoices, 'invoices');
-    const invoiceRow = page.locator('bp-invoice-list tbody tr');
-    const invoiceEmpty = page.getByText('No invoices', { exact: true });
-    await invoiceRow.or(invoiceEmpty).first().waitFor();
+    const invoiceRows = page.locator('bp-invoice-list tbody tr').filter({ visible: true });
+    const invoiceEmpty = page.getByText('No invoices', { exact: true }).filter({ visible: true });
+    await invoiceRows.or(invoiceEmpty).first().waitFor();
     if (
       !invoicesLoaded({
-        rows: await invoiceRow.count(),
+        rows: await invoiceRows.count(),
         empty: (await invoiceEmpty.count()) > 0,
       })
     ) {
       throw new Error('invoices have no row and no empty state');
     }
     await settle();
-    const editor = await page.goto(`${ORIGIN}/c/${companyId}/invoices/new`, {
+    const editor = await page.goto(`${ORIGIN}/c/${state.companyA}/invoices/${state.invoiceId}`, {
       waitUntil: 'domcontentloaded',
     });
     assertDocumentHeaders(editor, 'invoice editor');
-    await page.locator('[data-testid="invoice-totals"]').waitFor();
-    await page
-      .locator(
-        '[data-testid="invoice-totals"] [data-testid="total"], [data-testid="totals-pending"]',
-      )
-      .first()
-      .waitFor();
+    const invoiceTotals = page.locator('[data-testid="invoice-totals"]').filter({ visible: true });
+    await invoiceTotals.waitFor();
+    const invoiceTotal = page
+      .locator('[data-testid="invoice-totals"] [data-testid="total"]')
+      .filter({ visible: true });
+    await invoiceTotal.waitFor();
     await page.waitForFunction(`() => {
       for (const select of document.querySelectorAll('select')) {
         for (const option of select.options) {
@@ -172,15 +188,23 @@ async function main(): Promise<number> {
       }
       return false;
     }`);
-    const totalsText = (await page.locator('[data-testid="invoice-totals"]').innerText()).trim();
+    const totals: InvoiceTotals = {
+      subtotal: await trimmedText(invoiceTotals.locator('[data-testid="subtotal"]')),
+      discountTotal: await trimmedText(invoiceTotals.locator('[data-testid="discount"]')),
+      netTotal: await trimmedText(invoiceTotals.locator('[data-testid="net"]')),
+      taxTotal: await trimmedText(invoiceTotals.locator('[data-testid="tax"]')),
+      total: await trimmedText(invoiceTotal),
+    };
     const catalogOptions = await page.locator('select option').evaluateAll((options) => {
       return options.filter((option) => {
         const value = option.getAttribute('value') ?? '';
         return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
       }).length;
     });
-    if (!invoiceEditorLoaded({ totalsText, catalogOptions })) {
-      throw new Error('invoice editor totals or catalogue are not loaded');
+    if (!invoiceEditorLoaded({ totals, expected: state.invoiceTotals, catalogOptions })) {
+      throw new Error(
+        `invoice editor showed ${totalsLabel(totals)}; expected ${totalsLabel(state.invoiceTotals)}`,
+      );
     }
     await settle();
     if (collector.failures.length > 0) {
@@ -191,11 +215,29 @@ async function main(): Promise<number> {
       return 1;
     }
     console.log('csp check passed');
+    console.log(`expected pre-login 401 on /api/me: ${String(expectedErrors)}`);
     console.log('headers: nosniff, referrer-policy, permissions-policy, csp; no HSTS; no Server');
     return 0;
   } finally {
     await browser.close();
   }
+}
+
+function loadMilestoneState(root: string) {
+  try {
+    return readState(resolve(root, 'var/milestone-state.json'));
+  } catch {
+    throw new Error('milestone state is missing; run pnpm milestone:verify --phase=initial first');
+  }
+}
+
+function totalsLabel(totals: InvoiceTotals): string {
+  return `subtotal ${totals.subtotal}, discount ${totals.discountTotal}, net ${totals.netTotal}, tax ${totals.taxTotal}, total ${totals.total}`;
+}
+
+async function trimmedText(locator: Locator): Promise<string> {
+  const text = await locator.textContent();
+  return (text ?? '').trim();
 }
 
 function leafSpki(caPath: string): string {

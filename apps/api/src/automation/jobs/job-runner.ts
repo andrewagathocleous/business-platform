@@ -219,8 +219,8 @@ export class JobRunner {
   /**
    * Touched when a tick starts, after reclaim finishes, after each successful
    * claim, and when that tick finishes. A claim that never settles does not
-   * refresh it. The finish touch is skipped once `stop()` has begun. The
-   * compose healthcheck fails when the file is older than 60s.
+   * refresh it. No touch happens once `stop()` has begun. The compose
+   * healthcheck fails when the file is older than 60s.
    */
   heartbeatFile = WORKER_HEARTBEAT_PATH;
   /** Clock for the file heartbeat. Production uses the host clock. */
@@ -251,6 +251,9 @@ export class JobRunner {
   }
 
   private beat(): void {
+    if (this.stopping) {
+      return;
+    }
     try {
       touchWorkerHeartbeat(this.heartbeatFile, this.heartbeatClock());
     } catch (error) {
@@ -830,9 +833,7 @@ export class JobRunner {
       this.logger.error(error instanceof Error ? error.message : 'job tick failed');
     } finally {
       this.tickBusy = false;
-      if (!this.stopped()) {
-        this.beat();
-      }
+      this.beat();
     }
   }
 

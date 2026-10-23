@@ -2,6 +2,7 @@
  * CSP and console reports live in Node. A navigation replaces the document,
  * so a page-scoped array would drop violations that arrived after the last read.
  */
+import { totalsEqual, type InvoiceTotals } from './state';
 
 export const CSP_BINDING = '__bpCspViolation';
 export const API_SETTLE_MS = 300;
@@ -34,6 +35,20 @@ export function isApiUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** The SPA's startup session probe on `/login` is a 401 before sign-in. */
+export function expectedConsoleError(input: {
+  text: string;
+  url: string;
+  signedIn: boolean;
+  origin: string;
+}): boolean {
+  return (
+    !input.signedIn &&
+    input.url === `${input.origin}/api/me` &&
+    /^Failed to load resource: the server responded with a status of 401 \(/.test(input.text)
+  );
 }
 
 /** Tracks in-flight `/api/` requests. A request that starts during the settle restarts it. */
@@ -98,8 +113,9 @@ export function invoicesLoaded(input: { rows: number; empty: boolean }): boolean
 }
 
 export function invoiceEditorLoaded(input: {
-  totalsText: string;
+  totals: InvoiceTotals;
+  expected: InvoiceTotals;
   catalogOptions: number;
 }): boolean {
-  return input.totalsText.trim().length > 0 && input.catalogOptions > 0;
+  return totalsEqual(input.totals, input.expected) && input.catalogOptions > 0;
 }

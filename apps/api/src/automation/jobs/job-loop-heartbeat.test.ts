@@ -119,6 +119,69 @@ describe('job loop heartbeat', () => {
     await stopping;
     expect(statSync(file).mtimeMs).toBe(start);
   });
+
+  it('does not beat after reclaim once stop begins', async () => {
+    const file = tempFile();
+    const start = Date.parse('2026-03-01T00:00:00.000Z');
+    let now = start;
+    const runner = runnerWith(file);
+    runner.pollMs = 60_000;
+    runner.heartbeatClock = () => new Date(now);
+    let release: () => void = () => {};
+    runner.tickIo = {
+      reclaim: () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+      claim: () => Promise.resolve(null),
+    };
+    runner.startLoop();
+    await waitUntil(() => existsSync(file));
+    await delay(20);
+    expect(statSync(file).mtimeMs).toBe(start);
+    now = start + 5_000;
+    const stopping = runner.stop();
+    release();
+    await stopping;
+    expect(statSync(file).mtimeMs).toBe(start);
+  });
+
+  it('does not beat after a claim that settles once stop begins', async () => {
+    const file = tempFile();
+    const start = Date.parse('2026-03-01T00:00:00.000Z');
+    let now = start;
+    const runner = runnerWith(file);
+    runner.pollMs = 60_000;
+    runner.heartbeatClock = () => new Date(now);
+    const job = claimed('1');
+    let release: (value: ClaimedJob) => void = () => {};
+    runner.tickIo = {
+      reclaim: () => Promise.resolve(),
+      claim: () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    };
+    const settleShutdown = vi
+      .spyOn(
+        runner as unknown as {
+          settleShutdown: (claimedJob: ClaimedJob, started: boolean) => Promise<void>;
+        },
+        'settleShutdown',
+      )
+      .mockResolvedValue(undefined);
+    runner.startLoop();
+    await waitUntil(() => existsSync(file));
+    await delay(20);
+    expect(statSync(file).mtimeMs).toBe(start);
+    now = start + 5_000;
+    const stopping = runner.stop();
+    release(job);
+    await stopping;
+    expect(statSync(file).mtimeMs).toBe(start);
+    expect(settleShutdown).toHaveBeenCalledTimes(1);
+    expect(settleShutdown).toHaveBeenCalledWith(job, false);
+  });
 });
 
 function runnerWith(file: string): JobRunner {

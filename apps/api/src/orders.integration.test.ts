@@ -22,6 +22,8 @@ import { InboxService } from './automation/inbox.service';
 import { type ClaimedJob, JobRunner } from './automation/jobs/job-runner';
 import { correlationStorage } from './correlation/correlation';
 import { PrismaService } from './database/prisma.service';
+import { PRESTASHOP_MILESTONE_EXTERNAL_ID } from './demo-import-args';
+import { ensurePrestashopOrder, PRESTASHOP_GIFT } from './demo-prestashop-order';
 import { configureHttp } from './http/configure-http';
 import { caseSensitiveAdapter } from './http/express-adapter';
 import { LOG_STREAM } from './logging/logging.module';
@@ -1318,6 +1320,41 @@ describe('orders import and API', () => {
     );
     expect(printIn.status, text(printIn)).not.toBe(404);
     expect(printIn.status, text(printIn)).not.toBe(403);
+  });
+
+  it('creates the milestone PrestaShop order once, with its line in company A', async () => {
+    try {
+      const prisma = started().get(PrismaService);
+      await ensurePrestashopOrder(prisma, companyA);
+      await ensurePrestashopOrder(prisma, companyA);
+      const orders = await withCompany(companyA, (tx) =>
+        tx.salesOrder.findMany({
+          where: { companyId: companyA, externalId: PRESTASHOP_MILESTONE_EXTERNAL_ID },
+        }),
+      );
+      expect(orders).toHaveLength(1);
+      const order = orders[0];
+      if (!order) {
+        throw new Error('milestone order is missing');
+      }
+      expect(order.externalNumber).toBe('#P-1001');
+      expect(order.sourcePlatform).toBe('prestashop');
+      expect(order.giftMessage).toBe(PRESTASHOP_GIFT);
+      const lines = await withCompany(companyA, (tx) =>
+        tx.salesOrderLine.findMany({
+          where: { companyId: companyA, orderId: order.id },
+        }),
+      );
+      expect(lines).toHaveLength(1);
+      const line = lines[0];
+      if (!line) {
+        throw new Error('milestone line is missing');
+      }
+      expect(line.companyId).toBe(companyA);
+      expect(line.orderId).toBe(order.id);
+    } finally {
+      await clearOrders(companyA);
+    }
   });
 
   function withCompany<T>(companyId: string, fn: (tx: TenantTransaction) => Promise<T>): Promise<T> {

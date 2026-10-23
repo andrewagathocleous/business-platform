@@ -42,6 +42,17 @@ describe('compose config', () => {
     expect(validateCompose('local', localConfig())).toEqual([]);
     expect(validateCompose('prod', prodConfig())).toEqual([]);
   });
+
+  it('rejects local import-fixtures that depends on seed', () => {
+    const local = localConfig();
+    local.services['import-fixtures'].depends_on = {
+      seed: { condition: 'service_completed_successfully' },
+      api: { condition: 'service_healthy' },
+    };
+    expect(validateCompose('local', local)).toContain(
+      'local import-fixtures must not depend on seed',
+    );
+  });
 });
 
 function localConfig() {
