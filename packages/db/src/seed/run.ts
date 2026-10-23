@@ -240,6 +240,7 @@ async function main(): Promise<void> {
               documentLanguage: 'en',
               countryCode: 'CY',
               vatNumber: null,
+              version: 1,
             },
           })
         : await prisma.company.create({

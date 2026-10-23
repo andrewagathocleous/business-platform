@@ -17,7 +17,9 @@
     "members": "Members",
     "automation": "Automation",
     "audit": "Audit",
-    "printers": "Printers"
+    "printers": "Printers",
+    "company": "Company",
+    "stores": "Stores"
   },
   "user": {
     "menu": "Account menu",
@@ -607,6 +609,96 @@
       "packing_slip": "Packing slip",
       "gift_message": "Gift message",
       "shipping_label": "Shipping label"
+    }
+  },
+  "companySetup": {
+    "title": "Company",
+    "loading": "Loading company",
+    "error": "The company could not be loaded",
+    "save": "Save",
+    "reload": "Reload",
+    "conflict": "Someone else saved these details. Reload before saving again.",
+    "cannotClear": "This field cannot be cleared. Enter a value.",
+    "addressRequired": "Address line 1, city and country code are required.",
+    "paymentTermsInvalid": "Payment terms must be a whole number of days.",
+    "required": "Required",
+    "fields": {
+      "legalName": "Legal name",
+      "tradingName": "Trading name",
+      "registrationNumber": "Registration number",
+      "vatNumber": "VAT number",
+      "taxOffice": "Tax office",
+      "line1": "Address line 1",
+      "line2": "Address line 2",
+      "city": "City",
+      "postcode": "Postcode",
+      "countryCode": "Country code",
+      "timezone": "Timezone",
+      "currency": "Currency",
+      "defaultLocale": "Default language",
+      "documentLanguage": "Document language",
+      "paymentTermsDays": "Payment terms (days)"
+    }
+  },
+  "storesAdmin": {
+    "title": "Stores",
+    "loading": "Loading stores",
+    "error": "The stores could not be loaded",
+    "brands": "Brands",
+    "locations": "Locations",
+    "stores": "Stores",
+    "addBrand": "Add brand",
+    "saveBrand": "Save brand",
+    "rename": "Rename",
+    "addLocation": "Add location",
+    "editLocation": "Edit location",
+    "saveLocation": "Save location",
+    "addStore": "Add store",
+    "editStore": "Edit store",
+    "saveStore": "Save store",
+    "edit": "Edit",
+    "editNamed": "Edit {{name}}",
+    "cancel": "Cancel",
+    "choose": "Choose",
+    "archive": "Archive",
+    "restore": "Restore",
+    "archiveNamed": "Archive {{name}}",
+    "restoreNamed": "Restore {{name}}",
+    "active": "Active",
+    "archived": "Archived",
+    "nameRequired": "Enter a name.",
+    "forbidden": "You do not have access to this section.",
+    "nameTaken": "That name is already used by an active brand.",
+    "locationInUse": "This location still has an active store or a printer mapping.",
+    "brandArchived": "That brand is archived.",
+    "locationArchived": "That location is archived.",
+    "fields": {
+      "name": "Name",
+      "status": "Status",
+      "brandName": "Brand name",
+      "locationName": "Location name",
+      "storeName": "Store name",
+      "line1": "Address line 1",
+      "line2": "Address line 2",
+      "city": "City",
+      "postcode": "Postcode",
+      "countryCode": "Country code",
+      "timezone": "Timezone",
+      "platform": "Platform",
+      "brand": "Brand",
+      "location": "Location",
+      "domain": "Domain",
+      "invoiceAuthority": "Invoice authority"
+    },
+    "platform": {
+      "prestashop": "PrestaShop",
+      "shopify": "Shopify",
+      "manual": "Manual"
+    },
+    "authority": {
+      "undecided": "Undecided",
+      "store": "Store",
+      "platform": "Platform"
     }
   }
 }

@@ -1,4 +1,13 @@
 /**
+ * True when `Intl.supportedValuesOf('currency')` includes this code.
+ * `currencyMinorDigits` is not a membership test: an unknown code can still
+ * resolve to a fallback fraction length.
+ */
+export function isKnownCurrency(code: string): boolean {
+  return Intl.supportedValuesOf('currency').includes(code);
+}
+
+/**
  * Minor digits for an ISO 4217 code, from `Intl`.
  * Returns undefined when the code is not a currency this runtime knows.
  * Phase 1 accepts only currencies with exactly two minor digits.

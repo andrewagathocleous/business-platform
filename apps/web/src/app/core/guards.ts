@@ -62,6 +62,9 @@ export const homeGuard: CanActivateFn = async (route) => {
     return router.parseUrl('/not-found');
   }
   const loaded = await context.load(companyId);
+  if (loaded === 'superseded') {
+    return false;
+  }
   if (loaded === 'forbidden') {
     return router.parseUrl('/forbidden');
   }
@@ -81,6 +84,9 @@ export const permissionGuard: CanActivateFn = async (route) => {
     return router.parseUrl('/forbidden');
   }
   const loaded = await context.load(companyId);
+  if (loaded === 'superseded') {
+    return false;
+  }
   if (loaded === 'not-found') {
     return router.parseUrl('/not-found');
   }
@@ -98,6 +104,9 @@ export const adminHomeGuard: CanActivateFn = async (route) => {
     return router.parseUrl('/not-found');
   }
   const loaded = await context.load(companyId);
+  if (loaded === 'superseded') {
+    return false;
+  }
   if (loaded !== 'ok') {
     return router.parseUrl(loaded === 'forbidden' ? '/forbidden' : '/not-found');
   }

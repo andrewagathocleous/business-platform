@@ -23,15 +23,15 @@ const fulfilGrants: Grant[] = [
 ];
 
 describe('visibleNav', () => {
-  it('hides invoices and admin for a fulfilment grant set', () => {
+  it('shows orders and company for a fulfilment grant set', () => {
     const labels = visibleNav(fulfilGrants).map((item) => item.labelKey);
-    expect(labels).toEqual(['nav.orders']);
+    expect(labels).toEqual(['nav.orders', 'nav.company']);
     expect(firstAllowedPath('company-a', fulfilGrants)).toBe('/c/company-a/orders');
   });
 });
 
 describe('SideNavComponent', () => {
-  it('shows Orders and hides Invoices and Admin for fulfilment grants', async () => {
+  it('shows Orders and Company, and hides Invoices, for fulfilment grants', async () => {
     await TestBed.configureTestingModule({
       imports: [SideNavComponent],
       providers: [
@@ -60,10 +60,12 @@ describe('SideNavComponent', () => {
 
     const text = textOf(fixture.nativeElement);
     expect(text).toContain('Orders');
+    expect(text).toContain('Admin');
+    expect(text).toContain('Company');
     expect(text).not.toContain('Invoices');
     expect(text).not.toContain('Clients');
-    expect(text).not.toContain('Admin');
     expect(text).not.toContain('Members');
+    expect(text).not.toContain('Stores');
   });
 });
 

@@ -38,6 +38,7 @@ describe('permission matrix', () => {
     expect(PERMISSIONS.find((permission) => permission.key === 'mailbox.read')?.scopableBy).toEqual([
       'mailbox',
     ]);
+    expect(PERMISSIONS.find((permission) => permission.key === 'store.view')?.scopableBy).toEqual(['store']);
     expect(PERMISSIONS.find((permission) => permission.key === 'company.view')?.scopableBy).toEqual([]);
   });
 

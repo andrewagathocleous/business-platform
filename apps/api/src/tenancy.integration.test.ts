@@ -83,6 +83,13 @@ describe('authorisation and tenancy', () => {
     const company = record(contextBody.company);
     expect(company.legalName).toBe(COMPANY_A);
     expect(company.documentLanguage).toBe('en');
+    expect(company.version).toBe(1);
+    expect(company.defaultLocale).toBe('en');
+    expect(company.paymentTermsDays).toBe(30);
+    expect(company.registrationNumber).toBeNull();
+    expect(company.vatNumber).toBeNull();
+    expect(company.taxOffice).toBeNull();
+    expect(company.address).toMatchObject({ line1: '1 Demo Street', city: 'Nicosia', countryCode: 'CY' });
     expect(contextBody.mfaStepUpRequired).toBe(false);
     expect(contextBody.withheldPermissions).toEqual([]);
     expect(grants(contextBody).some((grant) => grant.permission === 'member.manage' && grant.scopeType === 'company')).toBe(

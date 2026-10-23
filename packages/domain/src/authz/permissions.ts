@@ -54,6 +54,9 @@ function scopableBy(key: string): readonly ScopableScope[] {
   ) {
     return ['store', 'location'];
   }
+  if (key === 'store.view') {
+    return ['store'];
+  }
   if (key.startsWith('mailbox.')) {
     return ['mailbox'];
   }

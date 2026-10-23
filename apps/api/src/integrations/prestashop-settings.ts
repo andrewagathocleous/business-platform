@@ -1,4 +1,9 @@
-import { PAYMENT_STATUSES, wallTimeInZoneToInstant, type PaymentStatus } from '@bp/domain';
+import {
+  PAYMENT_STATUSES,
+  isIanaTimeZone,
+  wallTimeInZoneToInstant,
+  type PaymentStatus,
+} from '@bp/domain';
 import { canonicalPrestashopBaseUrl } from '@bp/integrations';
 import { z } from 'zod';
 
@@ -26,7 +31,7 @@ export const prestashopSettingsSchema = z
         return value;
       }
     }),
-    timezone: z.string().refine(isIanaZone, 'timezone is invalid'),
+    timezone: z.string().refine(isIanaTimeZone, 'timezone is invalid'),
     firstImportFrom: z.string().regex(SHOP_TIME, 'firstImportFrom must be YYYY-MM-DD HH:mm:ss'),
     pollIntervalSeconds: z.number().int().min(120).default(180),
     stateMap: z.record(z.string().min(1), stateEntry),
@@ -66,18 +71,6 @@ export function parsePrestashopSettings(value: unknown): PrestashopSettings {
 export function readPrestashopSettings(value: unknown): PrestashopSettings | null {
   const parsed = prestashopSettingsSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
-}
-
-function isIanaZone(timeZone: string): boolean {
-  if (timeZone.length === 0 || timeZone !== timeZone.trim()) {
-    return false;
-  }
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone }).format(0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export type { PaymentStatus };

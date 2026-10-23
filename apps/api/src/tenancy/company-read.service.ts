@@ -3,6 +3,7 @@ import { TenantDb } from '@bp/db';
 import { isUuid } from '../authz/company-path';
 import { PrismaService } from '../database/prisma.service';
 import type { RequestContext } from '../authz/request-context';
+import { companyDetails, type CompanyDetails } from './company-details';
 
 const OUTCOMES = ['success', 'denied', 'failure'] as const;
 
@@ -19,16 +20,7 @@ export type AuditQuery = {
 };
 
 export type CompanyContextView = {
-  company: {
-    id: string;
-    legalName: string;
-    tradingName: string;
-    status: string;
-    timezone: string;
-    defaultCurrency: string;
-    countryCode: string;
-    documentLanguage: 'en' | 'el';
-  };
+  company: CompanyDetails;
   grants: { permission: string; scopeType: string; scopeId: string | null }[];
   switches: { key: string; enabled: boolean }[];
   mfaStepUpRequired: boolean;
@@ -51,16 +43,7 @@ export class CompanyReadService {
       select: { key: true, enabled: true },
     });
     return {
-      company: {
-        id: company.id,
-        legalName: company.legalName,
-        tradingName: company.tradingName,
-        status: company.status,
-        timezone: company.timezone,
-        defaultCurrency: company.defaultCurrency,
-        countryCode: company.countryCode,
-        documentLanguage: company.documentLanguage,
-      },
+      company: companyDetails(company),
       grants: ctx.grants.map((grant) => ({
         permission: grant.permission,
         scopeType: grant.scopeType,
@@ -72,7 +55,9 @@ export class CompanyReadService {
     };
   }
 
-  async locations(ctx: RequestContext): Promise<{ locations: { id: string; name: string }[] }> {
+  async locations(ctx: RequestContext): Promise<{
+    locations: { id: string; name: string; address: unknown; timezone: string | null; archivedAt: string | null }[];
+  }> {
     const actor = ctx.userId ?? ctx.serviceIdentityId;
     if (!actor) {
       throw new BadRequestException('actor is missing');
@@ -83,10 +68,18 @@ export class CompanyReadService {
         tx.location.findMany({
           where: { companyId: ctx.companyId },
           orderBy: [{ name: 'asc' }, { id: 'asc' }],
-          select: { id: true, name: true },
+          select: { id: true, name: true, address: true, timezone: true, archivedAt: true },
         }),
     );
-    return { locations: rows };
+    return {
+      locations: rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        address: row.address,
+        timezone: row.timezone,
+        archivedAt: row.archivedAt === null ? null : row.archivedAt.toISOString(),
+      })),
+    };
   }
 
   async roles(companyId: string): Promise<

@@ -22,13 +22,13 @@ What this means while the laptop hosts the platform:
 
 ## What the user provides
 
-| # | Item | Needed for | Notes |
-|---|---|---|---|
-| L1 | The MacBook Air: FileVault on, macOS firewall on, admin rights, and power settings that keep it awake on the charger | R0-E | |
-| L2 | A backup destination off the laptop: a cloud-synced folder (iCloud Drive or Google Drive), plus an external drive for a monthly copy | R0-C | |
-| L3 | A password manager for the backup key and the master keys | R0-C | They never go in the repo or in chat |
-| U2 | Microsoft 365 admin rights to register the app (Global Administrator or Application Administrator), and the owner's Microsoft account | R0-A, R0-G | A second, emergency admin account is recommended (see R0-F), not blocking |
-| U1 (part) | The real legal name, VAT number and address, typed into the platform by the owner | R0-B | Never written into the repo, the plan or chat |
+| #         | Item                                                                                                                                  | Needed for | Notes                                                                     |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------- |
+| L1        | The MacBook Air: FileVault on, macOS firewall on, admin rights, and power settings that keep it awake on the charger                  | R0-E       |                                                                           |
+| L2        | A backup destination off the laptop: a cloud-synced folder (iCloud Drive or Google Drive), plus an external drive for a monthly copy  | R0-C       |                                                                           |
+| L3        | A password manager for the backup key and the master keys                                                                             | R0-C       | They never go in the repo or in chat                                      |
+| U2        | Microsoft 365 admin rights to register the app (Global Administrator or Application Administrator), and the owner's Microsoft account | R0-A, R0-G | A second, emergency admin account is recommended (see R0-F), not blocking |
+| U1 (part) | The real legal name, VAT number and address, typed into the platform by the owner                                                     | R0-B       | Never written into the repo, the plan or chat                             |
 
 ## R0-A. First platform owner (P1-F)
 
@@ -76,6 +76,21 @@ Today `POST /api/platform/companies` creates a company. Nothing creates brands, 
 - Stores: the same routes under `/stores`, with platform (`shopify`, `prestashop`, `manual`), brand, location, name, domain and invoice authority. `store.view` to read, `store.manage` to write. Platform is fixed after creation.
 - Every write is audited. The isolation sweep covers every new route: another company's id gives 404.
 - Web admin: a "Company" screen (details) and a "Stores" screen (brands, locations, stores), behind the same permissions. English and Greek keys follow the existing admin pattern.
+
+Implemented:
+
+- `store.view` is scopable by store. `GET /stores` and `GET /stores/:id` then show only the granted stores. `store.manage` and `GET /brands` stay company-wide.
+- `GET /locations` keeps `id` and `name` and also returns `address`, `timezone` and `archivedAt`.
+- Active brand names are unique per company, case-insensitively, with a transaction advisory lock. The migration does not add a partial unique index.
+- A version conflict is HTTP 409 `error.code` `conflict` and message `version_conflict`. `name_taken` and `location_in_use` use those strings as `error.code`.
+- Fulfilment staff with `company.view` see Company read-only. `/admin` opens that page. Members and Stores stay forbidden.
+- New admin keys are in `en.json` only. `missingHandler.useFallbackTranslation` is on, so a missing Greek key renders the English string.
+- `registrationNumber`, `vatNumber` and `taxOffice` accept `null` on company PATCH, which clears them. A string that is empty after trimming the ends is rejected. Those three columns are stored as NULL. `tradingName` is optional on the PATCH, but when sent it is a non-empty trimmed string of at most 200 characters. `null` and a blank string are rejected. `trading_name` stays NOT NULL and is never stored as an empty string. Location PATCH `timezone: null` means the company default. The company address is replaced as a whole, so omitting `line2` or `postcode` clears them. Store `domain` can be cleared.
+- A company PATCH whose values equal the current ones returns 200 with the same version and no audit row. A stale `expectedVersion` is still 409. "Exactly one success" applies to concurrent patches that change something.
+- `defaultCurrency` must be a code `Intl.supportedValuesOf('currency')` includes, and `currencyMinorDigits` must be 2. `currencyMinorDigits` itself is unchanged.
+- Timezones use `isIanaTimeZone` in `@bp/domain` (company, location and PrestaShop settings). Empty text, untrimmed text and values that start with `+` or `-` are rejected.
+- `GET /stores` and `GET /stores/:id` include `brand: { id, name }` and `location: { id, name }`. The stores screen loads `/brands` only for company-wide `store.view`. Without that grant it hides Brands and still lists the granted stores. A 403 on one section stays in that section. After a brand rename, archive or restore, or a location edit, archive or restore, the screen reloads the stores list and that section.
+- The company form is bound to the company it loaded. Changing company clears it until the new details load, and save writes only to that company. Inputs stay disabled while the PATCH is in flight. Trading name is required, and Save stays disabled while it is empty. A successful save reloads the shared company context only while that company is still the latest context load. The reload does not cancel a load for another company.
 
 ## R0-C. Backups (P5-01, laptop version)
 
@@ -136,6 +151,7 @@ Deploying a version:
   5. Prints the running tag.
 
   It never prints env values.
+
 - **First run:** `owner enrol` (R0-A). The owner opens the link, signs in with Microsoft, and creates the company (R0-B) with real details typed in the app.
 - `outbound.all` and every company switch stay off.
 
@@ -166,6 +182,7 @@ Steps:
    - require MFA through Conditional Access or Security Defaults and treat the tenant as the MFA authority.
 
    Record the decision in ADR-0004 before changing code.
+
 4. Confirm that a second account with no enrolment or invitation is denied.
 
 ## R0 acceptance
@@ -185,10 +202,10 @@ Recorded in `docs/releases/r0-report.md` with real command output (no secrets, n
 
 Needed when staff use the platform from their own devices, when Shopify webhooks arrive (R3), or when the owner wants it independent of the laptop. Whichever comes first.
 
-| # | Item | Notes |
-|---|---|---|
-| U8a | VPS: Ubuntu LTS, EU region, about 8 GB RAM, 4 vCPU, 80 GB disk or more | Any provider |
-| U8b | The app's domain or subdomain, and DNS access | For example `app.<your domain>` |
+| #   | Item                                                                    | Notes                                    |
+| --- | ----------------------------------------------------------------------- | ---------------------------------------- |
+| U8a | VPS: Ubuntu LTS, EU region, about 8 GB RAM, 4 vCPU, 80 GB disk or more  | Any provider                             |
+| U8b | The app's domain or subdomain, and DNS access                           | For example `app.<your domain>`          |
 | U8c | Backups to an S3-compatible bucket at a different provider from the VPS | So one provider problem cannot take both |
 
 Work:

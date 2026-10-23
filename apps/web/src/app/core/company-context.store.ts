@@ -6,7 +6,7 @@ import { NAVIGATE_ON_DENIED } from './navigate-on-denied';
 import { holdsPermission } from './nav';
 import type { CompanyContext, Grant, Locale } from './models';
 
-export type ContextLoad = 'ok' | 'forbidden' | 'not-found';
+export type ContextLoad = 'ok' | 'forbidden' | 'not-found' | 'superseded';
 
 @Injectable({ providedIn: 'root' })
 export class CompanyContextStore {
@@ -20,8 +20,9 @@ export class CompanyContextStore {
   readonly mfaStepUpRequired = signal(false);
   readonly withheldPermissions = signal<readonly string[]>([]);
   private generation = 0;
-  private sequence = 0;
-  private latestSequence = 0;
+  private epoch = 0;
+  /** Company of the latest `load` request. `reload` never moves this. */
+  private targetId: string | null = null;
   private pendingId: string | null = null;
   private pending: Promise<ContextLoad> | null = null;
 
@@ -35,8 +36,8 @@ export class CompanyContextStore {
    */
   reset(): void {
     this.generation += 1;
-    this.sequence += 1;
-    this.latestSequence = this.sequence;
+    this.epoch += 1;
+    this.targetId = null;
     this.pending = null;
     this.pendingId = null;
     this.companyId.set(null);
@@ -50,6 +51,7 @@ export class CompanyContextStore {
 
   load(companyId: string): Promise<ContextLoad> {
     const id = companyId.toLowerCase();
+    this.targetId = id;
     if (this.companyId() === id && this.pending === null) {
       return Promise.resolve('ok');
     }
@@ -57,9 +59,8 @@ export class CompanyContextStore {
       return this.pending;
     }
     const generation = this.generation;
-    const sequence = ++this.sequence;
-    this.latestSequence = sequence;
-    const task = this.fetch(id, generation, sequence).finally(() => {
+    const epoch = ++this.epoch;
+    const task = this.fetch(id, generation, epoch, false).finally(() => {
       if (this.pending === task) {
         this.pending = null;
         this.pendingId = null;
@@ -70,19 +71,43 @@ export class CompanyContextStore {
     return task;
   }
 
-  private applies(generation: number, sequence: number): boolean {
-    return generation === this.generation && sequence === this.latestSequence;
+  /**
+   * Fetches this company again, bypassing the same-company cache.
+   * Runs only when `companyId` is the latest `load` target. A load for a
+   * different company, pending or finished, makes this a no-op. The response
+   * is stored only if that company is still the target when it arrives.
+   */
+  reload(companyId: string): Promise<ContextLoad> {
+    const id = companyId.toLowerCase();
+    if (this.targetId !== id) {
+      return Promise.resolve('superseded');
+    }
+    const generation = this.generation;
+    const epoch = ++this.epoch;
+    return this.fetch(id, generation, epoch, true);
   }
 
-  private async fetch(companyId: string, generation: number, sequence: number): Promise<ContextLoad> {
+  private stale(generation: number, epoch: number, companyId: string, reload: boolean): boolean {
+    if (generation !== this.generation || epoch !== this.epoch) {
+      return true;
+    }
+    return reload && this.targetId !== companyId;
+  }
+
+  private async fetch(
+    companyId: string,
+    generation: number,
+    epoch: number,
+    reload: boolean,
+  ): Promise<ContextLoad> {
     try {
       const context = await firstValueFrom(
         this.http.get<CompanyContext>(`/api/c/${companyId}/context`, {
           context: new HttpContext().set(NAVIGATE_ON_DENIED, true),
         }),
       );
-      if (!this.applies(generation, sequence)) {
-        return 'ok';
+      if (this.stale(generation, epoch, companyId, reload)) {
+        return 'superseded';
       }
       this.companyId.set(context.company.id.toLowerCase());
       this.timezone.set(
@@ -95,8 +120,8 @@ export class CompanyContextStore {
       this.withheldPermissions.set(context.withheldPermissions);
       return 'ok';
     } catch (error: unknown) {
-      if (!this.applies(generation, sequence)) {
-        return 'ok';
+      if (this.stale(generation, epoch, companyId, reload)) {
+        return 'superseded';
       }
       this.companyId.set(null);
       this.grants.set([]);

@@ -63,12 +63,14 @@ test('admin.a sees company A and not company B', async ({ page, request }) => {
   await shot(page, 'orders-mobile');
 });
 
-test('fulfil.a has no invoices or admin, and invoices are forbidden', async ({ page, request }) => {
+test('fulfil.a sees Company and cannot open invoices', async ({ page, request }) => {
   await devLogin(page, 'fulfil.a@example.test');
   await ensureEnglish(page);
   await expect(page.getByRole('link', { name: 'Orders', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Company', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Invoices', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Admin', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Stores', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Admin', exact: true })).toBeVisible();
 
   const companyA = await companyId(request, 'Nutbox (demo data)');
   await page.goto(`/c/${companyA}/invoices`);

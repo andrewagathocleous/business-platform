@@ -245,7 +245,7 @@ test('admin.a invites a member, toggles a switch, and reviews printers', async (
   await checkScreen(page, 'admin-printers');
 });
 
-test('fulfil.a cannot open clients, invoices or admin', async ({ page, request }) => {
+test('fulfil.a cannot open clients, invoices, members or stores', async ({ page, request }) => {
   await devLogin(page, 'fulfil.a@example.test');
   await ensureEnglish(page);
   await page.getByRole('link', { name: '#1002' }).click();
@@ -258,9 +258,11 @@ test('fulfil.a cannot open clients, invoices or admin', async ({ page, request }
   await shot(page, 'order-detail-print');
   const nav = page.getByRole('navigation', { name: 'Sections' });
   await expect(nav.getByRole('link', { name: 'Orders', exact: true })).toBeVisible();
+  await expect(nav.getByRole('link', { name: 'Company', exact: true })).toBeVisible();
   await expect(nav.getByRole('link', { name: 'Clients', exact: true })).toHaveCount(0);
   await expect(nav.getByRole('link', { name: 'Invoices', exact: true })).toHaveCount(0);
   await expect(nav.getByRole('link', { name: 'Members', exact: true })).toHaveCount(0);
+  await expect(nav.getByRole('link', { name: 'Stores', exact: true })).toHaveCount(0);
   const companyA = await companyId(request, 'Nutbox (demo data)');
   await page.goto(`/c/${companyA}/clients`);
   await expect(page.getByRole('heading', { name: 'Forbidden', exact: true })).toBeVisible();
@@ -268,8 +270,12 @@ test('fulfil.a cannot open clients, invoices or admin', async ({ page, request }
   await expect(page.getByRole('heading', { name: 'Forbidden', exact: true })).toBeVisible();
   await page.goto(`/c/${companyA}/admin/members`);
   await expect(page.getByRole('heading', { name: 'Forbidden', exact: true })).toBeVisible();
-  await page.goto(`/c/${companyA}/admin`);
+  await page.goto(`/c/${companyA}/admin/stores`);
   await expect(page.getByRole('heading', { name: 'Forbidden', exact: true })).toBeVisible();
+  await page.goto(`/c/${companyA}/admin`);
+  await expect(page.getByRole('heading', { name: 'Company', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Legal name')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
 });
 
 async function checkScreen(page: Page, name: string): Promise<void> {

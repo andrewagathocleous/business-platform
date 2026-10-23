@@ -54,7 +54,12 @@ const EXEMPTIONS: { route: string; reason: string }[] = [
   { route: 'GET /api/c/:companyId/gift-message-templates', reason: 'Template list. No object id.' },
   { route: 'GET /api/c/:companyId/print-jobs', reason: 'Print-job list. No object id in the path or body.' },
   { route: 'GET /api/c/:companyId/printers', reason: 'Printer list. No printer id route.' },
+  { route: 'PATCH /api/c/:companyId/company', reason: 'Edits this company. No other object id.' },
+  { route: 'GET /api/c/:companyId/brands', reason: 'Brand list. No object id.' },
+  { route: 'POST /api/c/:companyId/brands', reason: 'Creates a brand. No existing object id.' },
   { route: 'GET /api/c/:companyId/locations', reason: 'Location list. No object id.' },
+  { route: 'POST /api/c/:companyId/locations', reason: 'Creates a location. No existing object id.' },
+  { route: 'GET /api/c/:companyId/stores', reason: 'Store list. No object id.' },
   { route: 'GET /api/c/:companyId/printer-mappings', reason: 'Printer-mapping list. No object id.' },
   { route: 'GET /api/c/:companyId/automation/switches', reason: 'Switch list. No object id.' },
   { route: 'GET /api/c/:companyId/automation/jobs', reason: 'Job list. No job id route.' },
@@ -194,6 +199,8 @@ type Fixtures = {
   membershipA: string;
   identityA: string;
   locationA: string;
+  brandA: string;
+  storeA: string;
   printerA: string;
   connectionA: string;
   tokenB: string;
@@ -339,6 +346,15 @@ async function loadFixtures(adminA: Session, adminB: Session, companyA: string, 
     membershipA: membership.id,
     identityA: stringField(record(identityBody.identity), 'id'),
     locationA: printer.locationId,
+    brandA: (
+      await inCompany(companyA, (tx) =>
+        tx.brand.findFirstOrThrow({
+          where: { companyId: companyA, name: 'Nutbox (demo)' },
+          select: { id: true },
+        }),
+      )
+    ).id,
+    storeA: store.id,
     printerA: printer.id,
     connectionA: connection.id,
     tokenB: stringField(expectOk(tokenBResponse, 'identity B'), 'token'),
@@ -635,6 +651,44 @@ function sweepCases(adminB: Session, fx: Fixtures): SweepCase[] {
       b(`/service-identities/${fx.identityA}`),
       () => identitySnap(fx),
     ),
+    onB(
+      'brand-patch',
+      'PATCH /api/c/:companyId/brands/:id',
+      'patch',
+      b(`/brands/${fx.brandA}`),
+      () => setupSnap(fx),
+      { name: 'Stolen brand' },
+    ),
+    onB(
+      'location-patch',
+      'PATCH /api/c/:companyId/locations/:id',
+      'patch',
+      b(`/locations/${fx.locationA}`),
+      () => setupSnap(fx),
+      { name: 'Stolen location' },
+    ),
+    onB('store-get', 'GET /api/c/:companyId/stores/:id', 'get', b(`/stores/${fx.storeA}`), () => setupSnap(fx)),
+    onB(
+      'store-post',
+      'POST /api/c/:companyId/stores',
+      'post',
+      b('/stores'),
+      () => setupSnap(fx),
+      {
+        name: `Stolen store ${runId}`,
+        platform: 'prestashop',
+        brandId: fx.brandA,
+        locationId: fx.locationA,
+      },
+    ),
+    onB(
+      'store-patch',
+      'PATCH /api/c/:companyId/stores/:id',
+      'patch',
+      b(`/stores/${fx.storeA}`),
+      () => setupSnap(fx),
+      { name: 'Stolen store' },
+    ),
     {
       name: 'store-event',
       route: 'POST /api/automation/v1/c/:companyId/store-connections/:connectionId/events',
@@ -793,6 +847,43 @@ function invoiceCreateSnap(fx: Fixtures): Promise<string> {
         (SELECT count(*)::int FROM invoice WHERE company_id = ${fx.companyA}::uuid) AS invoices
     `,
   );
+}
+
+function setupSnap(fx: Fixtures): Promise<string> {
+  return Promise.all([
+    rows(
+      fx.companyA,
+      (tx) => tx.$queryRaw`
+        SELECT name, archived_at::text AS archived_at
+        FROM brand
+        WHERE id = ${fx.brandA}::uuid
+      `,
+    ),
+    rows(
+      fx.companyA,
+      (tx) => tx.$queryRaw`
+        SELECT name, archived_at::text AS archived_at
+        FROM location
+        WHERE id = ${fx.locationA}::uuid
+      `,
+    ),
+    rows(
+      fx.companyA,
+      (tx) => tx.$queryRaw`
+        SELECT name, platform::text, status
+        FROM store
+        WHERE id = ${fx.storeA}::uuid
+      `,
+    ),
+    rows(
+      fx.companyB,
+      (tx) => tx.$queryRaw`
+        SELECT count(*)::int AS stores
+        FROM store
+        WHERE company_id = ${fx.companyB}::uuid
+      `,
+    ),
+  ]).then((parts) => JSON.stringify(parts));
 }
 
 function storeSnap(fx: Fixtures): Promise<string> {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { documentTotalsSchema } from '../contracts/document';
-import { currencyMinorDigits } from './currency';
+import { currencyMinorDigits, isKnownCurrency } from './currency';
 import { AmountError, parseAmount, round2 } from './parse';
 import { calculateDocumentTotals, DocumentValidationError, type DocumentLineInput } from './totals';
 
@@ -19,6 +19,15 @@ function line(overrides: Partial<DocumentLineInput> = {}): DocumentLineInput {
 function totals(pricesIncludeTax: boolean, lines: DocumentLineInput[]) {
   return calculateDocumentTotals({ pricesIncludeTax, lines });
 }
+
+describe('isKnownCurrency', () => {
+  it('accepts currencies Intl lists and rejects everything else', () => {
+    expect(isKnownCurrency('EUR')).toBe(true);
+    expect(isKnownCurrency('USD')).toBe(true);
+    expect(isKnownCurrency('ZZZ')).toBe(false);
+    expect(isKnownCurrency('EURO')).toBe(false);
+  });
+});
 
 describe('currencyMinorDigits', () => {
   it('accepts two-digit currencies and rejects every other precision', () => {
@@ -53,7 +62,12 @@ describe('calculateDocumentTotals worked examples', () => {
     const result = totals(false, [
       line({ quantity: '3', unitPrice: '0.3333', taxCode: 'STD', taxRatePercent: '19' }),
     ]);
-    expect(result).toMatchObject({ subtotal: '1.00', taxTotal: '0.19', total: '1.19', netTotal: '1.00' });
+    expect(result).toMatchObject({
+      subtotal: '1.00',
+      taxTotal: '0.19',
+      total: '1.19',
+      netTotal: '1.00',
+    });
   });
 
   it('E2 exclusive 1 × 0.125 @0% rounds half up', () => {
@@ -144,7 +158,9 @@ describe('calculateDocumentTotals worked examples', () => {
   it('E11 rejects quantity 0, a negative price, discount 101 and a 5-dp quantity', () => {
     expect(codeOf(() => totals(false, [line({ quantity: '0' })]))).toBe('quantity_not_positive');
     expect(codeOf(() => totals(false, [line({ unitPrice: '-1.00' })]))).toBe('unit_price_negative');
-    expect(codeOf(() => totals(false, [line({ discountPercent: '101' })]))).toBe('discount_out_of_range');
+    expect(codeOf(() => totals(false, [line({ discountPercent: '101' })]))).toBe(
+      'discount_out_of_range',
+    );
     expect(codeOf(() => totals(false, [line({ quantity: '1.00000' })]))).toBe('quantity_scale');
   });
 });

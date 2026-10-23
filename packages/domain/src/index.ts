@@ -4,6 +4,7 @@ export {
   AmountError,
   calculateDocumentTotals,
   currencyMinorDigits,
+  isKnownCurrency,
   DocumentValidationError,
   money,
   parseAmount,
@@ -73,4 +74,5 @@ export type { DocumentLineDto, DocumentTotalsDto } from './contracts/document';
 
 export { normalizeForDuplicateCheck } from './text/normalize';
 export { addDaysToBusinessDate, businessDateInZone } from './time/business-date';
+export { isIanaTimeZone } from './time/iana-zone';
 export { instantToWallTimeInZone, wallTimeInZoneToInstant } from './time/wall-time';

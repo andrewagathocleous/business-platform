@@ -83,6 +83,7 @@ export const appConfig: ApplicationConfig = {
         availableLangs: ['en', 'el'],
         defaultLang: 'en',
         fallbackLang: 'en',
+        missingHandler: { useFallbackTranslation: true },
         reRenderOnLangChange: true,
         prodMode: !isDevMode(),
       },

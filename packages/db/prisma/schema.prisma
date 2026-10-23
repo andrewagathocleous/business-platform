@@ -383,6 +383,7 @@ model Company {
   defaultLocale      Locale   @default(en) @map("default_locale")
   documentLanguage   Locale   @default(en) @map("document_language")
   paymentTermsDays   Int      @default(30) @map("payment_terms_days")
+  version            Int      @default(1)
   status             String   @default("active")
   isFictional        Boolean  @default(false) @map("is_fictional")
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -580,7 +581,8 @@ model Brand {
   id        String  @id @default(uuid(7)) @db.Uuid
   companyId String  @map("company_id") @db.Uuid
   company   Company @relation(fields: [companyId], references: [id])
-  name      String
+  name       String
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(6)
 
   stores Store[]
 
@@ -593,8 +595,9 @@ model Location {
   companyId String  @map("company_id") @db.Uuid
   company   Company @relation(fields: [companyId], references: [id])
   name      String
-  address   Json    @db.JsonB
-  timezone  String?
+  address    Json      @db.JsonB
+  timezone   String?
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(6)
 
   stores   Store[]
   printers Printer[]

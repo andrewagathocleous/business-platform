@@ -167,6 +167,29 @@
         "tags": [
           "company"
         ]
+      },
+      "post": {
+        "operationId": "CompanySetupController_createLocation",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create a location",
+        "tags": [
+          "company"
+        ]
       }
     },
     "/api/c/{companyId}/members": {
@@ -446,6 +469,261 @@
           }
         },
         "summary": "Revoke an automation token",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/company": {
+      "patch": {
+        "operationId": "CompanySetupController_updateCompany",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Update company details. expectedVersion must match.",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/brands": {
+      "get": {
+        "operationId": "CompanySetupController_brands",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Brands in this company, including archived ones",
+        "tags": [
+          "company"
+        ]
+      },
+      "post": {
+        "operationId": "CompanySetupController_createBrand",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create a brand",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/brands/{id}": {
+      "patch": {
+        "operationId": "CompanySetupController_updateBrand",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Rename, archive or restore a brand",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/locations/{id}": {
+      "patch": {
+        "operationId": "CompanySetupController_updateLocation",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Edit, archive or restore a location",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores": {
+      "get": {
+        "operationId": "CompanySetupController_stores",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Stores in this company. A store grant sees only those stores.",
+        "tags": [
+          "company"
+        ]
+      },
+      "post": {
+        "operationId": "CompanySetupController_createStore",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create a store. Platform is fixed after this.",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores/{id}": {
+      "get": {
+        "operationId": "CompanySetupController_store",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "One store, with connection id, mode and status only",
+        "tags": [
+          "company"
+        ]
+      },
+      "patch": {
+        "operationId": "CompanySetupController_updateStore",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Edit, archive or restore a store. Platform cannot change.",
         "tags": [
           "company"
         ]

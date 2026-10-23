@@ -88,6 +88,12 @@ export async function settleCommerceError(
         message: error.message,
       });
     }
+    if (error.reason === 'name_taken' || error.reason === 'location_in_use') {
+      throw new ConflictException({
+        code: error.reason,
+        message: error.message,
+      });
+    }
     throw new ConflictException(error.message);
   }
   if (error.reason === 'print_provider_unavailable') {

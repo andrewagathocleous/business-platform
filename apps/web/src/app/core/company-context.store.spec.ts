@@ -67,9 +67,56 @@ describe('CompanyContextStore', () => {
     latestRequest.flush(context(companyZ, 'audit.view'));
     await latest;
     staleRequest.flush('nope', { status: 500, statusText: 'Server error' });
-    await expect(stale).resolves.toBe('ok');
+    await expect(stale).resolves.toBe('superseded');
     expect(store.companyId()).toBe(companyZ);
     expect(permissions(store.grants())).toEqual(['audit.view']);
+    http.verify();
+  });
+
+  it('does not let a save reload replace a company switch', async () => {
+    const { store, http } = setup();
+    const loadA = store.load(companyX);
+    http.expectOne(`/api/c/${companyX}/context`).flush(context(companyX, 'invoice.view', 'EUR'));
+    await loadA;
+
+    const loadB = store.load(companyY);
+    const requestB = http.expectOne(`/api/c/${companyY}/context`);
+    const reload = store.reload(companyX);
+    expect(http.match(`/api/c/${companyX}/context`)).toEqual([]);
+    await expect(reload).resolves.toBe('superseded');
+
+    requestB.flush(context(companyY, 'order.view', 'USD', 'Europe/Athens'));
+    await expect(loadB).resolves.toBe('ok');
+    expect(store.companyId()).toBe(companyY);
+    expect(store.currency()).toBe('USD');
+    expect(store.timezone()).toBe('Europe/Athens');
+    expect(permissions(store.grants())).toEqual(['order.view']);
+    http.verify();
+  });
+
+  it('drops a reload response that arrives after the target company changes', async () => {
+    const { store, http } = setup();
+    const loadA = store.load(companyX);
+    http
+      .expectOne(`/api/c/${companyX}/context`)
+      .flush(context(companyX, 'invoice.view', 'EUR', 'Asia/Nicosia'));
+    await loadA;
+
+    const reload = store.reload(companyX);
+    const reloadRequest = http.expectOne(`/api/c/${companyX}/context`);
+    const loadB = store.load(companyY);
+    const requestB = http.expectOne(`/api/c/${companyY}/context`);
+    reloadRequest.flush(context(companyX, 'invoice.view', 'GBP', 'Europe/London'));
+    await expect(reload).resolves.toBe('superseded');
+    expect(store.currency()).toBe('EUR');
+    expect(permissions(store.grants())).toEqual(['invoice.view']);
+
+    requestB.flush(context(companyY, 'order.view', 'USD', 'Europe/Athens'));
+    await expect(loadB).resolves.toBe('ok');
+    expect(store.companyId()).toBe(companyY);
+    expect(store.currency()).toBe('USD');
+    expect(store.timezone()).toBe('Europe/Athens');
+    expect(permissions(store.grants())).toEqual(['order.view']);
     http.verify();
   });
 });
@@ -84,15 +131,20 @@ function setup(): { store: CompanyContextStore; http: HttpTestingController } {
   };
 }
 
-function context(id: string, permission: string): CompanyContext {
+function context(
+  id: string,
+  permission: string,
+  currency = 'EUR',
+  timezone = 'Asia/Nicosia',
+): CompanyContext {
   return {
     company: {
       id,
       legalName: 'Legal',
       tradingName: 'Trade',
       status: 'active',
-      timezone: 'Asia/Nicosia',
-      defaultCurrency: 'EUR',
+      timezone,
+      defaultCurrency: currency,
       countryCode: 'CY',
       documentLanguage: 'en',
     },

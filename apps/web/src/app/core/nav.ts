@@ -20,6 +20,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
   },
   { path: 'admin/audit', permission: 'audit.view', labelKey: 'nav.audit', admin: true },
   { path: 'admin/printers', permission: 'printer.manage', labelKey: 'nav.printers', admin: true },
+  { path: 'admin/company', permission: 'company.view', labelKey: 'nav.company', admin: true },
+  { path: 'admin/stores', permission: 'store.view', labelKey: 'nav.stores', admin: true },
 ];
 
 export function visibleNav(grants: readonly Pick<Grant, 'permission'>[]): NavItem[] {

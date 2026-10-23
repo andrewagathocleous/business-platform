@@ -1,6 +1,7 @@
 import { BadRequestException, Controller, Get, HttpCode, Inject, Post, Put, Req } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
+import { isIanaTimeZone } from '@bp/domain';
 import { z } from 'zod';
 import { PlatformOwner } from '../authz/platform-owner.decorator';
 import { requestMeta } from '../identity/request-meta';
@@ -58,7 +59,7 @@ export class PlatformController {
     if (!parsed.success) {
       throw new BadRequestException(issueMessage(parsed.error));
     }
-    if (!isTimezone(parsed.data.timezone)) {
+    if (!isIanaTimeZone(parsed.data.timezone)) {
       throw new BadRequestException('timezone is invalid');
     }
     const session = requireOwner(req);
@@ -97,15 +98,6 @@ function requireOwner(req: Request): { userId: string; email: string } {
     throw new BadRequestException('Authentication is required');
   }
   return { userId: session.userId, email: session.email };
-}
-
-function isTimezone(value: string): boolean {
-  try {
-    Intl.DateTimeFormat(undefined, { timeZone: value });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function unknownBody(req: Request): unknown {
