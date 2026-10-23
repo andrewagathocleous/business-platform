@@ -1,4 +1,4 @@
-/** Provider adapters. Shopify and printing are Phase 1 mock contracts. */
+/** Provider adapters. Shopify is a Phase 1 mock. PrestaShop is the R1 read-only client. PrintNode is the R1 print client. */
 export const INTEGRATIONS_PACKAGE = '@bp/integrations' as const;
 
 export { LocalFsStorage } from './storage/local-fs';
@@ -14,7 +14,38 @@ export {
   readShopifyEventIdentity,
   shopifyFixturesDirectory,
 } from './shopify/map-order';
-export type { MappedOrderLine, MappedShopifyOrder, StoreOrderConfig } from './shopify/map-order';
+export type {
+  MappedOrder,
+  MappedOrderLine,
+  MappedShopifyOrder,
+  StoreOrderConfig,
+} from './shopify/map-order';
+
+export {
+  PrestashopAuthFailed,
+  PrestashopBadResponse,
+  createPrestashopClient,
+} from './prestashop/client';
+export type {
+  PrestashopAddress,
+  PrestashopCarrier,
+  PrestashopClient,
+  PrestashopCountry,
+  PrestashopCurrency,
+  PrestashopCustomer,
+  PrestashopOrder,
+  PrestashopOrderRow,
+  PrestashopOrderState,
+} from './prestashop/client';
+export { buildPrestashopOrderPayload, prestashopOrderPayloadSchema } from './prestashop/payload';
+export type { PrestashopOrderLookups, PrestashopOrderPayload } from './prestashop/payload';
+export {
+  PrestashopMapError,
+  mapPrestashopOrder,
+  prestashopFixturesDirectory,
+  readPrestashopEventIdentity,
+} from './prestashop/map-order';
+export type { PrestashopConnectionConfig } from './prestashop/map-order';
 
 export { MockPrintProvider, MOCK_PRINTERS, behaviourOf } from './printing/mock';
 export { PrintNodeProvider } from './printing/printnode';

@@ -1,0 +1,17 @@
+{
+  "countries": [
+    {
+      "id": 101,
+      "iso_code": "CY",
+      "name": [
+        { "id": 1, "value": "Cyprus" },
+        { "id": "2", "value": "Κύπρος" }
+      ]
+    },
+    {
+      "id": "102",
+      "iso_code": "GR",
+      "name": "Greece"
+    }
+  ]
+}

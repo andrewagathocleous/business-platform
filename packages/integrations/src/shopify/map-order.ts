@@ -81,6 +81,8 @@ export type MappedShopifyOrder = {
   total: string;
 };
 
+export type MappedOrder = MappedShopifyOrder;
+
 export class ShopifyMapError extends Error {
   override readonly name = 'ShopifyMapError';
 }
@@ -91,7 +93,10 @@ export function shopifyFixturesDirectory(): string {
 }
 
 /** Reads the identity the inbox stores before a full map. Missing fields are a permanent map error. */
-export function readShopifyEventIdentity(payload: unknown): { externalId: string; sourceUpdatedAt: Date } {
+export function readShopifyEventIdentity(payload: unknown): {
+  externalId: string;
+  sourceUpdatedAt: Date;
+} {
   const order = record(payload, 'payload');
   return {
     externalId: requiredString(order, 'id'),
@@ -119,7 +124,10 @@ export function mapShopifyOrder(payload: unknown, store: StoreOrderConfig): Mapp
     sourceUpdatedAt,
     paymentStatus,
     sourceStatus: {
-      displayFulfillmentStatus: optionalString(order.displayFulfillmentStatus, 'displayFulfillmentStatus'),
+      displayFulfillmentStatus: optionalString(
+        order.displayFulfillmentStatus,
+        'displayFulfillmentStatus',
+      ),
       cancelledAt: nullableTimestamp(order.cancelledAt, 'cancelledAt'),
     },
     customer: mapCustomer(order),
@@ -172,12 +180,16 @@ function mapShipping(
   const title = typeof line.title === 'string' && line.title.length > 0 ? line.title : null;
   const key = code ?? title;
   const mapped = key ? deliveryMethodMap[key] : undefined;
-  const method = mapped !== undefined && DELIVERY.has(mapped) ? (mapped as DeliveryMethod) : 'unknown';
+  const method =
+    mapped !== undefined && DELIVERY.has(mapped) ? (mapped as DeliveryMethod) : 'unknown';
   return { method, line };
 }
 
 function mapCustomer(order: Record<string, unknown>): MappedShopifyOrder['customer'] {
-  const customer = order.customer === undefined || order.customer === null ? null : record(order.customer, 'customer');
+  const customer =
+    order.customer === undefined || order.customer === null
+      ? null
+      : record(order.customer, 'customer');
   return {
     id: optionalText(customer?.id, 'customer.id'),
     displayName: optionalText(customer?.displayName, 'customer.displayName'),

@@ -1,0 +1,84 @@
+{
+  "orders": [
+    {
+      "id": 501,
+      "id_address_delivery": "401",
+      "id_address_invoice": "402",
+      "id_currency": 1,
+      "id_customer": 301,
+      "id_carrier": 7,
+      "current_state": 2,
+      "payment": "Demo bank wire",
+      "valid": "1",
+      "secure_key": "fixture-not-a-secret",
+      "gift": 1,
+      "gift_message": "Χρόνια πολλά, Μαρία!\n\nΜε αγάπη,\nΓιώργος & Ελένη — «καλή χρονιά» ",
+      "date_add": "2026-06-15 14:30:00",
+      "date_upd": "2026-06-15 16:45:00",
+      "reference": "DEMOA501",
+      "total_paid_tax_incl": "51.500000",
+      "total_paid_tax_excl": "43.277311",
+      "total_products_wt": "45.500000",
+      "total_shipping_tax_incl": "6.000000",
+      "associations": {
+        "order_rows": [
+          {
+            "id": 901,
+            "product_id": 11,
+            "product_attribute_id": "0",
+            "product_quantity": 2,
+            "product_name": "Olive oil tin",
+            "product_reference": "DEMO-OIL",
+            "product_price": "16.806723",
+            "unit_price_tax_incl": "20.000000"
+          },
+          {
+            "id": "902",
+            "product_id": "12",
+            "product_attribute_id": "3",
+            "product_quantity": "1",
+            "product_name": "Honey jar",
+            "product_reference": "DEMO-HONEY",
+            "product_price": "4.621849",
+            "unit_price_tax_incl": "5.500000"
+          }
+        ]
+      }
+    },
+    {
+      "id": "502",
+      "id_address_delivery": "403",
+      "id_address_invoice": "403",
+      "id_currency": "1",
+      "id_customer": "302",
+      "id_carrier": "8",
+      "current_state": "10",
+      "payment": "Demo waiting",
+      "valid": "0",
+      "secure_key": "fixture-not-a-secret",
+      "gift": "0",
+      "gift_message": "",
+      "date_add": "2026-01-20 09:15:00",
+      "date_upd": "2026-01-20 11:00:00",
+      "reference": "DEMOB502",
+      "total_paid_tax_incl": "42.378000",
+      "total_paid_tax_excl": "35.000000",
+      "total_products_wt": "30.378000",
+      "total_shipping_tax_incl": "12.000000",
+      "associations": {
+        "order_rows": [
+          {
+            "id": "903",
+            "product_id": "13",
+            "product_attribute_id": "0",
+            "product_quantity": "3",
+            "product_name": "Tea tin",
+            "product_reference": "",
+            "product_price": "8.509244",
+            "unit_price_tax_incl": "10.126000"
+          }
+        ]
+      }
+    }
+  ]
+}

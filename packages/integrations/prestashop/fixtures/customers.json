@@ -1,0 +1,20 @@
+{
+  "customers": [
+    {
+      "id": 301,
+      "firstname": "Eleni",
+      "lastname": "Charalambous",
+      "email": "eleni.charalambous@example.test",
+      "passwd": "fixture-not-a-password",
+      "secure_key": "fixture-not-a-customer-secret"
+    },
+    {
+      "id": 302,
+      "firstname": "Jonas",
+      "lastname": "Meier",
+      "email": "jonas.meier@example.test",
+      "passwd": "fixture-not-a-password",
+      "secure_key": "fixture-not-a-customer-secret"
+    }
+  ]
+}
