@@ -38,6 +38,29 @@ From the machine-wide `~/.agents/AGENTS.md`, the planner → implementer → rev
 - Anything involving authorisation, RLS, concurrency, idempotency or deduplication has integration tests against real Postgres, not mocks.
 - Say which level a capability was tested at: mock-tested, sandbox-tested or live-tested.
 
+## Review speed rules
+
+**Status: on** (adopted 2026-10-23 at the user's request). To switch back, set the status to **off** or delete this section. With the rules off, the machine-wide defaults apply again: every review finding blocks, the implementer makes every change, and every review runs at `xhigh`. These rules apply to this repository only.
+
+**Severity.** The reviewer labels every finding:
+
+- **P0:** a security hole (authentication bypass, a tenant leak, an exposed secret), data loss or corruption, wrong money or tax, a side effect that can happen twice (print, send, publish), or a broken backup or restore.
+- **P1:** a bug a user would hit in normal use, or a violation of the current plan's acceptance criteria.
+- **P2:** a rare edge case with low impact, or hardening.
+
+**Rules.**
+
+1. **Blocking.** Only P0 and P1 findings block a step. A P2 finding is fixed in the same round only when the fix is small (about 10 lines) and in a file the round already changes. Otherwise it goes to `docs/BACKLOG.md` with the finding text, so nothing is dropped.
+2. **Strict areas.** In these areas every finding blocks, P2 included, and the planner does not edit code directly:
+   - authentication and sessions;
+   - authorisation and tenant isolation (RLS);
+   - money, tax and invoice issuance;
+   - outbound safety (switches, never printing or sending twice, uncertain outcomes);
+   - credentials and secrets;
+   - backups and restore.
+3. **Planner edits.** The planner may make a change directly, instead of a full implementer round, when it is about 10 changed lines or fewer outside the strict areas, or documentation only. The next review covers those edits.
+4. **Review effort.** `xhigh` when the diff touches a strict area; `high` for everything else (tooling, scripts, docs, screens with no permission logic).
+
 ## Git
 
 - Work on `develop`. `deploy_uat` and `deploy_prod` are release branches, and merging into them is a deliberate release action.
