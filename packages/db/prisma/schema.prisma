@@ -644,6 +644,12 @@ model StoreConnection {
   lastEventAt      DateTime?      @map("last_event_at") @db.Timestamptz(6)
   lastSyncAt       DateTime?      @map("last_sync_at") @db.Timestamptz(6)
   syncCheckpoint   Json?          @map("sync_checkpoint") @db.JsonB
+  /// Per-platform settings. PrestaShop validates this in the API, not in the database.
+  settings         Json           @default("{}") @map("settings") @db.JsonB
+  lastErrorClass   String?        @map("last_error_class")
+  lastErrorAt      DateTime?      @map("last_error_at") @db.Timestamptz(6)
+  /// One poll at a time. Null means the connection is free.
+  syncLockedUntil  DateTime?      @map("sync_locked_until") @db.Timestamptz(6)
 
   inboxEvents IntegrationInbox[]
   orders      SalesOrder[]

@@ -91,6 +91,8 @@ Uses the existing `CredentialVault`.
 
 ## R1-C. PrestaShop reader (P2-04)
 
+The implemented reader is [docs/integrations/prestashop.md](../integrations/prestashop.md). Where this outline differs, that document is the contract: the trigger is `POST /api/automation/v1/c/:companyId/store-sync` for every due connection in the company, one poll at a time uses the `sync_locked_until` lease, pages are 100 rows with no offsets, a run stops after 20 pages that move past the checkpoint it started with, pages at or before that checkpoint do not count and 50 of them stop with `overlap_too_large`, and a full page that does not move `date_upd` stops with `too_many_in_one_second`.
+
 `packages/integrations/src/prestashop/`: client, mapper and fictional fixtures. Mark the fixtures "modelled on PrestaShop 1.7.7 JSON output; checked against the live shop at R1-H".
 
 **Trigger.** Following ADR-0002, n8n owns schedules:

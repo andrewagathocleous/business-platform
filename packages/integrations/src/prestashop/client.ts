@@ -142,6 +142,7 @@ export type PrestashopClient = {
 
 export class PrestashopAuthFailed extends Error {
   override readonly name = 'PrestashopAuthFailed';
+  readonly code = 'auth_failed';
 
   constructor() {
     super('prestashop_auth_failed');
@@ -150,6 +151,7 @@ export class PrestashopAuthFailed extends Error {
 
 export class PrestashopBadResponse extends Error {
   override readonly name = 'PrestashopBadResponse';
+  readonly code = 'bad_response';
   readonly status: number;
 
   constructor(status: number) {
@@ -304,6 +306,11 @@ export type PrestashopOrderState = z.infer<typeof orderStateSchema>;
  * `http:` is accepted only for a loopback host, which is how the tests reach a
  * fake server; `createSafeFetch` still refuses that host outside test.
  */
+/** Canonical shop base. `http:` is accepted only for a loopback host. */
+export function canonicalPrestashopBaseUrl(baseUrl: string): string {
+  return shopBase(baseUrl);
+}
+
 function shopBase(baseUrl: string): string {
   if (hasWhitespaceOrControl(baseUrl)) {
     throw new Error('prestashop_base_url_invalid');

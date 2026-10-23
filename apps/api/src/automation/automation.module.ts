@@ -1,14 +1,19 @@
 import { Inject, Injectable, Module, type OnModuleInit } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { AuthorizationModule } from '../authz/authorization.module';
+import { PrestashopConnections } from '../integrations/prestashop-connections';
+import { OutboundModule } from '../outbound/outbound.module';
+import { PrintingModule } from '../printing/printing.module';
+import { PrintProcessor } from '../printing/print.processor';
+import { VaultModule } from '../vault/vault.module';
 import { AutomationController } from './automation.controller';
 import { CompanyAutomationController } from './company-automation.controller';
 import { CompanyAutomationService } from './company-automation.service';
-import { PrintingModule } from '../printing/printing.module';
-import { PrintProcessor } from '../printing/print.processor';
 import { InboxProcessor } from './inbox.processor';
 import { InboxService } from './inbox.service';
 import { JobRunner } from './jobs/job-runner';
+import { PrestashopPoller } from './prestashop-poller';
+import { StoreSyncService } from './store-sync.service';
 
 @Injectable()
 class JobRegistration implements OnModuleInit {
@@ -16,6 +21,7 @@ class JobRegistration implements OnModuleInit {
     @Inject(JobRunner) private readonly jobs: JobRunner,
     @Inject(InboxProcessor) private readonly inbox: InboxProcessor,
     @Inject(PrintProcessor) private readonly printing: PrintProcessor,
+    @Inject(PrestashopPoller) private readonly prestashop: PrestashopPoller,
   ) {}
 
   onModuleInit(): void {
@@ -24,6 +30,13 @@ class JobRegistration implements OnModuleInit {
       concurrency: 4,
       retryable: true,
       run: (job, tx, signal) => this.inbox.run(job, tx, signal),
+    });
+    this.jobs.register({
+      type: 'prestashop.poll',
+      concurrency: 1,
+      retryable: true,
+      mode: 'external',
+      run: (job, external) => this.prestashop.run(job, external),
     });
     this.jobs.register({
       type: 'print.submit',
@@ -43,9 +56,18 @@ class JobRegistration implements OnModuleInit {
 }
 
 @Module({
-  imports: [AuditModule, AuthorizationModule, PrintingModule],
+  imports: [AuditModule, AuthorizationModule, OutboundModule, PrintingModule, VaultModule],
   controllers: [AutomationController, CompanyAutomationController],
-  providers: [JobRunner, InboxService, InboxProcessor, JobRegistration, CompanyAutomationService],
-  exports: [JobRunner, InboxService, InboxProcessor, CompanyAutomationService],
+  providers: [
+    JobRunner,
+    InboxService,
+    InboxProcessor,
+    JobRegistration,
+    CompanyAutomationService,
+    PrestashopConnections,
+    PrestashopPoller,
+    StoreSyncService,
+  ],
+  exports: [JobRunner, InboxService, InboxProcessor, CompanyAutomationService, PrestashopPoller],
 })
 export class AutomationModule {}

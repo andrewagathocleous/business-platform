@@ -152,6 +152,18 @@ function tryParseJsonContainer(value) {
   return undefined;
 }
 
+function isN8nNodeType(value, path) {
+  // Only the node metadata field nodes.<index>.type. Every other type is checked.
+  if (path.length !== 3 || path[0] !== 'nodes' || path[2] !== 'type') {
+    return false;
+  }
+  const index = path[1];
+  if (typeof index !== 'string' || !/^(0|[1-9][0-9]*)$/.test(index)) {
+    return false;
+  }
+  return /^n8n-nodes-base\.[A-Za-z0-9]+$/.test(value);
+}
+
 function isHttpUrl(value) {
   try {
     const url = new URL(value);
@@ -163,6 +175,11 @@ function isHttpUrl(value) {
 
 function assertLiteralSecret(value, path) {
   const at = path.join('.') || '<root>';
+  // nodes.<index>.type, such as n8n-nodes-base.scheduleTrigger, is one mixed
+  // token of more than 24 characters. It is not a credential.
+  if (isN8nNodeType(value, path)) {
+    return;
+  }
   const masked = maskExpressionSpans(value);
   if (URL_USERINFO.test(masked) || SECRET_VALUE.test(value)) {
     throw new Error(`Possible secret at ${at}`);

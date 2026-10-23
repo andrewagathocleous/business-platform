@@ -494,6 +494,31 @@
         ]
       }
     },
+    "/api/automation/v1/c/{companyId}/store-sync": {
+      "post": {
+        "operationId": "AutomationController_storeSync",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "How many connections were queued, not yet due, or skipped. A duplicate trigger in the same interval inserts nothing."
+          }
+        },
+        "summary": "Enqueue a PrestaShop poll for each due live connection. Bearer token with store.sync.trigger. Writes no audit row.",
+        "tags": [
+          "automation"
+        ]
+      }
+    },
     "/api/automation/v1/c/{companyId}/ping": {
       "get": {
         "operationId": "AutomationController_ping",

@@ -97,6 +97,26 @@ function parseWall(wall: string): WallParts {
   return { year, month, day, hour, minute, second };
 }
 
+/**
+ * UTC instant as shop-local `YYYY-MM-DD HH:mm:ss` in an IANA zone.
+ * The inverse of `wallTimeInZoneToInstant` for an unambiguous wall time.
+ * During a repeated hour the two instants format as the same wall time.
+ */
+export function instantToWallTimeInZone(instant: Date, timeZone: string): string {
+  if (!(instant instanceof Date) || Number.isNaN(instant.getTime())) {
+    throw new Error('instant is not a valid date');
+  }
+  const parts = zonedReader(timeZone)(instant);
+  return (
+    `${String(parts.year).padStart(4, '0')}-` +
+    `${String(parts.month).padStart(2, '0')}-` +
+    `${String(parts.day).padStart(2, '0')} ` +
+    `${String(parts.hour).padStart(2, '0')}:` +
+    `${String(parts.minute).padStart(2, '0')}:` +
+    String(parts.second).padStart(2, '0')
+  );
+}
+
 function zonedReader(timeZone: string): (instant: Date) => WallParts {
   if (timeZone.length === 0) {
     throw new Error('time zone is invalid');

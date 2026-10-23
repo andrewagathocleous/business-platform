@@ -273,10 +273,22 @@ describe('sanitizeWorkflow', () => {
     });
     expect(
       sanitizeWorkflow({
-        nodes: [{ parameters: { jsonBody: "={{ (() => { const label = 'fixture-pass'; return label; })() }}" } }],
+        nodes: [
+          {
+            parameters: {
+              jsonBody: "={{ (() => { const label = 'fixture-pass'; return label; })() }}",
+            },
+          },
+        ],
       }),
     ).toEqual({
-      nodes: [{ parameters: { jsonBody: "={{ (() => { const label = 'fixture-pass'; return label; })() }}" } }],
+      nodes: [
+        {
+          parameters: {
+            jsonBody: "={{ (() => { const label = 'fixture-pass'; return label; })() }}",
+          },
+        },
+      ],
     });
   });
 
@@ -391,6 +403,51 @@ describe('sanitizeWorkflow', () => {
         expect(() => sanitizeWorkflow(parsed), file).not.toThrow();
       }
     }
+  });
+
+  it('rejects a high-entropy type nested under parameters', () => {
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [
+          {
+            parameters: {
+              type: 'n8n-nodes-base.Ab1cdEf2ghIj3klMnOp4qrSt5uvWx6yz',
+            },
+          },
+        ],
+      }),
+    ).toThrow(/Possible secret/);
+  });
+
+  it('allows an n8n node type and still rejects a high-entropy type', () => {
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [{ type: 'n8n-nodes-base.scheduleTrigger', parameters: {} }],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      sanitizeWorkflow({
+        nodes: [{ type: 'Ab1cdEf2ghIj3klMnOp4qrSt5uvWx6yz', parameters: {} }],
+      }),
+    ).toThrow(/Possible secret/);
+  });
+
+  it('exports W0 inactive, posting store-sync with the header-auth name only', async () => {
+    const file = fileURLToPath(new URL('../exports/w0-store-sync.json', import.meta.url));
+    const parsed: unknown = JSON.parse(await readFile(file, 'utf8'));
+    expect(isWorkflowExport(parsed)).toBe(true);
+    if (!isWorkflowExport(parsed) || typeof parsed !== 'object' || parsed === null) {
+      return;
+    }
+    expect(() => sanitizeWorkflow(parsed)).not.toThrow();
+    expect('active' in parsed && parsed.active).toBe(false);
+    const text = JSON.stringify(parsed);
+    expect(text).toContain(
+      'http://api:3000/api/automation/v1/c/REPLACE_WITH_COMPANY_ID/store-sync',
+    );
+    expect(text).toContain('bp store-sync token');
+    expect(text).not.toContain('bps_');
+    expect(text).not.toMatch(/Bearer\s+[A-Za-z0-9]/);
   });
 
   it('rejects a literal password beside an interpolated json field', () => {

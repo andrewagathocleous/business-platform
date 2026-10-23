@@ -24,6 +24,7 @@ export type {
 export {
   PrestashopAuthFailed,
   PrestashopBadResponse,
+  canonicalPrestashopBaseUrl,
   createPrestashopClient,
 } from './prestashop/client';
 export type {

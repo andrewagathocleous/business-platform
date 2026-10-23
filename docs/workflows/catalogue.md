@@ -15,7 +15,8 @@ Common contract for every workflow:
 
 | # | Workflow | Trigger | App APIs used | Side effects | Status |
 |---|---|---|---|---|---|
-| W1 | Store order import | Webhook received by the app → app outbox → n8n webhook (internal). PrestaShop: n8n schedule → `POST …/store-connections/:id/sync` | `POST …/store-connections/:id/events` (Phase 1 mock contract), `…/sync` | Staff notification | Phase 1: app contract and mock fixture only; no n8n export yet |
+| W0 | PrestaShop poll | Schedule every minute | `POST /api/automation/v1/c/:companyId/store-sync` | Queues `prestashop.poll`. No shop write | Exported inactive in `workflows/n8n/exports/w0-store-sync.json`. The company id is replaced after import. Not live-tested |
+| W1 | Store order import | Webhook received by the app → app outbox → n8n webhook (internal). PrestaShop polling is W0 | `POST …/store-connections/:id/events` (Phase 1 mock contract) | Staff notification | Phase 1: app contract and mock fixture only. PrestaShop schedule is the W0 export |
 | W2 | Order ready → documents → print | App outbox event `order.ready` | `POST …/orders/:id/print-requests` | Print (switch-gated) | planned (Phase 2) |
 | W3 | Invoice issued → send | App outbox event `invoice.issued` | `POST …/invoices/:id/send-requests` | Email (switch- and approval-gated) | planned (Phase 3) |
 | W4 | Mailbox event → match → assign | Graph notification received by the app, or schedule | `POST …/mailboxes/:id/sync`, `…/threads/:id/match` | Notification | planned (Phase 3) |

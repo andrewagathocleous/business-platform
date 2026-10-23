@@ -169,6 +169,8 @@ Then open http://localhost:5678. Open that name, not `http://127.0.0.1:5678`. Br
 
 `compose.prod.yml` does not set `N8N_SECURE_COOKIE`. n8n's default is true, and the service sets `N8N_PROTOCOL=http`. The local override sets `N8N_SECURE_COOKIE=false` only in `compose.local.yml`, because that editor is plain HTTP on `127.0.0.1:15678`. That line is not in the production file. This tunnel was not live-tested.
 
+W0 (`workflows/n8n/exports/w0-store-sync.json`) is the inactive PrestaShop poll. After import, replace the company id and attach a Header Auth credential named `bp store-sync token`. The steps are in `workflows/n8n/exports/README.md`.
+
 ## Logs
 
 ```sh

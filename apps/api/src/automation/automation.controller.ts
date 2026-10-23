@@ -7,6 +7,7 @@ import { issueMessage, requireContext, unknownBody } from '../commerce/http';
 import { requestMeta } from '../identity/request-meta';
 import { AutomationRoute } from './automation-route.decorator';
 import { InboxService } from './inbox.service';
+import { StoreSyncService, type StoreSyncCounts } from './store-sync.service';
 
 const eventBody = z
   .object({
@@ -32,7 +33,24 @@ const connectionIdParam = ApiParam({
 @AutomationRoute()
 @Controller('automation/v1/c/:companyId')
 export class AutomationController {
-  constructor(@Inject(InboxService) private readonly inbox: InboxService) {}
+  constructor(
+    @Inject(InboxService) private readonly inbox: InboxService,
+    @Inject(StoreSyncService) private readonly sync: StoreSyncService,
+  ) {}
+
+  @Post('store-sync')
+  @HttpCode(202)
+  @RequirePermission('store.sync.trigger')
+  @ApiOperation({
+    summary:
+      'Enqueue a PrestaShop poll for each due live connection. Bearer token with store.sync.trigger. Writes no audit row.',
+  })
+  @ApiAcceptedResponse({
+    description: 'How many connections were queued, not yet due, or skipped. A duplicate trigger in the same interval inserts nothing.',
+  })
+  storeSync(@Req() req: Request, @Param('companyId') companyId: string): Promise<StoreSyncCounts> {
+    return this.sync.trigger(requireContext(req, companyId));
+  }
 
   @Get('ping')
   @RequirePermission('store.events.ingest')

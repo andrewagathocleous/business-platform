@@ -62,6 +62,10 @@ const EXEMPTIONS: { route: string; reason: string }[] = [
     route: 'GET /api/automation/v1/c/:companyId/ping',
     reason: 'No object id. A staff session is not accepted on this route.',
   },
+  {
+    route: 'POST /api/automation/v1/c/:companyId/store-sync',
+    reason: 'No object id. A staff session is not accepted on this route. Company mismatch is 404.',
+  },
 ];
 
 type Agent = ReturnType<typeof request.agent>;

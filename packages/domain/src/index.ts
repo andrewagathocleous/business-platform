@@ -73,4 +73,4 @@ export type { DocumentLineDto, DocumentTotalsDto } from './contracts/document';
 
 export { normalizeForDuplicateCheck } from './text/normalize';
 export { addDaysToBusinessDate, businessDateInZone } from './time/business-date';
-export { wallTimeInZoneToInstant } from './time/wall-time';
+export { instantToWallTimeInZone, wallTimeInZoneToInstant } from './time/wall-time';

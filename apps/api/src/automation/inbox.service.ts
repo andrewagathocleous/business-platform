@@ -10,9 +10,10 @@ import { AuditService } from '../audit/audit.service';
 import { isUuid } from '../authz/company-path';
 import type { RequestContext } from '../authz/request-context';
 import { CommerceError, settleCommerceError } from '../commerce/errors';
-import { getCorrelationId, uuidv7 } from '../correlation/correlation';
+import { getCorrelationId } from '../correlation/correlation';
 import { PrismaService } from '../database/prisma.service';
 import type { RequestMeta } from '../identity/request-meta';
+import { insertInboxAndEnqueue } from './inbox-insert';
 
 export type StoreEventBody = {
   eventId: string;
@@ -25,15 +26,6 @@ export type IngestHooks = {
   /** Test seam. Throws inside the ingest transaction, after the inbox insert and before the job insert. */
   afterInboxInsert?: () => Promise<void>;
 };
-
-type InboxRow = {
-  id: string;
-  duplicate_count: number;
-  status: string;
-};
-
-const INBOX_ATTEMPTS = 5;
-const INBOX_TIMEOUT_MS = 30_000;
 
 @Injectable()
 export class InboxService {
@@ -76,59 +68,48 @@ export class InboxService {
     try {
       return await this.tenants.run({ companyId: ctx.companyId, actor, correlationId }, async (tx) => {
         const connection = await this.connection(tx, ctx.companyId, connectionId);
-        const payload = JSON.stringify(body.payload);
-        const inserted = await tx.$queryRaw<InboxRow[]>`
-          INSERT INTO integration_inbox (
-            id, company_id, connection_id, provider, external_event_id, topic,
-            external_object_id, source_updated_at, payload, status, duplicate_count, correlation_id
-          ) VALUES (
-            ${uuidv7()}::uuid,
-            ${ctx.companyId}::uuid,
-            ${connection.id}::uuid,
-            ${connection.store.platform},
-            ${body.eventId},
-            ${body.topic},
-            ${identity.externalId},
-            ${identity.sourceUpdatedAt},
-            ${payload}::jsonb,
-            'received'::"inbox_status",
-            0,
-            ${correlationId}
-          )
-          ON CONFLICT (company_id, connection_id, external_event_id)
-          DO UPDATE SET duplicate_count = integration_inbox.duplicate_count + 1
-          RETURNING id, duplicate_count, status::text AS status
-        `;
-        const row = inserted[0];
-        if (!row) {
-          throw new InternalServerErrorException('Inbox insert returned no row');
-        }
         const seam = hooks ?? this.hooks;
-        if (seam?.afterInboxInsert) {
-          await seam.afterInboxInsert();
-        }
-        const duplicateCount = row.duplicate_count;
-        if (duplicateCount > 0) {
-          await this.audit.record(tx, {
-            companyId: ctx.companyId,
-            actorType: 'service',
-            actorId: ctx.serviceIdentityId,
-            actorLabel: ctx.actorLabel,
-            action: 'inbox.duplicate',
-            objectType: 'integration_inbox',
-            objectId: row.id,
-            outcome: 'success',
-            ip: meta.ip,
-            userAgent: meta.userAgent,
-            details: { duplicateCount, externalEventId: body.eventId, connectionId: connection.id },
-          });
-        }
-        if (duplicateCount === 0 || row.status === 'received') {
-          await this.enqueue(tx, ctx, row.id, correlationId);
-        }
+        const row = await insertInboxAndEnqueue(tx, {
+          companyId: ctx.companyId,
+          connectionId: connection.id,
+          provider: connection.store.platform,
+          externalEventId: body.eventId,
+          topic: body.topic,
+          externalObjectId: identity.externalId,
+          sourceUpdatedAt: identity.sourceUpdatedAt,
+          payload: body.payload,
+          correlationId,
+          serviceIdentityId: ctx.serviceIdentityId,
+          actorLabel: ctx.actorLabel,
+          enqueueReceivedDuplicates: true,
+          afterInsert: async () => {
+            if (seam?.afterInboxInsert) {
+              await seam.afterInboxInsert();
+            }
+          },
+          onDuplicate: async (inserted) => {
+            await this.audit.record(tx, {
+              companyId: ctx.companyId,
+              actorType: 'service',
+              actorId: ctx.serviceIdentityId,
+              actorLabel: ctx.actorLabel,
+              action: 'inbox.duplicate',
+              objectType: 'integration_inbox',
+              objectId: inserted.id,
+              outcome: 'success',
+              ip: meta.ip,
+              userAgent: meta.userAgent,
+              details: {
+                duplicateCount: inserted.duplicateCount,
+                externalEventId: body.eventId,
+                connectionId: connection.id,
+              },
+            });
+          },
+        });
         return {
           inboxId: row.id,
-          status: duplicateCount === 0 ? 'accepted' : 'duplicate',
+          status: row.duplicateCount === 0 ? 'accepted' : 'duplicate',
         } as const;
       });
     } catch (error) {
@@ -161,39 +142,5 @@ export class InboxService {
       throw new CommerceError(404, 'connection_not_mock', 'store_connection', connection.id, 'Not found');
     }
     return connection;
-  }
-
-  private async enqueue(
-    tx: TenantTransaction,
-    ctx: RequestContext,
-    inboxId: string,
-    correlationId: string,
-  ): Promise<void> {
-    const payload = JSON.stringify({
-      inboxId,
-      serviceIdentityId: ctx.serviceIdentityId,
-      actorLabel: ctx.actorLabel,
-    });
-    await tx.$executeRaw`
-      INSERT INTO job (
-        id, company_id, type, payload, status, attempts, max_attempts, run_after,
-        timeout_ms, correlation_id, idempotency_key, created_at, updated_at
-      ) VALUES (
-        ${uuidv7()}::uuid,
-        ${ctx.companyId}::uuid,
-        'inbox.process',
-        ${payload}::jsonb,
-        'queued'::"job_status",
-        0,
-        ${INBOX_ATTEMPTS},
-        clock_timestamp(),
-        ${INBOX_TIMEOUT_MS},
-        ${correlationId},
-        ${`inbox:${inboxId}`},
-        clock_timestamp(),
-        clock_timestamp()
-      )
-      ON CONFLICT (idempotency_key) DO NOTHING
-    `;
   }
 }

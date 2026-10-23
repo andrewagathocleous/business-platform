@@ -2,7 +2,15 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma, type TenantTransaction } from '@bp/db';
 import type { DeliveryMethod, FulfilmentStatus, PaymentStatus } from '@bp/domain';
 import { unsupportedGlyphs } from '@bp/documents';
-import { mapShopifyOrder, ShopifyMapError, type MappedShopifyOrder } from '@bp/integrations';
+import {
+  mapPrestashopOrder,
+  mapShopifyOrder,
+  PrestashopMapError,
+  ShopifyMapError,
+  type MappedShopifyOrder,
+} from '@bp/integrations';
+import { carrierMapOf } from '../integrations/prestashop-connections';
+import { parsePrestashopSettings, PrestashopSettingsInvalid } from '../integrations/prestashop-settings';
 import { AuditService } from '../audit/audit.service';
 import { uuidv7 } from '../correlation/correlation';
 import type { ClaimedJob, JobOutcome } from './jobs/job-runner';
@@ -77,10 +85,29 @@ export class InboxProcessor {
       where: { id: loaded.connectionId, companyId: job.companyId },
       include: { store: true },
     });
-    if (!connection || connection.status !== 'active' || connection.mode !== 'mock') {
+    if (!connection) {
       return this.fail(tx, job.companyId, payload, loaded.id, 'connection_not_importable');
     }
-    if (connection.store.platform !== 'shopify') {
+    const platform = connection.store.platform;
+    if (platform === 'prestashop') {
+      // Rows already in the inbox were received with a working key, so auth_failed
+      // still imports. Any other status leaves the row received.
+      // R1-B's reactivation will re-enqueue those received rows.
+      if (connection.status !== 'active' && connection.status !== 'auth_failed') {
+        return { failed: 'connection_not_importable' };
+      }
+      if (connection.mode !== 'live') {
+        return this.fail(tx, job.companyId, payload, loaded.id, 'connection_not_importable');
+      }
+    } else if (connection.status !== 'active') {
+      return this.fail(tx, job.companyId, payload, loaded.id, 'connection_not_importable');
+    } else if (platform === 'shopify') {
+      if (connection.mode !== 'mock') {
+        return this.fail(tx, job.companyId, payload, loaded.id, 'connection_not_importable');
+      }
+    } else if (connection.mode !== 'mock') {
+      return this.fail(tx, job.companyId, payload, loaded.id, 'connection_not_importable');
+    } else {
       return this.fail(tx, job.companyId, payload, loaded.id, 'unsupported_provider');
     }
     await this.hooks?.beforeAdvisoryLock?.(loaded.id);
@@ -92,12 +119,9 @@ export class InboxProcessor {
     }
     let mapped: MappedShopifyOrder;
     try {
-      mapped = mapShopifyOrder(loaded.payload, {
-        giftMessageKeys: connection.store.giftMessageKeys,
-        deliveryMethodMap: stringMap(connection.store.deliveryMethodMap),
-      });
+      mapped = mapOrder(platform, loaded.payload, connection);
     } catch (error) {
-      const message = error instanceof ShopifyMapError ? error.message : 'order_map_failed';
+      const message = mapFailure(error);
       return this.fail(tx, job.companyId, payload, loaded.id, message);
     }
     const missing = unsupportedGlyphs(mapped.giftMessage ?? '');
@@ -517,6 +541,39 @@ function sameText(left: string | null, right: string | null): boolean {
     return left === right;
   }
   return Buffer.from(left, 'utf8').equals(Buffer.from(right, 'utf8'));
+}
+
+function mapOrder(
+  platform: string,
+  payload: unknown,
+  connection: {
+    mode: string;
+    settings: unknown;
+    store: { giftMessageKeys: string[]; deliveryMethodMap: unknown };
+  },
+): MappedShopifyOrder {
+  if (platform === 'prestashop') {
+    const settings = parsePrestashopSettings(connection.settings);
+    return mapPrestashopOrder(payload, {
+      timezone: settings.timezone,
+      stateMap: settings.stateMap,
+      carrierMap: carrierMapOf(connection.store.deliveryMethodMap),
+    });
+  }
+  return mapShopifyOrder(payload, {
+    giftMessageKeys: connection.store.giftMessageKeys,
+    deliveryMethodMap: stringMap(connection.store.deliveryMethodMap),
+  });
+}
+
+function mapFailure(error: unknown): string {
+  if (error instanceof ShopifyMapError || error instanceof PrestashopMapError) {
+    return error.message;
+  }
+  if (error instanceof PrestashopSettingsInvalid) {
+    return error.code;
+  }
+  return 'order_map_failed';
 }
 
 function stringMap(value: unknown): Record<string, string> {
