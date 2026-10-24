@@ -3,9 +3,11 @@ import {
   Controller,
   Get,
   Header,
+  HttpCode,
   Inject,
   Param,
   Patch,
+  Post,
   Req,
   Res,
   StreamableFile,
@@ -31,6 +33,8 @@ const idParam = ApiParam({
   required: true,
   schema: { type: 'string', format: 'uuid' },
 });
+
+const previewBody = z.object({ text: z.string().min(1).max(2000) }).strict();
 
 const templatePatch = z
   .object({
@@ -106,6 +110,37 @@ export class DocumentController {
   @ApiOperation({ summary: 'Gift-message card templates for this company' })
   async listTemplates(@Req() req: Request, @Param('companyId') companyId: string) {
     return this.documents.listTemplates(requireContext(req, companyId));
+  }
+
+  @Post('gift-message-templates/:id/preview')
+  @idParam
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  @Header('X-Content-Type-Options', 'nosniff')
+  @RequirePermission('company.manage')
+  @ApiOperation({
+    summary:
+      'Render sample text with a saved template. Returns the PDF; X-Gift-Fits says whether it fit at or above the minimum font size.',
+  })
+  async previewTemplate(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Param('companyId') companyId: string,
+    @Param('id') id: string,
+  ) {
+    const parsed = previewBody.safeParse(unknownBody(req));
+    if (!parsed.success) {
+      throw new BadRequestException(issueMessage(parsed.error));
+    }
+    const rendered = await this.documents.previewTemplate(
+      requireContext(req, companyId),
+      id,
+      parsed.data.text,
+      requestMeta(req),
+    );
+    res.setHeader('X-Gift-Fits', rendered.fits ? 'true' : 'false');
+    res.setHeader('X-Gift-Unsupported', String(rendered.unsupportedChars.length));
+    return pdfFile(res, rendered.pdf, 'gift-card-preview.pdf');
   }
 
   @Patch('gift-message-templates/:id')

@@ -134,6 +134,29 @@ export class DocumentService {
     }
   }
 
+  /**
+   * Renders sample text with a saved template, for tuning the card before a real print.
+   * The text is drawn as given (not trimmed) and is neither stored nor logged.
+   */
+  async previewTemplate(
+    ctx: RequestContext,
+    templateId: string,
+    text: string,
+    meta: RequestMeta,
+  ): Promise<{ pdf: Buffer; fits: boolean; unsupportedChars: string[] }> {
+    try {
+      if (!isUuid(templateId)) {
+        throw new CommerceError(404, 'not_found', 'gift_message_template', null, 'Not found');
+      }
+      const template = await this.tenants.run(this.context(ctx), (tx) =>
+        this.loadTemplate(tx, ctx, templateId),
+      );
+      return await renderGiftMessage(text, template);
+    } catch (error) {
+      return this.fail(ctx, meta, error);
+    }
+  }
+
   async listTemplates(ctx: RequestContext): Promise<{ templates: TemplateView[] }> {
     const rows = await this.tenants.run(this.context(ctx), (tx) =>
       tx.giftMessageTemplate.findMany({

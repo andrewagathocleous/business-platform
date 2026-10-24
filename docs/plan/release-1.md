@@ -268,6 +268,14 @@ Implemented 2026-10-24 (planner-implemented while Cursor was at its weekly limit
 
 The first physical print on each printer needs the user's explicit approval. Record photos or notes, with no customer text, in the R1 report.
 
+**Implemented 2026-10-24** (planner-implemented while Cursor was at its weekly limit):
+- A **Gift cards** admin page (`admin/gift-cards`, `company.manage`) edits the template.
+- A "Use Zebra 100 × 150 mm" preset fills: 100 × 150 mm portrait, 5 mm margins, 16 pt falling to a minimum of 9 pt, line height 1.25, centred both ways.
+- The page warns when a margin is under 3 mm, the minimum font is under 8 pt, or the page is wider than the Zebra's 104 mm.
+- `POST /c/:companyId/gift-message-templates/:id/preview` renders sample text with the saved template and returns the PDF, with `X-Gift-Fits`. The page opens it in a new tab. The sample text is not stored or logged.
+- Layout is unit-tested at 100 × 150 mm for: a short Greek message at full size with its line breaks; a long English message stepped down but at least 9 pt; an overflow that reports not fitting and still draws all the text.
+- Still to do at R1-H: tune the card on the real Zebra with the real label stock.
+
 ## R1-G. Automatic printing (R1-02, deferred)
 
 The user chose **manual printing** on 2026-10-23: staff press Print on the order, which exists today. Automatic printing is deferred. If it comes back, the design is: when an order is imported with `payment_status = paid` and a gift message, queue the gift card as the system actor through an `inbox.process` follow-up job, behind its own company switch `printing.auto` (off by default). The `printing` switch and the first-print rule still apply.

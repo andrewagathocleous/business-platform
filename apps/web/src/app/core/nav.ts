@@ -22,6 +22,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { path: 'admin/printers', permission: 'printer.manage', labelKey: 'nav.printers', admin: true },
   { path: 'admin/company', permission: 'company.view', labelKey: 'nav.company', admin: true },
   { path: 'admin/stores', permission: 'store.view', labelKey: 'nav.stores', admin: true },
+  { path: 'admin/gift-cards', permission: 'company.manage', labelKey: 'nav.giftCards', admin: true },
   {
     path: 'admin/integrations',
     permission: 'integration.view',

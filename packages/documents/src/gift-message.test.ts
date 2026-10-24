@@ -165,6 +165,64 @@ describe('renderGiftMessage', () => {
   });
 });
 
+/** The R1-F preset for the shop's Zebra ZD230: a 100 × 150 mm portrait label. */
+const ZEBRA: GiftMessageTemplate = {
+  pageWidthMm: '100.00',
+  pageHeightMm: '150.00',
+  marginTopMm: '5.00',
+  marginRightMm: '5.00',
+  marginBottomMm: '5.00',
+  marginLeftMm: '5.00',
+  fontSizePt: '16.00',
+  minFontSizePt: '9.00',
+  lineHeight: '1.250',
+  align: 'center',
+  verticalAlign: 'middle',
+};
+
+describe('Zebra 100 × 150 mm card', () => {
+  it('draws a short Greek message at full size on one portrait 100 × 150 mm page, keeping its line breaks', async () => {
+    const laid = layoutGiftMessage(GREEK, ZEBRA);
+    expect(laid.fontSize).toBe(16);
+    // The blank line stays; a long line may wrap inside the 90 mm text width.
+    expect(laid.lines).toContain('');
+    expectLinesCover(GREEK.split('\n'), laid.lines, laid.fontSize, contentWidth(ZEBRA));
+    const rendered = await renderGiftMessage(GREEK, ZEBRA);
+    expect(rendered.fits).toBe(true);
+    expect(rendered.unsupportedChars).toEqual([]);
+    const raw = rendered.pdf.toString('latin1');
+    const boxes = [...raw.matchAll(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/g)];
+    expect(boxes).toHaveLength(1);
+    expect(Number(boxes[0]?.[1])).toBeCloseTo(millimetresToPoints('100'), 1);
+    expect(Number(boxes[0]?.[2])).toBeCloseTo(millimetresToPoints('150'), 1);
+  });
+
+  it('steps a long English message down but keeps it at or above 9 pt', () => {
+    const sentence = 'Wishing you a wonderful birthday full of laughter, good food and the people you love. ';
+    let message = sentence;
+    let laid = layoutGiftMessage(message, ZEBRA);
+    while (laid.fontSize === 16) {
+      message += sentence;
+      laid = layoutGiftMessage(message, ZEBRA);
+    }
+    expect(laid.fontSize).toBeLessThan(16);
+    expect(laid.fontSize).toBeGreaterThanOrEqual(9);
+    const width = contentWidth(ZEBRA);
+    const height =
+      millimetresToPoints(ZEBRA.pageHeightMm) - millimetresToPoints(ZEBRA.marginTopMm) - millimetresToPoints(ZEBRA.marginBottomMm);
+    expect(measureText(message, laid.fontSize, 1.25, width, height).fits).toBe(true);
+    expectLinesCover(message.split('\n'), laid.lines, laid.fontSize, width);
+  });
+
+  it('flags a message too long for the card at 9 pt and still draws all of it', async () => {
+    const message = 'Many happy returns of the day! '.repeat(120);
+    const rendered = await renderGiftMessage(message, ZEBRA);
+    expect(rendered.fits).toBe(false);
+    expect(layoutGiftMessage(message, ZEBRA).fontSize).toBe(9);
+    expect(actualTexts(rendered.pdf).join('')).toBe(message);
+  });
+});
+
 describe('renderPackingSlip', () => {
   it('renders an A4 slip', async () => {
     const pdf = await renderPackingSlip(

@@ -1465,6 +1465,40 @@
         ]
       }
     },
+    "/api/c/{companyId}/gift-message-templates/{id}/preview": {
+      "post": {
+        "operationId": "DocumentController_previewTemplate",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Render sample text with a saved template. Returns the PDF; X-Gift-Fits says whether it fit at or above the minimum font size.",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
     "/api/c/{companyId}/gift-message-templates/{id}": {
       "patch": {
         "operationId": "DocumentController_updateTemplate",

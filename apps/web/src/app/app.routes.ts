@@ -117,6 +117,12 @@ export const routes: Routes = [
         data: { permission: 'store.view' },
       },
       {
+        path: 'admin/gift-cards',
+        loadComponent: () => import('./admin/gift-cards-page').then((module) => module.GiftCardsPage),
+        canActivate: [permissionGuard],
+        data: { permission: 'company.manage' },
+      },
+      {
         path: 'admin/integrations',
         loadComponent: () =>
           import('./admin/integrations-page').then((module) => module.IntegrationsPage),

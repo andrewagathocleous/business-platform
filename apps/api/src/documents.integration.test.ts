@@ -664,6 +664,42 @@ describe('documents, files and company switches', () => {
     }
   });
 
+  it('previews sample text with a saved template and keeps it inside the company', async () => {
+    const preview = (session: Session, companyId: string, body: unknown, name: string) =>
+      session.agent
+        .post(`/api/c/${companyId}/gift-message-templates/${templateId}/preview`)
+        .set('X-XSRF-TOKEN', session.xsrf)
+        .set('X-Correlation-Id', cid(name))
+        .send(body as object)
+        .buffer(true)
+        .parse((res, callback) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer | string) => {
+            chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+          });
+          res.on('end', () => {
+            callback(null, Buffer.concat(chunks));
+          });
+        });
+    const fits = await preview(adminA, companyA, { text: GREEK_GIFT }, 'preview-ok');
+    expect(fits.status).toBe(200);
+    expect(fits.headers['content-type']).toContain('application/pdf');
+    expect(fits.headers['cache-control']).toBe('no-store');
+    expect(fits.headers['x-gift-fits']).toBe('true');
+    expect(fits.headers['x-gift-unsupported']).toBe('0');
+    expect((fits.body as Buffer).subarray(0, 5).toString('latin1')).toBe('%PDF-');
+
+    const overflow = await preview(adminA, companyA, { text: 'Many happy returns! '.repeat(100) }, 'preview-long');
+    expect(overflow.status).toBe(200);
+    expect(overflow.headers['x-gift-fits']).toBe('false');
+
+    expect((await preview(adminA, companyA, { text: '' }, 'preview-empty')).status).toBe(400);
+    expect((await preview(adminA, companyA, { text: 'x'.repeat(2001) }, 'preview-big')).status).toBe(400);
+    expect((await preview(adminA, companyA, { text: 'x', extra: 1 }, 'preview-extra')).status).toBe(400);
+    expect((await preview(fulfil, companyA, { text: 'x' }, 'preview-fulfil')).status).toBe(403);
+    expect((await preview(adminB, companyB, { text: 'x' }, 'preview-foreign')).status).toBe(404);
+  });
+
   it('audits company switch changes and refuses outbound.all', async () => {
     const listed = await send(adminA, 'get', `/api/c/${companyA}/automation/switches`);
     expect(listed.status, text(listed)).toBe(200);

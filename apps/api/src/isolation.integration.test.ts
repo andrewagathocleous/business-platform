@@ -588,6 +588,14 @@ function sweepCases(adminB: Session, fx: Fixtures): SweepCase[] {
       { name: 'Stolen template' },
     ),
     onB(
+      'template-preview',
+      'POST /api/c/:companyId/gift-message-templates/:id/preview',
+      'post',
+      b(`/gift-message-templates/${fx.templateA}/preview`),
+      () => templateSnap(fx),
+      { text: 'Hello' },
+    ),
+    onB(
       'print-request',
       'POST /api/c/:companyId/print-requests',
       'post',

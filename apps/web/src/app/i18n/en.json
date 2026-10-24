@@ -20,7 +20,8 @@
     "printers": "Printers",
     "company": "Company",
     "stores": "Stores",
-    "integrations": "Integrations"
+    "integrations": "Integrations",
+    "giftCards": "Gift cards"
   },
   "user": {
     "menu": "Account menu",
@@ -805,5 +806,46 @@
       "printersLink": "Printer settings",
       "failedPrints": "{{count}} print jobs failed or uncertain in the last 24 hours"
     }
+  },
+  "giftCards": {
+    "title": "Gift cards",
+    "intro": "The gift card layout. Text is printed in black. Save a change, then preview it with sample text before printing.",
+    "template": "Template",
+    "default": "default",
+    "zebraPreset": "Use Zebra 100 × 150 mm",
+    "fields": {
+      "pageWidthMm": "Page width (mm)",
+      "pageHeightMm": "Page height (mm)",
+      "marginTopMm": "Top margin (mm)",
+      "marginRightMm": "Right margin (mm)",
+      "marginBottomMm": "Bottom margin (mm)",
+      "marginLeftMm": "Left margin (mm)",
+      "fontSizePt": "Font size (pt)",
+      "minFontSizePt": "Smallest font size (pt)",
+      "lineHeight": "Line height",
+      "align": "Horizontal alignment",
+      "verticalAlign": "Vertical alignment"
+    },
+    "center": "Centre",
+    "left": "Left",
+    "middle": "Middle",
+    "top": "Top",
+    "warnings": {
+      "margin": "Keep every margin at least 3 mm, so text is not cut at the label edge.",
+      "font": "Text smaller than 8 pt is hard to read on a 203 dpi label printer.",
+      "width": "The Zebra ZD230 prints at most 104 mm wide."
+    },
+    "save": "Save",
+    "saved": "Saved.",
+    "sample": "Sample text for the preview",
+    "preview": "Preview PDF",
+    "saveFirst": "Save the changes before previewing.",
+    "fits": "The sample fits the card.",
+    "overflows": "The sample does not fit at the smallest font size. Shorten it or change the layout.",
+    "forbidden": "You do not have permission to change gift cards.",
+    "invalid": "Check the values.",
+    "error": "The gift card layout could not be loaded or saved.",
+    "openPreview": "Open the preview PDF",
+    "unsupported": "{{count}} character(s) in the sample cannot be printed with the card font, for example emoji. They will not appear on the card."
   }
 }
