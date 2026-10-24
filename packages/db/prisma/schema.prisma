@@ -651,6 +651,9 @@ model StoreConnection {
   settings         Json           @default("{}") @map("settings") @db.JsonB
   lastErrorClass   String?        @map("last_error_class")
   lastErrorAt      DateTime?      @map("last_error_at") @db.Timestamptz(6)
+  /// Result of the last settings test. `ok` or an error class. Not a response body.
+  lastTestAt       DateTime?      @map("last_test_at") @db.Timestamptz(6)
+  lastTestResult   String?        @map("last_test_result")
   /// One poll at a time. Null means the connection is free.
   syncLockedUntil  DateTime?      @map("sync_locked_until") @db.Timestamptz(6)
 

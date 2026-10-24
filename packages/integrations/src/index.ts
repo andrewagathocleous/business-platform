@@ -49,7 +49,7 @@ export {
 export type { PrestashopConnectionConfig } from './prestashop/map-order';
 
 export { MockPrintProvider, MOCK_PRINTERS, behaviourOf } from './printing/mock';
-export { PrintNodeProvider } from './printing/printnode';
+export { PrintNodeHttpError, PrintNodeProvider, printNodeWhoami } from './printing/printnode';
 export type { SafeFetch } from './printing/printnode';
 export {
   PrinterOffline,

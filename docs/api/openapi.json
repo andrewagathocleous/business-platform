@@ -1640,6 +1640,349 @@
         ]
       }
     },
+    "/api/c/{companyId}/stores/{storeId}/prestashop-connection": {
+      "get": {
+        "operationId": "PrestashopConnectionController_get",
+        "parameters": [
+          {
+            "name": "storeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "The live PrestaShop connection for this store, or null",
+        "tags": [
+          "integrations"
+        ]
+      },
+      "put": {
+        "operationId": "PrestashopConnectionController_save",
+        "parameters": [
+          {
+            "name": "storeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create or update the live PrestaShop connection",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores/{storeId}/prestashop-connection/test": {
+      "post": {
+        "operationId": "PrestashopConnectionController_test",
+        "parameters": [
+          {
+            "name": "storeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Probe the saved shop with the saved key",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores/{storeId}/prestashop-connection/order-states": {
+      "get": {
+        "operationId": "PrestashopConnectionController_orderStates",
+        "parameters": [
+          {
+            "name": "storeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Order states from the saved shop",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores/{storeId}/prestashop-connection/carriers": {
+      "get": {
+        "operationId": "PrestashopConnectionController_carriers",
+        "parameters": [
+          {
+            "name": "storeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Carriers from the saved shop, one row per id_reference",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores/{storeId}/prestashop-connection/maps": {
+      "put": {
+        "operationId": "PrestashopConnectionController_maps",
+        "parameters": [
+          {
+            "name": "storeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Save the order-state and carrier maps",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores/{storeId}/prestashop-connection/activate": {
+      "post": {
+        "operationId": "PrestashopConnectionController_activate",
+        "parameters": [
+          {
+            "name": "storeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Start sync after a passed test",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores/{storeId}/prestashop-connection/pause": {
+      "post": {
+        "operationId": "PrestashopConnectionController_pause",
+        "parameters": [
+          {
+            "name": "storeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Pause sync",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/print-accounts/printnode": {
+      "get": {
+        "operationId": "PrintNodeAccountController_get",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Whether a PrintNode key is stored. Does not call PrintNode.",
+        "tags": [
+          "integrations"
+        ]
+      },
+      "put": {
+        "operationId": "PrintNodeAccountController_save",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Store a PrintNode API key",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/print-accounts/printnode/test": {
+      "post": {
+        "operationId": "PrintNodeAccountController_test",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Call PrintNode whoami with the stored key",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
     "/api/c/{companyId}/invoices/preview-totals": {
       "post": {
         "operationId": "InvoiceController_preview",

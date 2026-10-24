@@ -48,12 +48,16 @@ export class StoreSyncService {
           mode: true,
           lastSyncAt: true,
           settings: true,
-          store: { select: { platform: true } },
+          store: { select: { platform: true, status: true } },
         },
       });
       const counts: StoreSyncCounts = { queued: 0, notDue: 0, skipped: 0 };
       for (const connection of connections) {
         if (connection.store.platform !== 'prestashop') {
+          continue;
+        }
+        if (connection.store.status === 'archived') {
+          counts.skipped += 1;
           continue;
         }
         if (connection.status !== 'active') {

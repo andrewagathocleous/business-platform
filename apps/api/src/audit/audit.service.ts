@@ -8,6 +8,8 @@ export type AuditActorType = 'user' | 'service' | 'system';
 export type AuditOutcome = 'success' | 'denied' | 'failure';
 
 export type AuditRecord = {
+  /** Set when the caller must know the id before other rows in the same transaction. */
+  id?: string;
   companyId?: string | null;
   actorType: AuditActorType;
   actorId?: string | null;
@@ -30,7 +32,7 @@ export class AuditService {
    * audit row commit or roll back together. The correlation id comes from
    * AsyncLocalStorage, not from the caller.
    */
-  async record(tx: TenantTransaction, input: AuditRecord): Promise<void> {
+  async record(tx: TenantTransaction, input: AuditRecord): Promise<string> {
     const correlationId = getCorrelationId();
     if (!correlationId) {
       throw new Error('audit record requires a correlation id');
@@ -40,8 +42,9 @@ export class AuditService {
     if (input.companyId == null) {
       await tx.$queryRaw`SELECT set_config('app.platform_scope', 'on', true)`;
     }
-    await tx.auditEvent.create({
+    const created = await tx.auditEvent.create({
       data: {
+        ...(input.id ? { id: input.id } : {}),
         companyId: input.companyId ?? null,
         actorType: input.actorType,
         actorId: input.actorId ?? null,
@@ -55,7 +58,9 @@ export class AuditService {
         userAgent: input.userAgent ?? null,
         details: redactDetails(input.details ?? {}),
       },
+      select: { id: true },
     });
+    return created.id;
   }
 
   /** Denials are recorded in their own transaction, after the rejected change has ended. */

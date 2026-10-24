@@ -84,9 +84,47 @@ export async function insertInboxAndEnqueue(
   const fresh = saved.duplicateCount === 0;
   const stillReceived = input.enqueueReceivedDuplicates && saved.status === 'received';
   if (fresh || stillReceived) {
-    await enqueueInboxJob(tx, input, saved.id);
+    await enqueueInboxJob(tx, input, saved.id, `inbox:${saved.id}`);
   }
   return saved;
+}
+
+/**
+ * Queues `inbox.process` for rows still `received`.
+ * `idempotencySuffix` makes a new key, because `inbox:<id>` may already be used.
+ */
+export async function enqueueReceivedInbox(
+  tx: TenantTransaction,
+  input: {
+    companyId: string;
+    connectionId: string;
+    correlationId: string;
+    idempotencySuffix: string;
+  },
+): Promise<number> {
+  const rows = await tx.integrationInbox.findMany({
+    where: {
+      companyId: input.companyId,
+      connectionId: input.connectionId,
+      status: 'received',
+    },
+    select: { id: true },
+    orderBy: { id: 'asc' },
+  });
+  for (const row of rows) {
+    await enqueueInboxJob(
+      tx,
+      {
+        companyId: input.companyId,
+        correlationId: input.correlationId,
+        serviceIdentityId: null,
+        actorLabel: null,
+      },
+      row.id,
+      `inbox:${row.id}:activate:${input.idempotencySuffix}`,
+    );
+  }
+  return rows.length;
 }
 
 async function enqueueInboxJob(
@@ -98,6 +136,7 @@ async function enqueueInboxJob(
     actorLabel: string | null;
   },
   inboxId: string,
+  idempotencyKey: string,
 ): Promise<void> {
   const payload = JSON.stringify({
     inboxId,
@@ -119,7 +158,7 @@ async function enqueueInboxJob(
       clock_timestamp(),
       ${INBOX_TIMEOUT_MS},
       ${input.correlationId},
-      ${`inbox:${inboxId}`},
+      ${idempotencyKey},
       clock_timestamp(),
       clock_timestamp()
     )

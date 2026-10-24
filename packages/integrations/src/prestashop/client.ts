@@ -18,6 +18,16 @@ const COUNTRY_DISPLAY = '[id,iso_code,name]';
 const CARRIER_DISPLAY = '[id,id_reference,name]';
 const CURRENCY_DISPLAY = '[id,iso_code]';
 const ORDER_STATE_DISPLAY = '[id,name]';
+const CARRIER_LIST_DISPLAY = '[id,id_reference,name,deleted]';
+const PROBE_RESOURCES = [
+  'orders',
+  'customers',
+  'addresses',
+  'countries',
+  'carriers',
+  'order_states',
+  'currencies',
+] as const;
 
 /**
  * Read-only PrestaShop 1.7.7 Webservice client.
@@ -121,6 +131,32 @@ export function createPrestashopClient(deps: {
       params.set('display', ORDER_STATE_DISPLAY);
       return getList('order_states', params, orderStateSchema);
     },
+    async listCarriers() {
+      const params = new URLSearchParams();
+      params.set('display', CARRIER_LIST_DISPLAY);
+      params.set('filter[deleted]', '[0]');
+      const rows = await getList('carriers', params, listedCarrierSchema);
+      return rows
+        .filter((row) => row.deleted === '0')
+        .map((row) => ({
+          id: row.id,
+          id_reference: row.id_reference,
+          name: row.name,
+        }));
+    },
+    async probe(): Promise<PrestashopProbeResult> {
+      for (const resource of PROBE_RESOURCES) {
+        try {
+          const params = new URLSearchParams();
+          params.set('display', '[id]');
+          params.set('limit', '1');
+          await getList(resource, params, z.object({ id: z.string() }));
+        } catch (error) {
+          return { ok: false, resource, error };
+        }
+      }
+      return { ok: true };
+    },
   };
 }
 
@@ -138,7 +174,24 @@ export type PrestashopClient = {
   getCarriers(ids: readonly string[]): Promise<PrestashopCarrier[]>;
   getCurrencies(ids: readonly string[]): Promise<PrestashopCurrency[]>;
   getOrderStates(): Promise<PrestashopOrderState[]>;
+  /** Non-deleted carriers. The name uses the same first-language rule as order states. */
+  listCarriers(): Promise<PrestashopListedCarrier[]>;
+  /**
+   * Reads one id from each resource the poller uses, in that order.
+   * Stops at the first failure and returns the error the request threw.
+   */
+  probe(): Promise<PrestashopProbeResult>;
 };
+
+export type PrestashopListedCarrier = {
+  id: string;
+  id_reference: string;
+  name: string;
+};
+
+export type PrestashopProbeResult =
+  | { ok: true }
+  | { ok: false; resource: (typeof PROBE_RESOURCES)[number]; error: unknown };
 
 export class PrestashopAuthFailed extends Error {
   override readonly name = 'PrestashopAuthFailed';
@@ -277,6 +330,13 @@ const carrierSchema = z.object({
   id: z.string(),
   id_reference: z.string(),
   name: languageName,
+});
+
+const listedCarrierSchema = z.object({
+  id: z.string(),
+  id_reference: z.string(),
+  name: languageName,
+  deleted: z.string(),
 });
 
 const currencySchema = z.object({

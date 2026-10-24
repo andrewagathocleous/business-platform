@@ -19,7 +19,8 @@
     "audit": "Audit",
     "printers": "Printers",
     "company": "Company",
-    "stores": "Stores"
+    "stores": "Stores",
+    "integrations": "Integrations"
   },
   "user": {
     "menu": "Account menu",
@@ -699,6 +700,65 @@
       "undecided": "Undecided",
       "store": "Store",
       "platform": "Platform"
+    }
+  },
+  "integrations": {
+    "title": "Integrations",
+    "loading": "Loading integrations",
+    "loadError": "The integrations could not be loaded.",
+    "forbidden": "You do not have permission to see this.",
+    "noStores": "There is no PrestaShop store yet.",
+    "storesLink": "Stores",
+    "store": "Store",
+    "chooseStore": "Choose a store",
+    "shopUrl": "Shop URL",
+    "key": "Webservice key",
+    "replaceKey": "Replace key",
+    "keySetOn": "Key set on",
+    "timezone": "Shop timezone",
+    "firstImport": "First import from",
+    "firstImportLocked": "The first import time is locked because sync has already started.",
+    "pollMinutes": "Poll interval (minutes)",
+    "save": "Save",
+    "test": "Test connection",
+    "start": "Start sync",
+    "pause": "Pause sync",
+    "testOk": "The shop accepted the key.",
+    "resource": "Resource: {{resource}}.",
+    "loadShop": "Load from shop",
+    "saveMaps": "Save maps",
+    "orderStates": "Order states",
+    "state": "State",
+    "payment": "Payment status",
+    "cancelled": "Cancelled",
+    "carriers": "Carriers",
+    "carrier": "Carrier",
+    "delivery": "Delivery method",
+    "printTitle": "PrintNode",
+    "printKey": "PrintNode API key",
+    "printTest": "Test PrintNode",
+    "printEmail": "PrintNode account: {{email}}",
+    "status": {
+      "paused": "Sync is paused",
+      "active": "Sync is on",
+      "auth_failed": "The shop rejected the key. Replace it, test, then start sync again."
+    },
+    "errors": {
+      "auth_failed": "The shop rejected the key.",
+      "not_found": "The shop address was not found.",
+      "bad_response": "The shop returned a response this platform could not read.",
+      "blocked_destination": "That address is not allowed.",
+      "unreachable": "The shop could not be reached.",
+      "timeout": "The shop did not answer in time.",
+      "provider_unreachable": "PrintNode could not be reached."
+    },
+    "reasons": {
+      "key_missing": "Save a key before testing.",
+      "test_required": "Test the connection before starting sync.",
+      "store_archived": "This store is archived.",
+      "wrong_platform": "This store is not a PrestaShop store.",
+      "first_import_locked": "The first import time is locked because sync has already started.",
+      "settings_invalid": "Check the shop URL, timezone, first import time and poll interval."
     }
   }
 }

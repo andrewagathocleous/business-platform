@@ -92,7 +92,7 @@ export class InboxProcessor {
     if (platform === 'prestashop') {
       // Rows already in the inbox were received with a working key, so auth_failed
       // still imports. Any other status leaves the row received.
-      // R1-B's reactivation will re-enqueue those received rows.
+      // Activating the connection re-enqueues those received rows.
       if (connection.status !== 'active' && connection.status !== 'auth_failed') {
         return { failed: 'connection_not_importable' };
       }

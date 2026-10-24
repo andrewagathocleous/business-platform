@@ -218,6 +218,64 @@ export class PrintNodeProvider implements PrintProvider {
   }
 }
 
+const whoamiSchema = z.object({
+  email: z.string().min(1),
+});
+
+/**
+ * `GET /whoami`. The key is the Basic user and is not put on the error.
+ * Transport failures use the same classes as `listPrinters`.
+ */
+/** A non-200 answer from PrintNode. It carries the status only, never the body. */
+export class PrintNodeHttpError extends Error {
+  override readonly name = 'PrintNodeHttpError';
+  readonly code = 'http_error';
+  readonly status: number;
+
+  constructor(status: number) {
+    super('printnode_http_error');
+    this.status = status;
+  }
+}
+
+/**
+ * `GET /whoami` with the given key.
+ * A transport failure throws the shared client's error, a non-200 answer throws
+ * `PrintNodeHttpError`, and a body that does not parse throws `ProviderRejected('bad_response')`.
+ */
+export async function printNodeWhoami(deps: {
+  fetch: SafeFetch;
+  apiKey: string;
+  baseUrl?: string;
+  timeoutMs?: number;
+}): Promise<{ email: string }> {
+  const baseUrl = deps.baseUrl ?? DEFAULT_BASE_URL;
+  const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+  const authorization = `Basic ${Buffer.from(`${deps.apiKey}:`, 'utf8').toString('base64')}`;
+  // A transport error from the shared client propagates unchanged, so the caller can
+  // tell a blocked destination, an unreachable host and a timeout apart.
+  const response = await deps.fetch(new URL('whoami', base).toString(), {
+    method: 'GET',
+    headers: { authorization },
+    timeoutMs,
+  });
+  if (response.status !== 200) {
+    throw new PrintNodeHttpError(response.status);
+  }
+  let body: unknown;
+  try {
+    body = parseJson(response.body);
+  } catch {
+    throw new ProviderRejected('bad_response');
+  }
+  const parsed = whoamiSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new ProviderRejected('bad_response');
+  }
+  return { email: parsed.data.email };
+}
+
 function numericPrinterId(value: string): number | null {
   if (!/^[0-9]+$/.test(value)) {
     return null;

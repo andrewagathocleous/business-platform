@@ -49,7 +49,7 @@ Mock-tested and integration-tested against real Postgres. Not sandbox-tested and
 
 `PrintNodeProvider` in `packages/integrations/src/printing/printnode.ts` calls PrintNode through the shared `createSafeFetch` client (`SAFE_FETCH`). The default origin is `https://api.printnode.com`. Every call sends `Authorization: Basic` with the API key as the username and an empty password. The key is not put on an error message, an error property, a return value or a log line.
 
-The API loads the newest `integration_credential` row for the company with `provider = printnode`, `label = api_key` and `revoked_at` null, through `TenantDb`, then decrypts it with `CredentialVault.decrypt` in a separate transaction. No row means `ProviderRejected('not_configured')`, and that error is rethrown. Any other failure from the lookup, including a decrypt error, becomes `ProviderRejected('credential_unavailable')` before a request on list, submit and state. The original error is not copied into the message. There is no settings screen yet (that is R1-B). No route returns the key. Discovery treats a non-revoked row as usable and does not decrypt it just to choose the provider.
+The API loads the newest `integration_credential` row for the company with `provider = printnode`, `label = api_key` and `revoked_at` null, through `TenantDb`, then decrypts it with `CredentialVault.decrypt` in a separate transaction. No row means `ProviderRejected('not_configured')`, and that error is rethrown. Any other failure from the lookup, including a decrypt error, becomes `ProviderRejected('credential_unavailable')` before a request on list, submit and state. The original error is not copied into the message. The Integrations screen stores the key with `PUT /c/:companyId/print-accounts/printnode` (`printer.manage`). `GET` returns `{ keySet, keySetAt }` and does not call PrintNode. `POST …/test` calls `GET /whoami` with a 15 second timeout and returns `{ ok: true, email }` or `{ ok: false, errorClass }`. The audit records the class, not the email. No route returns the key. Discovery treats a non-revoked row as usable and does not decrypt it just to choose the provider.
 
 `POST /printers/discover` takes an optional `provider` of `mock` or `printnode`. With no provider, a usable key selects PrintNode; otherwise the mock is used when this process is `development` or `test`. In `uat` and `production` `MOCK_PRINT_PROVIDER` is null, so no mock instance is constructed, and `get('mock')` throws `ProviderRejected('provider_unavailable')`. A requested provider the registry does not have is 400 `print_provider_unavailable`. No key and no mock is 409 `print_provider_not_configured`. Upsert uses the chosen provider. The `printer.discovered` audit names it. The web admin still omits `provider`.
 
@@ -124,7 +124,7 @@ The checks that used to sit in "What Phase 2 must verify" are answered by the fa
 - States include `new`, `sent_to_client`, `done`, `error` and `expired`. `done` is the operating-system queue, not paper. The worker never stores that as `confirmed_printed`.
 - PDF bytes go as base64. A URI upload is not used.
 
-Still not done, and still not live-tested: a PrintNode account, the shop PC, a physical test print (P2-11, U6, U7) and the settings screen that stores the key (R1-B, P2-06). The printers page does not yet show the PrintNode computer's own state; that UI is outside this step. `GET /computers` is not called.
+Still not done, and still not live-tested: a PrintNode account, the shop PC, and a physical test print (P2-11, U6, U7). The Integrations screen can store and test a key; that path is tested against a fake server, not a live account (U6). The printers page does not yet show the PrintNode computer's own state; that UI is outside this step. `GET /computers` is not called.
 
 ### How R1-D was tested
 
@@ -145,11 +145,11 @@ Mock-tested, and integration-tested against a fake PrintNode on `127.0.0.1` with
 The provider facts above are implemented and still not live-tested. Before a real print (R1-H, U6):
 
 - A PrintNode account and the client on the shop PC, with both printers visible.
-- A key typed into the settings screen once R1-B exists, never into chat or the repository.
+- A key typed into the Integrations screen, never into chat or the repository.
 - One approved test print of a gift card and one of a packing slip. `done_reported` stays "not confirmed" until a person confirms it.
 
 P2-11 remains the physical test print and the card stock.
 
 ## Credentials
 
-A PrintNode API key lives in the credential vault when a row is stored: `CredentialVault` in `apps/api/src/vault/credential-vault.ts`, AES-256-GCM, keys from `APP_MASTER_KEYS`. See [docs/adr/0007-credentials-and-outbound-safety.md](../adr/0007-credentials-and-outbound-safety.md). The loader is `PrintNodeCredentials` in `apps/api/src/printing/printnode-credentials.ts`. No route returns the plaintext. The mock does not read a key. There is no settings screen until R1-B, so a key is present only when a test or a later step writes the row.
+A PrintNode API key lives in the credential vault when a row is stored: `CredentialVault` in `apps/api/src/vault/credential-vault.ts`, AES-256-GCM, keys from `APP_MASTER_KEYS`. See [docs/adr/0007-credentials-and-outbound-safety.md](../adr/0007-credentials-and-outbound-safety.md). The loader is `PrintNodeCredentials` in `apps/api/src/printing/printnode-credentials.ts`. The Integrations screen writes the row. `GET` does not return the account email; the test does, and that email is not stored. No route returns the plaintext. The mock does not read a key. Storing and testing the key is integration-tested in `apps/api/src/integration-settings.integration.test.ts` against a fake PrintNode, not live-tested.

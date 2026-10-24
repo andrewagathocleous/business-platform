@@ -116,6 +116,13 @@ export const routes: Routes = [
         canActivate: [permissionGuard],
         data: { permission: 'store.view' },
       },
+      {
+        path: 'admin/integrations',
+        loadComponent: () =>
+          import('./admin/integrations-page').then((module) => module.IntegrationsPage),
+        canActivate: [permissionGuard],
+        data: { permission: 'integration.view' },
+      },
     ],
   },
   { path: 'forbidden', component: ForbiddenPage },

@@ -11,6 +11,7 @@ import { CatalogModule } from './catalog/catalog.module';
 import { ClientsModule } from './clients/clients.module';
 import { DocumentsModule } from './documents/documents.module';
 import { HealthModule } from './health/health.module';
+import { IntegrationsModule } from './integrations/integrations.module';
 import { InvoicesModule } from './invoices/invoices.module';
 import { OrdersModule } from './orders/orders.module';
 import { OutboundModule } from './outbound/outbound.module';
@@ -36,6 +37,7 @@ import { buildThrottlerOptions } from './throttler/throttler';
     ClientsModule,
     DocumentsModule,
     CatalogModule,
+    IntegrationsModule,
     InvoicesModule,
     OrdersModule,
     OutboundModule,

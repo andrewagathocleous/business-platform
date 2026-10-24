@@ -3,7 +3,7 @@ import { createServer as createNetServer, type Socket } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ConnectFailure, SafeFetchError } from '../http/errors';
 import { createSafeFetch } from '../http/safe-fetch';
-import { PrintNodeProvider } from './printnode';
+import { PrintNodeHttpError, PrintNodeProvider, printNodeWhoami } from './printnode';
 import { ProviderRejected, ProviderUncertain, type PrintSubmitInput } from './provider';
 
 const SECRET = 'pn-secret-key-9f3c1a';
@@ -269,6 +269,73 @@ describe('PrintNodeProvider', () => {
     expect(network).toBeInstanceOf(ConnectFailure);
     expect((network as SafeFetchError).sent).toBe(false);
     assertKeyHidden(network, SECRET);
+  });
+});
+
+describe('printNodeWhoami', () => {
+  const fetch = createSafeFetch({ appEnv: 'test', allowLoopbackForTests: true });
+
+  it('returns the account email and sends the key as Basic auth', async () => {
+    const seen: { authorization?: string; url?: string } = {};
+    const server = await listen((req, res) => {
+      seen.authorization = req.headers.authorization;
+      seen.url = req.url;
+      json(res, 200, { email: 'print.owner@example.test', id: 9 });
+    });
+    await expect(printNodeWhoami({ fetch, apiKey: SECRET, baseUrl: server.origin })).resolves.toEqual({
+      email: 'print.owner@example.test',
+    });
+    expect(seen.authorization).toBe(`Basic ${Buffer.from(`${SECRET}:`).toString('base64')}`);
+    expect(seen.url).toBe('/whoami');
+  });
+
+  it('throws the HTTP status for a non-200 answer and hides the key', async () => {
+    for (const status of [401, 403, 404, 500]) {
+      const answered = await listen((req, res) => {
+        json(res, status, { leaked: SECRET });
+      });
+      const error = await settle(printNodeWhoami({ fetch, apiKey: SECRET, baseUrl: answered.origin }));
+      expect(error).toBeInstanceOf(PrintNodeHttpError);
+      expect((error as PrintNodeHttpError).status).toBe(status);
+      assertKeyHidden(error, SECRET);
+    }
+  });
+
+  it('reports a body that does not parse as bad_response', async () => {
+
+    const garbled = await listen((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end(SECRET);
+    });
+    const unparsed = await settle(printNodeWhoami({ fetch, apiKey: SECRET, baseUrl: garbled.origin }));
+    expect(unparsed).toBeInstanceOf(ProviderRejected);
+    expect((unparsed as ProviderRejected).message).toBe('bad_response');
+    assertKeyHidden(unparsed, SECRET);
+
+    const nameless = await listen((req, res) => {
+      json(res, 200, { id: 1 });
+    });
+    const missing = await settle(printNodeWhoami({ fetch, apiKey: SECRET, baseUrl: nameless.origin }));
+    expect(missing).toBeInstanceOf(ProviderRejected);
+    expect((missing as ProviderRejected).message).toBe('bad_response');
+  });
+
+  it('passes a transport error through unchanged', async () => {
+    const closed = await closedPort();
+    const network = await settle(
+      printNodeWhoami({ fetch, apiKey: SECRET, baseUrl: `http://127.0.0.1:${String(closed)}` }),
+    );
+    expect(network).toBeInstanceOf(SafeFetchError);
+    expect((network as SafeFetchError).code).toBe('connect_failure');
+    assertKeyHidden(network, SECRET);
+  });
+
+  it('passes a blocked destination through unchanged', async () => {
+    const strict = createSafeFetch({ appEnv: 'test', allowLoopbackForTests: false });
+    const blocked = await settle(printNodeWhoami({ fetch: strict, apiKey: SECRET, baseUrl: 'https://10.0.0.1' }));
+    expect(blocked).toBeInstanceOf(SafeFetchError);
+    expect((blocked as SafeFetchError).code).toBe('blocked_destination');
+    assertKeyHidden(blocked, SECRET);
   });
 });
 

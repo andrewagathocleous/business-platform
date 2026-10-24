@@ -25,9 +25,26 @@ export class PrestashopConnections {
     this.tenants = new TenantDb(prisma.client);
   }
 
-  async open(companyId: string, connectionId: string): Promise<OpenedPrestashopConnection> {
-    const row = await this.tenants.run(this.context(companyId), async (tx) =>
-      tx.storeConnection.findFirst({
+  /**
+   * `onRead` receives the credential id and settings as read, before they are parsed or
+   * the key is decrypted, so a caller can guard what it writes even when opening fails.
+   */
+  async open(
+    companyId: string,
+    connectionId: string,
+    onRead?: (read: PrestashopConnectionRead) => void,
+  ): Promise<OpenedPrestashopConnection> {
+    const { read, row } = await this.tenants.run(this.context(companyId), async (tx) => {
+      // Read as the database stores it, so a guard built from it compares exactly.
+      // FOR SHARE holds the row until this short transaction ends, so the fuller read below
+      // sees the same credential and settings: a settings save waits for it.
+      const reads = await tx.$queryRaw<{ credential_id: string | null; settings: string }[]>`
+        SELECT credential_id::text AS credential_id, settings::text AS settings
+        FROM store_connection
+        WHERE company_id = ${companyId}::uuid AND id = ${connectionId}::uuid
+        FOR SHARE
+      `;
+      const found = await tx.storeConnection.findFirst({
         where: { id: connectionId, companyId },
         select: {
           id: true,
@@ -40,11 +57,17 @@ export class PrestashopConnections {
             select: { id: true, provider: true, label: true, revokedAt: true },
           },
         },
-      }),
-    );
-    if (!row) {
+      });
+      const first = reads[0];
+      return {
+        read: first ? { credentialId: first.credential_id, settingsText: first.settings } : null,
+        row: found,
+      };
+    });
+    if (!row || !read) {
       throw new Error('connection_not_found');
     }
+    onRead?.(read);
     if (row.store.platform !== 'prestashop') {
       throw new Error('connection_not_importable');
     }
@@ -82,6 +105,12 @@ export class PrestashopConnections {
     return { companyId, actor: 'system', correlationId };
   }
 }
+
+export type PrestashopConnectionRead = {
+  credentialId: string | null;
+  /** `settings::text` from the database, lossless for comparison as `jsonb`. */
+  settingsText: string;
+};
 
 export type OpenedPrestashopConnection = {
   connectionId: string;

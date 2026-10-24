@@ -462,6 +462,90 @@ describe('createPrestashopClient', () => {
     expect(calls).toBe(0);
     assertHidden(rejected, KEY);
   });
+
+  it('lists non-deleted carriers and uses the first language name', async () => {
+    const seen: Seen[] = [];
+    const client = await clientFor((req, res) => {
+      seen.push(capture(req));
+      req.resume();
+      json(res, 200, {
+        carriers: [
+          {
+            id: '8',
+            id_reference: '2',
+            name: [
+              { id: '1', value: 'Demo international post' },
+              { id: '2', value: 'Ignored second language' },
+            ],
+            deleted: '0',
+          },
+          { id: '11', id_reference: '4', name: 'Removed carrier', deleted: '1' },
+        ],
+      });
+    });
+    await expect(client.listCarriers()).resolves.toEqual([
+      { id: '8', id_reference: '2', name: 'Demo international post' },
+    ]);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.params).toEqual({
+      display: '[id,id_reference,name,deleted]',
+      'filter[deleted]': '[0]',
+    });
+    if (seen[0]) {
+      assertSafeRequest(seen[0]);
+    }
+  });
+
+  it('probes the seven resources and stops at the first failure', async () => {
+    const seen: string[] = [];
+    const client = await clientFor((req, res) => {
+      const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
+      seen.push(pathname);
+      const entry = capture(req);
+      req.resume();
+      assertSafeRequest(entry);
+      expect(entry.params).toEqual({ display: '[id]', limit: '1' });
+      if (pathname === '/api/customers') {
+        json(res, 401, { message: KEY });
+        return;
+      }
+      json(res, 200, []);
+    });
+    const failed = await client.probe();
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) {
+      expect(failed.resource).toBe('customers');
+      expect(failed.error).toBeInstanceOf(PrestashopAuthFailed);
+      assertHidden(failed.error, KEY);
+    }
+    expect(seen).toEqual(['/api/orders', '/api/customers']);
+
+    const missing = await clientFor((req, res) => {
+      req.resume();
+      json(res, 404, { message: KEY });
+    });
+    const notFound = await missing.probe();
+    expect(notFound.ok).toBe(false);
+    if (!notFound.ok) {
+      expect(notFound.resource).toBe('orders');
+      expect(notFound.error).toBeInstanceOf(PrestashopBadResponse);
+      expect((notFound.error as PrestashopBadResponse).status).toBe(404);
+    }
+
+    const closed = await closedPort();
+    const offline = createPrestashopClient({
+      fetch: createSafeFetch({ appEnv: 'test', allowLoopbackForTests: true }),
+      baseUrl: `http://127.0.0.1:${String(closed)}`,
+      apiKey: KEY,
+    });
+    const network = await offline.probe();
+    expect(network.ok).toBe(false);
+    if (!network.ok) {
+      expect(network.resource).toBe('orders');
+      expect(network.error).toBeInstanceOf(ConnectFailure);
+      assertHidden(network.error, KEY);
+    }
+  });
 });
 
 const FIXTURES: Record<string, string> = {

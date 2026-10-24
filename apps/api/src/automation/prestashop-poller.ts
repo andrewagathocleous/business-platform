@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { TenantTransaction } from '@bp/db';
 import { instantToWallTimeInZone, wallTimeInZoneToInstant } from '@bp/domain';
 import {
@@ -43,14 +43,31 @@ type Counts = {
 };
 
 /**
+ * The connection as the poll read it, before parsing or decrypting. Each write checks the
+ * connection still matches: active, the same credential and the same settings.
+ * Otherwise the run is superseded.
+ */
+type PollGuard = {
+  companyId: string;
+  connectionId: string;
+  credentialId: string | null;
+  /** `store_connection.settings::text` as the database returned it, compared as `jsonb`. */
+  settings: string;
+};
+
+/**
  * Reads one PrestaShop connection and writes inbox rows. Nothing is written to the shop.
  * The key, the Authorization header and response bodies are never logged.
  * A lost lease finishes the queue job as failed from the runner; this handler
  * always releases the connection lease it acquired.
+ * If the key, the settings or the status change during a run, including while the
+ * connection is being opened, the run stops at its next write without writing anything,
+ * and the job succeeds.
  */
 @Injectable()
 export class PrestashopPoller {
   hooks: PrestashopPollHooks | null = null;
+  private readonly logger = new Logger(PrestashopPoller.name);
 
   constructor(
     @Inject(PrestashopConnections) private readonly connections: PrestashopConnections,
@@ -72,13 +89,25 @@ export class PrestashopPoller {
         await this.finishOnly(external, 'succeeded', null);
         return;
       }
+      const held: { guard: PollGuard | null } = { guard: null };
       try {
-        await this.poll(job, external, companyId, connectionId);
+        const opened = await this.connections.open(companyId, connectionId, (read) => {
+          held.guard = {
+            companyId,
+            connectionId,
+            credentialId: read.credentialId,
+            settings: read.settingsText,
+          };
+        });
+        if (!held.guard) {
+          throw new Error('poll_failed');
+        }
+        await this.poll(job, external, opened, held.guard);
       } catch (error) {
         if (isAbort(error, external.signal)) {
           throw error;
         }
-        await this.settleError(external, companyId, connectionId, error);
+        await this.settleError(external, companyId, connectionId, error, held.guard);
       }
     } finally {
       if (heldUntil !== null) {
@@ -90,32 +119,31 @@ export class PrestashopPoller {
   private async poll(
     job: ClaimedJob,
     external: ExternalJobs,
-    companyId: string,
-    connectionId: string,
+    opened: OpenedPrestashopConnection,
+    guard: PollGuard,
   ): Promise<void> {
-    const opened = await this.connections.open(companyId, connectionId);
     const client = createPrestashopClient({
       fetch: this.fetch,
       baseUrl: opened.settings.baseUrl,
       apiKey: opened.apiKey,
     });
-    const counts = await this.importOrders(job, external, client, companyId, connectionId, opened);
-    await this.markSuccess(external, companyId, connectionId, counts);
+    const counts = await this.importOrders(job, external, client, opened, guard);
+    await this.markSuccess(external, guard, counts);
   }
 
   private async importOrders(
     job: ClaimedJob,
     external: ExternalJobs,
     client: PrestashopClient,
-    companyId: string,
-    connectionId: string,
     opened: OpenedPrestashopConnection,
+    guard: PollGuard,
   ): Promise<Counts> {
+    const { companyId, connectionId } = guard;
     const counts: Counts = { newEvents: 0, duplicates: 0 };
     const timeZone = opened.settings.timezone;
     const checkpoint = readCheckpoint(opened.checkpoint, timeZone);
     if (checkpoint.kind === 'invalid') {
-      await this.noteCheckpointReset(external, companyId, connectionId);
+      await this.noteCheckpointReset(external, guard);
     }
     const startCheckpoint =
       checkpoint.kind === 'valid' ? checkpoint.dateUpd : opened.settings.firstImportFrom;
@@ -152,8 +180,9 @@ export class PrestashopPoller {
       const lookups = { customers, addresses, countries, carriers, currencies, states };
       for (const order of orders) {
         const payload = buildPrestashopOrderPayload(order, lookups);
-        const saved = await external.transaction((tx) =>
-          insertInboxAndEnqueue(tx, {
+        const saved = await external.transaction(async (tx) => {
+          await this.requireCurrent(tx, guard, 'share');
+          return insertInboxAndEnqueue(tx, {
             companyId,
             connectionId,
             provider: 'prestashop',
@@ -166,8 +195,8 @@ export class PrestashopPoller {
             serviceIdentityId: null,
             actorLabel: null,
             enqueueReceivedDuplicates: false,
-          }),
-        );
+          });
+        });
         if (saved.duplicateCount === 0) {
           counts.newEvents += 1;
         } else {
@@ -181,7 +210,7 @@ export class PrestashopPoller {
       await this.hooks?.beforeCheckpoint?.();
       const floor = persisted ?? opened.settings.firstImportFrom;
       if (last > floor) {
-        await this.writeCheckpoint(external, companyId, connectionId, last);
+        await this.writeCheckpoint(external, guard, last);
         persisted = last;
       }
       from = last;
@@ -203,13 +232,10 @@ export class PrestashopPoller {
     throw new Error('poll_failed');
   }
 
-  private async markSuccess(
-    external: ExternalJobs,
-    companyId: string,
-    connectionId: string,
-    counts: Counts,
-  ): Promise<void> {
+  private async markSuccess(external: ExternalJobs, guard: PollGuard, counts: Counts): Promise<void> {
+    const { companyId, connectionId } = guard;
     await external.transaction(async (tx) => {
+      await this.requireCurrent(tx, guard, 'update');
       await tx.$executeRaw`
         UPDATE store_connection
         SET last_sync_at = now(),
@@ -244,32 +270,38 @@ export class PrestashopPoller {
     companyId: string,
     connectionId: string,
     error: unknown,
+    guard: PollGuard | null,
   ): Promise<void> {
-    if (error instanceof PrestashopAuthFailed) {
-      await this.markAuthFailed(external, companyId, connectionId);
+    if (error instanceof PollSuperseded) {
+      await this.finishOnly(external, 'succeeded', null);
+      this.noteSuperseded(connectionId);
+      return;
+    }
+    if (error instanceof PrestashopAuthFailed && guard) {
+      await this.markAuthFailed(external, guard);
       return;
     }
     const unavailable = error instanceof PrestashopCredentialUnavailable;
-    await this.markFailed(external, companyId, connectionId, errorCode(error), !unavailable);
+    await this.markFailed(external, companyId, connectionId, errorCode(error), !unavailable, guard);
   }
 
-  private async markAuthFailed(
-    external: ExternalJobs,
-    companyId: string,
-    connectionId: string,
-  ): Promise<void> {
-    await external.transaction(async (tx) => {
-      const changed = await tx.$queryRaw<{ id: string }[]>`
+  /** Only a connection still active with the key and settings this run read becomes `auth_failed`. */
+  private async markAuthFailed(external: ExternalJobs, guard: PollGuard): Promise<void> {
+    const { companyId, connectionId } = guard;
+    const changed = await external.transaction(async (tx) => {
+      const rows = await tx.$queryRaw<{ id: string }[]>`
         UPDATE store_connection
         SET status = 'auth_failed',
             last_error_class = 'auth_failed',
             last_error_at = now()
         WHERE company_id = ${companyId}::uuid
           AND id = ${connectionId}::uuid
-          AND status IS DISTINCT FROM 'auth_failed'
+          AND status = 'active'
+          AND credential_id IS NOT DISTINCT FROM ${guard.credentialId}::uuid
+          AND settings = ${guard.settings}::jsonb
         RETURNING id
       `;
-      if (changed.length === 1) {
+      if (rows.length === 1) {
         await this.audit.record(tx, {
           companyId,
           actorType: 'system',
@@ -283,15 +315,17 @@ export class PrestashopPoller {
         });
       }
       await this.finish(external, tx, 'succeeded', null);
+      return rows.length === 1;
     });
+    if (!changed) {
+      this.noteSuperseded(connectionId);
+    }
   }
 
-  private async noteCheckpointReset(
-    external: ExternalJobs,
-    companyId: string,
-    connectionId: string,
-  ): Promise<void> {
+  private async noteCheckpointReset(external: ExternalJobs, guard: PollGuard): Promise<void> {
+    const { companyId, connectionId } = guard;
     await external.transaction(async (tx) => {
+      await this.requireCurrent(tx, guard, 'update');
       await this.recordFailure(tx, companyId, connectionId, 'checkpoint_reset', true);
       // The invalid value can sort after a real shop time and block every later write.
       await tx.$executeRaw`
@@ -303,17 +337,30 @@ export class PrestashopPoller {
     });
   }
 
+  /**
+   * A failure before the connection row was read has no guard and is recorded as is.
+   * After that, a connection that changed meanwhile is left untouched.
+   */
   private async markFailed(
     external: ExternalJobs,
     companyId: string,
     connectionId: string,
     code: string,
     audit: boolean,
+    guard: PollGuard | null,
   ): Promise<void> {
-    await external.transaction(async (tx) => {
+    const recorded = await external.transaction(async (tx) => {
+      if (guard && !(await this.isCurrent(tx, guard, 'update'))) {
+        await this.finish(external, tx, 'succeeded', null);
+        return false;
+      }
       await this.recordFailure(tx, companyId, connectionId, code, audit);
       await this.finish(external, tx, 'failed', code);
+      return true;
     });
+    if (!recorded) {
+      this.noteSuperseded(connectionId);
+    }
   }
 
   private async recordFailure(
@@ -350,14 +397,11 @@ export class PrestashopPoller {
     }
   }
 
-  private async writeCheckpoint(
-    external: ExternalJobs,
-    companyId: string,
-    connectionId: string,
-    dateUpd: string,
-  ): Promise<void> {
+  private async writeCheckpoint(external: ExternalJobs, guard: PollGuard, dateUpd: string): Promise<void> {
+    const { companyId, connectionId } = guard;
     const checkpoint = JSON.stringify({ dateUpd });
     await external.transaction(async (tx) => {
+      await this.requireCurrent(tx, guard, 'update');
       await tx.$executeRaw`
         UPDATE store_connection
         SET sync_checkpoint = ${checkpoint}::jsonb
@@ -407,6 +451,46 @@ export class PrestashopPoller {
     });
   }
 
+  /**
+   * Locks the connection row and checks it is still active with the key and settings this run read.
+   * `share` for inbox inserts, `update` before a write to the connection itself.
+   * A settings change, a pause or an activation takes `FOR UPDATE`, so it waits for this
+   * write to commit, or this check waits for it and then sees the change.
+   */
+  private async isCurrent(tx: TenantTransaction, guard: PollGuard, mode: 'share' | 'update'): Promise<boolean> {
+    const rows =
+      mode === 'share'
+        ? await tx.$queryRaw<{ id: string }[]>`
+            SELECT id::text AS id FROM store_connection
+            WHERE company_id = ${guard.companyId}::uuid
+              AND id = ${guard.connectionId}::uuid
+              AND status = 'active'
+              AND credential_id IS NOT DISTINCT FROM ${guard.credentialId}::uuid
+              AND settings = ${guard.settings}::jsonb
+            FOR SHARE
+          `
+        : await tx.$queryRaw<{ id: string }[]>`
+            SELECT id::text AS id FROM store_connection
+            WHERE company_id = ${guard.companyId}::uuid
+              AND id = ${guard.connectionId}::uuid
+              AND status = 'active'
+              AND credential_id IS NOT DISTINCT FROM ${guard.credentialId}::uuid
+              AND settings = ${guard.settings}::jsonb
+            FOR UPDATE
+          `;
+    return rows.length === 1;
+  }
+
+  private async requireCurrent(tx: TenantTransaction, guard: PollGuard, mode: 'share' | 'update'): Promise<void> {
+    if (!(await this.isCurrent(tx, guard, mode))) {
+      throw new PollSuperseded();
+    }
+  }
+
+  private noteSuperseded(connectionId: string): void {
+    this.logger.log(`prestashop poll superseded ${connectionId}`);
+  }
+
   private async finishOnly(
     external: ExternalJobs,
     status: QueueFinish,
@@ -427,6 +511,16 @@ export class PrestashopPoller {
     if (!finished) {
       throw new Error('lease_lost');
     }
+  }
+}
+
+/** The connection's key, settings or status changed during the run. Nothing more is written. */
+class PollSuperseded extends Error {
+  override readonly name = 'PollSuperseded';
+  readonly code = 'superseded';
+
+  constructor() {
+    super('superseded');
   }
 }
 

@@ -89,6 +89,27 @@ Uses the existing `CredentialVault`.
 - Every write is audited without the secret. The isolation sweep covers every new route. Key values must never appear in logs: a logger spy test, as in the vault tests.
 - Web: an "Integrations" admin screen with the PrestaShop connection form, the two maps, the PrintNode key form, and the test buttons.
 
+Recorded when R1-B was implemented. The handoff is the contract where it differs from the bullets above:
+
+1. The connection test probes `orders`, `customers`, `addresses`, `countries`, `carriers`, `order_states` and `currencies`, in that order, each with `GET <resource>?display=[id]&limit=1`. It stops at the first failure. The outline named only `GET /api/orders?display=[id]&limit=1`.
+2. `GET /print-accounts/printnode` returns `{ keySet, keySetAt }`. It does not call `whoami`. `POST …/test` returns the account email.
+3. The state map is `{ payment, cancelled }`, the R1-C settings schema. There is no separate source status. The displayed fulfilment status still comes from the state name in the mapper.
+4. The outline did not specify `last_test_at` and `last_test_result`, activate and pause, the maps write, skipping an archived store, recording a test only when the credential and shop URL are unchanged, revoking a key whose connection write failed, or re-enqueuing `received` inbox rows on activation.
+5. The poll interval stays a minimum of 120 seconds. The screen shows minutes, minimum 2, default 3.
+6. `GET` returns `{ connection: null }` or `{ connection: { … } }`. The writes return `{ connection }` as well.
+7. The PrintNode test uses a 15 second timeout, the same bound as the PrestaShop probe. `printNodeWhoami` still defaults to 20 seconds, as `listPrinters` does.
+8. A failed order-state or carrier lookup is HTTP 502 with `{ errorClass }` only, not the standard error envelope.
+9. Request bodies are not logged, so `key` was not added to `apps/api/src/logging/redact.ts`.
+10. A `GET` that fails as `wrong_platform` is audited as `integration.connection_read`. That action name is not in the handoff.
+
+Fix round 1 (review of R1-B):
+
+11. A poll checks before every write that the connection is still `active` with the credential and settings it read before opening, under a row lock. That covers failures while opening too. If not, it stops as superseded and writes nothing. Settings saves, maps saves, activate and pause lock the connection row `FOR UPDATE`.
+12. The clean-up handle for a new PrestaShop key is cleared only after the commit, so a failed commit revokes the new key.
+13. `printNodeWhoami` no longer wraps errors. The PrintNode test returns the same classes as the PrestaShop test (`auth_failed`, `not_found`, `bad_response`, `blocked_destination`, `unreachable`, `timeout`).
+14. The Integrations screen guards the PrintNode section with a company generation and the PrestaShop section with a store generation.
+15. Decision: credential ids are opaque UUIDs, not secrets. The vault logs them by design. The secrets rule covers key values, hints and lengths.
+
 ## R1-C. PrestaShop reader (P2-04)
 
 The implemented reader is [docs/integrations/prestashop.md](../integrations/prestashop.md). Where this outline differs, that document is the contract: the trigger is `POST /api/automation/v1/c/:companyId/store-sync` for every due connection in the company, one poll at a time uses the `sync_locked_until` lease, pages are 100 rows with no offsets, a run stops after 20 pages that move past the checkpoint it started with, pages at or before that checkpoint do not count and 50 of them stop with `overlap_too_large`, and a full page that does not move `date_upd` stops with `too_many_in_one_second`.

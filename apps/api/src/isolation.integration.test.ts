@@ -71,6 +71,18 @@ const EXEMPTIONS: { route: string; reason: string }[] = [
     route: 'POST /api/automation/v1/c/:companyId/store-sync',
     reason: 'No object id. A staff session is not accepted on this route. Company mismatch is 404.',
   },
+  {
+    route: 'GET /api/c/:companyId/print-accounts/printnode',
+    reason: 'PrintNode account for this company. No object id.',
+  },
+  {
+    route: 'PUT /api/c/:companyId/print-accounts/printnode',
+    reason: 'Stores this company\'s PrintNode key. No object id.',
+  },
+  {
+    route: 'POST /api/c/:companyId/print-accounts/printnode/test',
+    reason: 'Tests this company\'s PrintNode key. No object id.',
+  },
 ];
 
 type Agent = ReturnType<typeof request.agent>;
@@ -689,6 +701,71 @@ function sweepCases(adminB: Session, fx: Fixtures): SweepCase[] {
       () => setupSnap(fx),
       { name: 'Stolen store' },
     ),
+    onB(
+      'prestashop-get',
+      'GET /api/c/:companyId/stores/:storeId/prestashop-connection',
+      'get',
+      b(`/stores/${fx.storeA}/prestashop-connection`),
+      () => prestashopSnap(fx),
+    ),
+    onB(
+      'prestashop-put',
+      'PUT /api/c/:companyId/stores/:storeId/prestashop-connection',
+      'put',
+      b(`/stores/${fx.storeA}/prestashop-connection`),
+      () => prestashopSnap(fx),
+      {
+        baseUrl: 'https://shop.example.test',
+        timezone: 'Asia/Nicosia',
+        firstImportFrom: '2026-01-01 00:00:00',
+      },
+    ),
+    onB(
+      'prestashop-test',
+      'POST /api/c/:companyId/stores/:storeId/prestashop-connection/test',
+      'post',
+      b(`/stores/${fx.storeA}/prestashop-connection/test`),
+      () => prestashopSnap(fx),
+      {},
+    ),
+    onB(
+      'prestashop-states',
+      'GET /api/c/:companyId/stores/:storeId/prestashop-connection/order-states',
+      'get',
+      b(`/stores/${fx.storeA}/prestashop-connection/order-states`),
+      () => prestashopSnap(fx),
+    ),
+    onB(
+      'prestashop-carriers',
+      'GET /api/c/:companyId/stores/:storeId/prestashop-connection/carriers',
+      'get',
+      b(`/stores/${fx.storeA}/prestashop-connection/carriers`),
+      () => prestashopSnap(fx),
+    ),
+    onB(
+      'prestashop-maps',
+      'PUT /api/c/:companyId/stores/:storeId/prestashop-connection/maps',
+      'put',
+      b(`/stores/${fx.storeA}/prestashop-connection/maps`),
+      () => prestashopSnap(fx),
+      { stateMap: {}, carrierMap: {} },
+    ),
+    onB(
+      'prestashop-activate',
+      'POST /api/c/:companyId/stores/:storeId/prestashop-connection/activate',
+      'post',
+      b(`/stores/${fx.storeA}/prestashop-connection/activate`),
+      () => prestashopSnap(fx),
+      {},
+    ),
+    onB(
+      'prestashop-pause',
+      'POST /api/c/:companyId/stores/:storeId/prestashop-connection/pause',
+      'post',
+      b(`/stores/${fx.storeA}/prestashop-connection/pause`),
+      () => prestashopSnap(fx),
+      {},
+    ),
     {
       name: 'store-event',
       route: 'POST /api/automation/v1/c/:companyId/store-connections/:connectionId/events',
@@ -989,6 +1066,20 @@ function identitySnap(fx: Fixtures): Promise<string> {
       SELECT status::text, revoked_at::text
       FROM service_identity
       WHERE id = ${fx.identityA}::uuid
+    `,
+  );
+}
+
+function prestashopSnap(fx: Fixtures): Promise<string> {
+  return rows(
+    fx.companyA,
+    (tx) => tx.$queryRaw`
+      SELECT
+        (SELECT count(*)::int FROM store_connection WHERE store_id = ${fx.storeA}::uuid) AS connections,
+        (
+          SELECT count(*)::int FROM integration_credential
+          WHERE company_id = ${fx.companyA}::uuid AND provider = 'prestashop'
+        ) AS credentials
     `,
   );
 }
