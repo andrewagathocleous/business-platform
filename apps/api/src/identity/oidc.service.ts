@@ -7,11 +7,12 @@ import { writeAudit } from './auth-audit';
 import { emailAtLink, parseOidcClaims, type ParsedOidcClaims } from './claims';
 import { readCookie, OIDC_FLOW_COOKIE_NAME } from './cookies';
 import { InvitationService } from './invitation.service';
+import { OwnerEnrolmentService } from './owner-enrolment.service';
 import { mfaSatisfiedFromAmr } from './mfa-policy';
 import type { RequestMeta } from './request-meta';
 import { openSecret, seal } from './secret-box';
 import { OIDC_FLOW_TTL_MS } from './session-rules';
-import { SessionService } from './session.service';
+import { SessionRefused, SessionService } from './session.service';
 import { hashToken, randomToken, tokenHashesMatch } from './tokens';
 
 export type OidcStartResult = {
@@ -36,9 +37,17 @@ export class OidcService {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     @Inject(SessionService) private readonly sessions: SessionService,
     @Inject(InvitationService) private readonly invitations: InvitationService,
+    @Inject(OwnerEnrolmentService) private readonly enrolments: OwnerEnrolmentService,
   ) {}
 
-  async start(redirectAfter: string, invitation: string | null): Promise<OidcStartResult> {
+  /** At most one of `invitation` and `enrolment` is set. Only their hashes are stored. */
+  async start(
+    redirectAfter: string,
+    tokens: { invitation: string | null; enrolment: string | null },
+  ): Promise<OidcStartResult> {
+    if (tokens.invitation !== null && tokens.enrolment !== null) {
+      throw new Error('an auth flow carries an invitation or an enrolment, not both');
+    }
     const oidc = await import('openid-client');
     const configuration = await this.configuration();
     const state = oidc.randomState();
@@ -53,7 +62,8 @@ export class OidcService {
         nonce,
         codeVerifier: seal(verifier, this.config.masterKeys, this.config.activeMasterKeyId),
         redirectAfter,
-        invitationTokenHash: invitation ? hashToken(invitation) : null,
+        invitationTokenHash: tokens.invitation ? hashToken(tokens.invitation) : null,
+        enrolmentTokenHash: tokens.enrolment ? hashToken(tokens.enrolment) : null,
         expiresAt: new Date(Date.now() + OIDC_FLOW_TTL_MS),
       },
     });
@@ -114,7 +124,7 @@ export class OidcService {
       await this.fail(meta, 'token');
       return protocolFailure();
     }
-    const resolved = await this.resolveUser(flow.invitationTokenHash, claims, meta);
+    const resolved = await this.resolveUser(flow.invitationTokenHash, flow.enrolmentTokenHash, claims, meta);
     if (!resolved.ok) {
       return resolved;
     }
@@ -123,13 +133,23 @@ export class OidcService {
       await this.deny(meta, 'user_disabled', null, null);
       return { ok: false, status: 403, message: 'account not provisioned' };
     }
-    const issued = await this.sessions.issue({
-      user,
-      authMethod: 'oidc',
-      mfaSatisfied: mfaSatisfiedFromAmr(claims.amr),
-      previousCookie,
-      meta,
-    });
+    let issued: Awaited<ReturnType<SessionService['issue']>>;
+    try {
+      issued = await this.sessions.issue({
+        user,
+        authMethod: 'oidc',
+        mfaSatisfied: mfaSatisfiedFromAmr(claims.amr),
+        previousCookie,
+        meta,
+        requireIdentity: { issuer: claims.issuer, subject: claims.subject },
+      });
+    } catch (error) {
+      if (error instanceof SessionRefused) {
+        await this.deny(meta, 'identity_revoked', null, user.id);
+        return { ok: false, status: 403, message: 'account not provisioned' };
+      }
+      throw error;
+    }
     return {
       ok: true,
       redirectTo: flow.redirectAfter && flow.redirectAfter.length > 0 ? flow.redirectAfter : '/',
@@ -140,9 +160,17 @@ export class OidcService {
 
   private async resolveUser(
     invitationTokenHash: string | null,
+    enrolmentTokenHash: string | null,
     claims: ParsedOidcClaims,
     meta: RequestMeta,
   ): Promise<{ ok: true; userId: string } | { ok: false; status: 400 | 403; message: string }> {
+    if (invitationTokenHash && enrolmentTokenHash) {
+      await this.fail(meta, 'flow_invalid');
+      return { ok: false, status: 400, message: 'Sign-in could not be completed' };
+    }
+    if (enrolmentTokenHash) {
+      return this.enrolments.accept({ tokenHash: enrolmentTokenHash, claims, meta });
+    }
     if (invitationTokenHash) {
       return this.invitations.accept({ tokenHash: invitationTokenHash, claims, meta });
     }
@@ -160,8 +188,8 @@ export class OidcService {
       await this.deny(meta, 'user_disabled', null, identity.userId);
       return { ok: false, status: 403, message: 'account not provisioned' };
     }
-    await this.prisma.client.userIdentity.update({
-      where: { id: identity.id },
+    const touched = await this.prisma.client.userIdentity.updateMany({
+      where: { id: identity.id, userId: identity.userId },
       data: {
         tenantId: claims.tenantId ?? identity.tenantId,
         entraOid: claims.entraOid ?? identity.entraOid,
@@ -169,6 +197,11 @@ export class OidcService {
         lastLoginAt: new Date(),
       },
     });
+    if (touched.count !== 1) {
+      // The owner CLI removed this link (relink) after it was read.
+      await this.deny(meta, 'identity_revoked', null, identity.userId);
+      return { ok: false, status: 403, message: 'account not provisioned' };
+    }
     return { ok: true, userId: identity.userId };
   }
 

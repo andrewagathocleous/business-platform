@@ -8,6 +8,7 @@ const SENSITIVE_KEYS = ['token', 'secret', 'password', 'iban', 'ciphertext'] as 
 
 const SENSITIVE_QUERY_KEYS = new Set([
   'invitation',
+  'enrolment',
   'code',
   'state',
   'session_state',

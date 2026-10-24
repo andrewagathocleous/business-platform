@@ -310,8 +310,28 @@ model UserAccount {
   credentialsCreated     IntegrationCredential[] @relation("CredentialCreatedBy")
   printJobsRequested     PrintJob[]         @relation("PrintRequestedBy")
   printJobsConfirmed     PrintJob[]         @relation("PrintConfirmedBy")
+  ownerEnrolments        PlatformOwnerEnrolment[]
 
   @@map("user_account")
+}
+
+/// A one-time link that attaches an Entra identity to a platform owner.
+/// Only the owner CLI (bp_owner) inserts rows. bp_app may read them and set consumed_at.
+model PlatformOwnerEnrolment {
+  id         String      @id @default(uuid(7)) @db.Uuid
+  userId     String      @map("user_id") @db.Uuid
+  user       UserAccount @relation(fields: [userId], references: [id])
+  tokenHash  String      @unique @map("token_hash")
+  /// Entra object id the operator expects (`owner enrol --entra-oid`). When set, the link
+  /// accepts only that `oid`, whatever the email claims say.
+  expectedEntraOid String? @map("expected_entra_oid")
+  expiresAt  DateTime    @map("expires_at") @db.Timestamptz(6)
+  consumedAt DateTime?   @map("consumed_at") @db.Timestamptz(6)
+  revokedAt  DateTime?   @map("revoked_at") @db.Timestamptz(6)
+  createdAt  DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@map("platform_owner_enrolment")
 }
 
 model UserIdentity {
@@ -362,6 +382,7 @@ model AuthFlow {
   codeVerifier        String    @map("code_verifier")
   redirectAfter       String?   @map("redirect_after")
   invitationTokenHash String?   @map("invitation_token_hash")
+  enrolmentTokenHash  String?   @map("enrolment_token_hash")
   expiresAt           DateTime  @map("expires_at") @db.Timestamptz(6)
   consumedAt          DateTime? @map("consumed_at") @db.Timestamptz(6)
 

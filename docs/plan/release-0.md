@@ -64,6 +64,16 @@ Design. The **CLI sets the owner flag**; the API never does. The API only links 
   - `owner disable` keeps the last owner.
   - The token is never logged.
 
+**Implemented 2026-10-24** (planner-implemented while Cursor was at its weekly limit; reviewed by Codex). The runbook is [docs/runbooks/first-owner.md](../runbooks/first-owner.md). Differences from the outline above, mostly from the review:
+
+1. **Matching.** The link accepts either the Entra object id given with `owner enrol --entra-oid`, or a verified `email` equal to the account's. Unlike invitations, `preferred_username` is never accepted for an owner, because Microsoft advises against using it for authorisation. With `--entra-oid`, R0-G no longer depends on `email_verified` arriving for the owner.
+2. **The application cannot make or remove an owner.** A database trigger stops `bp_app` from changing `is_platform_owner` in either direction, from inserting an owner, and from changing an owner's status. Column grants were not used, because the app and its tests insert accounts with the flag false.
+3. **No session after a raced relink or disable.** An OIDC session is created only if, under the account lock, the user is still active and the Entra identity still belongs to them. This applies to every OIDC sign-in.
+4. **The link is not in Docker's logs.** The `owner-cli` compose service (profile `ops`, image `bp-api`, `migrate.env` only) has no log driver. The compose check enforces that, and that only `migrate` and `owner-cli` receive `DATABASE_URL_OWNER` in production.
+5. **Invitations re-read the account under its lock**, so an account promoted to owner while an invitation waited is refused (`platform_owner_link`), never linked through a username match. A normal sign-in whose identity the CLI removed meanwhile is an audited 403 (`identity_revoked`), not a 500.
+6. **Serialised.** Owner commands take one advisory lock, so enrol, relink and disable cannot interleave. They lock enrolments before accounts, the same order as the OIDC callback.
+7. **Added.** A `revoked_at` column on the enrolment (a newer `enrol` revokes older open links), and the `--origin` flag for the printed link.
+
 ## R0-B. Company setup (API and screens)
 
 Today `POST /api/platform/companies` creates a company. Nothing creates brands, locations or stores, and nothing edits company details.

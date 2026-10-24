@@ -155,6 +155,33 @@ services:
     # A successful one-shot must not be started again. unless-stopped would loop.
     restart: "no"
 
+  # Platform-owner commands (R0-A), run by hand only:
+  #   docker compose --profile ops run --rm owner-cli enrol --email … --name … --origin https://…
+  # It gets the owner database URL from migrate.env. The api and worker never do.
+  owner-cli:
+    image: bp-api:${BP_IMAGE_TAG:?BP_IMAGE_TAG is required}
+    profiles: ["ops"]
+    entrypoint: ["node", "dist/cli/owner.js"]
+    env_file:
+      - ${BP_ENV_DIR:?BP_ENV_DIR is required}/migrate.env
+    environment:
+      NODE_ENV: production
+    networks:
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+    # enrol prints a one-time sign-in link. No log driver, so Docker keeps no copy on disk;
+    # `docker compose run` still shows the output in the terminal.
+    logging:
+      driver: none
+    restart: "no"
+
   postgres:
     image: postgres:18.6-alpine
     env_file:

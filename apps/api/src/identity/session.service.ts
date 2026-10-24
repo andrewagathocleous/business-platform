@@ -106,12 +106,18 @@ export class SessionService {
     };
   }
 
+  /**
+   * With `requireIdentity`, the session is created only if, under the account lock, the user
+   * is still active and that Entra identity still belongs to them. The owner CLI's relink and
+   * disable take the same account lock, so a sign-in that raced them gets no session.
+   */
   async issue(input: {
     user: SessionUser;
     authMethod: 'dev' | 'oidc';
     mfaSatisfied: boolean;
     previousCookie: string | undefined;
     meta: RequestMeta;
+    requireIdentity?: { issuer: string; subject: string };
   }): Promise<IssuedSession> {
     const token = randomToken();
     const tokenHash = hashToken(token);
@@ -121,6 +127,25 @@ export class SessionService {
     const absoluteExpiresAt = new Date(now.getTime() + ABSOLUTE_TIMEOUT_MS);
     const created = await this.prisma.client.$transaction(async (tx) => {
       await lockAccountNoKeyUpdate(tx, input.user.id);
+      if (input.requireIdentity) {
+        const current = await tx.userAccount.findUnique({
+          where: { id: input.user.id },
+          select: { status: true },
+        });
+        const identity = await tx.userIdentity.findUnique({
+          where: {
+            provider_issuer_subject: {
+              provider: 'entra',
+              issuer: input.requireIdentity.issuer,
+              subject: input.requireIdentity.subject,
+            },
+          },
+          select: { userId: true },
+        });
+        if (current?.status !== 'active' || identity?.userId !== input.user.id) {
+          throw new SessionRefused();
+        }
+      }
       if (previousHash) {
         await tx.userSession.updateMany({
           where: { tokenHash: previousHash, revokedAt: null },
@@ -244,6 +269,15 @@ export class SessionService {
       },
     });
     return memberships.map((membership) => membership.company);
+  }
+}
+
+/** The account or its Entra identity changed between sign-in and session creation. */
+export class SessionRefused extends Error {
+  override readonly name = 'SessionRefused';
+
+  constructor() {
+    super('session_refused');
   }
 }
 

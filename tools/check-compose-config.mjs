@@ -29,6 +29,8 @@ export function validateCompose(kind, config) {
   failures.push(...networkFailures(services));
   failures.push(...secretFailures(services));
   if (kind === 'prod') {
+    failures.push(...ownerUrlFailures(services));
+    failures.push(...ownerCliLogFailures(services));
     failures.push(...prodFlagFailures(config));
   } else {
     failures.push(...localFlagFailures(config));
@@ -82,6 +84,38 @@ function secretFailures(services) {
   failures.push(...unexpectedSecrets('n8n-runner', services['n8n-runner'], RUNNER_SECRETS));
   failures.push(...unexpectedSecrets('caddy', services.caddy, new Set()));
   return failures;
+}
+
+/** In production only the one-shot migrate and the hand-run owner CLI may hold the bp_owner URL. */
+const OWNER_URL_SERVICES = new Set(['migrate', 'owner-cli']);
+
+/**
+ * @param {Record<string, unknown>} services
+ */
+function ownerUrlFailures(services) {
+  const failures = [];
+  for (const [name, service] of Object.entries(services)) {
+    if (!OWNER_URL_SERVICES.has(name) && Object.hasOwn(envMap(service), 'DATABASE_URL_OWNER')) {
+      failures.push(`${name} receives DATABASE_URL_OWNER`);
+    }
+  }
+  return failures;
+}
+
+/**
+ * The owner CLI prints a one-time sign-in link, so Docker must not log it.
+ * @param {Record<string, unknown>} services
+ */
+function ownerCliLogFailures(services) {
+  const service = services['owner-cli'];
+  if (!isRecord(service)) {
+    return ['owner-cli is missing'];
+  }
+  const logging = service.logging;
+  if (!isRecord(logging) || logging.driver !== 'none') {
+    return ['owner-cli logging driver is not none'];
+  }
+  return [];
 }
 
 /**
@@ -403,11 +437,14 @@ function rendered(args) {
 function main() {
   const failures = [];
   const placeholderDir = writePlaceholders();
+  // The ops profile renders the hand-run owner-cli service too, so its checks apply.
   const prodArgs = [
     '--env-file',
     resolve(placeholderDir, 'interpolate.env'),
     '-f',
     'infra/compose/compose.prod.yml',
+    '--profile',
+    'ops',
   ];
   quiet('prod config', prodArgs, failures);
   const prod = rendered(prodArgs);

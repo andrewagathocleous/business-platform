@@ -173,8 +173,16 @@ export class InvitationService {
     });
     let user = await tx.userAccount.findFirst({ where: { email: current.email } });
     if (existingIdentity) {
+      // Lock, then re-read: the owner CLI may relink or promote this account meanwhile.
+      await this.lockUser(tx, existingIdentity.userId, current, input.meta);
+      const stillLinked = await tx.userIdentity.findUnique({ where: { id: existingIdentity.id }, select: { userId: true } });
       const identityUser = await tx.userAccount.findUnique({ where: { id: existingIdentity.userId } });
-      if (!identityUser || identityUser.email.toLowerCase() !== current.email.toLowerCase()) {
+      if (
+        !stillLinked ||
+        stillLinked.userId !== existingIdentity.userId ||
+        !identityUser ||
+        identityUser.email.toLowerCase() !== current.email.toLowerCase()
+      ) {
         throw new AcceptanceStop({
           audit: denialAudit(input.meta, 'identity_conflict', current.companyId, current.id, 'user_identity'),
           status: 403,
@@ -184,6 +192,15 @@ export class InvitationService {
       user = identityUser;
     } else if (user) {
       await this.lockUser(tx, user.id, current, input.meta);
+      // Re-read under the lock, so a promotion to platform owner that committed meanwhile is seen.
+      user = await tx.userAccount.findUnique({ where: { id: user.id } });
+      if (!user) {
+        throw new AcceptanceStop({
+          audit: failureAudit(input.meta, 'user_missing', current.companyId, current.id),
+          status: 400,
+          message: 'Sign-in could not be completed',
+        });
+      }
       await this.assertEmailLink(tx, user, current, input.meta);
     }
     if (user && user.status !== 'active') {

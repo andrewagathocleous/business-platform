@@ -6,6 +6,7 @@ import { DevLoginService } from './dev-login.service';
 import { InvitationService } from './invitation.service';
 import { MeController } from './me.controller';
 import { OidcService } from './oidc.service';
+import { OwnerEnrolmentService } from './owner-enrolment.service';
 import { SessionService } from './session.service';
 
 @Module({
@@ -17,6 +18,7 @@ import { SessionService } from './session.service';
     SessionService,
     DevLoginService,
     InvitationService,
+    OwnerEnrolmentService,
     OidcService,
   ],
   exports: [SessionService, CLOCK],

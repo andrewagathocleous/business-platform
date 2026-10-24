@@ -31,6 +31,23 @@ describe('compose config', () => {
     expect(validateCompose('prod', login).some((failure) => failure.includes('AUTH_DEV_LOGIN_ENABLED'))).toBe(true);
   });
 
+  it('rejects the owner database URL outside migrate and the owner CLI', () => {
+    const prod = prodConfig();
+    service(prod, 'api').environment.DATABASE_URL_OWNER = 'not-printed';
+    expect(validateCompose('prod', prod)).toContain('api receives DATABASE_URL_OWNER');
+    const allowed = prodConfig();
+    expect(validateCompose('prod', allowed)).toEqual([]);
+  });
+
+  it('requires the owner CLI to have no log driver', () => {
+    const logged = prodConfig();
+    logged.services['owner-cli'].logging = { driver: 'json-file' };
+    expect(validateCompose('prod', logged)).toContain('owner-cli logging driver is not none');
+    const missing = prodConfig();
+    delete missing.services['owner-cli'];
+    expect(validateCompose('prod', missing)).toContain('owner-cli is missing');
+  });
+
   it('rejects N8N_SECURE_COOKIE=false on one service when another service sets true', () => {
     const prod = prodConfig();
     service(prod, 'n8n').environment.N8N_SECURE_COOKIE = 'false';
@@ -117,6 +134,11 @@ function prodConfig() {
         },
       },
       postgres: { networks: { internal: null }, environment: { BP_OWNER_CREATEDB: 'off' } },
+      'owner-cli': {
+        networks: { internal: null },
+        environment: { DATABASE_URL_OWNER: 'not-printed' },
+        logging: { driver: 'none' },
+      },
       api: {
         networks: { edge: null, internal: null },
         environment: {

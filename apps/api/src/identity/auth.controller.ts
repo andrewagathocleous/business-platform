@@ -119,8 +119,18 @@ export class AuthController {
     if (!invitation.ok) {
       throw new BadRequestException('invitation is invalid');
     }
+    const enrolment = invitationInput(req.query['enrolment']);
+    if (!enrolment.ok) {
+      throw new BadRequestException('enrolment is invalid');
+    }
+    if (invitation.token !== null && enrolment.token !== null) {
+      throw new BadRequestException('send an invitation or an enrolment, not both');
+    }
     try {
-      const started = await this.oidc.start(redirect.path, invitation.token);
+      const started = await this.oidc.start(redirect.path, {
+        invitation: invitation.token,
+        enrolment: enrolment.token,
+      });
       setOidcFlowCookie(res, this.config, started.flowCookie);
       res.redirect(302, started.authorizationUrl);
     } catch (error) {
@@ -193,6 +203,7 @@ function redirectInput(value: unknown): { ok: true; path: string } | { ok: false
   return { ok: true, path };
 }
 
+/** A one-time token from the query: an invitation or an owner enrolment. */
 function invitationInput(value: unknown): { ok: true; token: string | null } | { ok: false } {
   if (value === undefined) {
     return { ok: true, token: null };

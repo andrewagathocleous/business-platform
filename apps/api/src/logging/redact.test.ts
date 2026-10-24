@@ -74,6 +74,24 @@ describe('log redaction', () => {
     expect(output).toContain('visible');
   });
 
+  it('redacts an owner enrolment token in the URL and the query', () => {
+    const sentinel = 'fictional-enrolment-token';
+    const lines: string[] = [];
+    const stream = new Writable({
+      write(chunk: Buffer | string, _encoding, callback) {
+        lines.push(chunk.toString());
+        callback();
+      },
+    });
+    const params = loggerParams(stream).pinoHttp;
+    const logger = pino({ redact: params.redact, serializers: { req: redactLoggedRequest } }, stream);
+    const url = `/api/auth/oidc/start?enrolment=${sentinel}&redirect=%2F`;
+    logger.info({ req: { method: 'GET', url, originalUrl: url, query: { enrolment: sentinel, redirect: '/' }, headers: {} } });
+    const output = lines.join('');
+    expect(output).not.toContain(sentinel);
+    expect(output).toContain(LOG_REDACT_CENSOR);
+  });
+
   it('redacts token headers and the referer query', () => {
     const sentinel = 'fictional-header-secret';
     const lines: string[] = [];
