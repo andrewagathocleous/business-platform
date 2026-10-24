@@ -46,6 +46,9 @@ describe('compose config', () => {
     const missing = prodConfig();
     delete missing.services['owner-cli'];
     expect(validateCompose('prod', missing)).toContain('owner-cli is missing');
+    const filesLogged = prodConfig();
+    filesLogged.services.files.logging = { driver: 'json-file' };
+    expect(validateCompose('prod', filesLogged)).toContain('files logging driver is not none');
   });
 
   it('rejects N8N_SECURE_COOKIE=false on one service when another service sets true', () => {
@@ -155,6 +158,8 @@ function prodConfig() {
         environment: { DATABASE_URL_OWNER: 'not-printed' },
         logging: { driver: 'none' },
       },
+      files: { environment: {}, logging: { driver: 'none' } },
+      'n8n-files': { environment: {}, logging: { driver: 'none' } },
       api: {
         networks: { edge: null, internal: null },
         environment: {

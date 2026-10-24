@@ -124,11 +124,23 @@ R1 can re-read every order from PrestaShop, so until R2 a lost laptop costs prin
   - a tampered file failing the manifest check.
 - **Restore drill before go-live:** on the live laptop, restore the first real backup into a scratch Compose project (Postgres, migrate and API only). Time it, check readiness, row counts and one stored file, then delete the scratch project and its volumes. Record the time and the counts, not the data, in `docs/releases/r0-report.md`. Real data never goes to the development Mac.
 
+**Implemented 2026-10-25** (planner-implemented; reviewed by Codex). Steps are in [laptop-host.md](../runbooks/laptop-host.md) sections 8 and 9. Differences from the outline above:
+1. `backup-setup.sh` creates the age key pair, writes the folder and the public key to `~/business-platform/backup.conf`, and shows the secret key once for the password manager.
+2. The restore reads the secret key from the terminal (hidden), or from a pipe when standard input is not a terminal, so a password manager's command-line tool can supply it. It is never an argument or a file.
+3. A scratch restore runs only Postgres, migrate and the API, never the worker, n8n or Caddy. A live restore (`--project business-platform-live`) starts everything; `--replace` backs up the current data first and needs the project name typed.
+4. The backup also holds n8n's files (`n8n-data.tar.age`), without n8n's `config`, which holds its key. Files stream through two helper services, `files` (bp-api image) and `n8n-files` (n8n image), which have no log driver and no network, and mount each volume where its image expects it, so restored files belong to `node`.
+5. The restore works on a private copy of the backup, checks the manifest by exact names, proves the key against every file, and only then touches Docker. It turns every automation switch off (audited, actor `restore`) before any part of the app starts. `--replace` removes only the database, stored-file and n8n volumes, so Caddy's local CA stays trusted.
+6. A backup takes over a lock whose process is gone (crash or power loss) and removes interrupted `.incomplete-*` folders; INT, TERM and HUP clean up.
+7. `deploy-laptop.sh --unpack-only` prepares a new laptop for a restore without creating an empty stack.
+8. Drilled on the development Mac with fictional data (a live-style stack in production mode): both databases (39 tables, 8 migrations, a row), a stored file and n8n's files matched, owned by `node`; an enabled switch came back off with its audit row; the restore took 16 seconds. The real-data drill on the laptop is still required before go-live.
+
 ## R0-D. Health checks on the laptop
 
 - A launchd agent checks `https://localhost:8443/api/health/ready` every 5 minutes while the owner is logged in, and posts a macOS notification after 2 failures in a row.
 - The backup posts a notification on failure (R0-C). The same check warns when free disk falls under 20 % of the SSD.
 - Document both in `docs/runbooks/laptop-host.md`.
+
+**Implemented 2026-10-25.** `infra/health/laptop-health.sh` with the launchd agent `com.business-platform.health` (every 5 minutes, from login). Notifications: after 2 failed checks in a row, then hourly while down, once on recovery; disk under 20 % free once a day. Log `~/Library/Logs/business-platform-health.log`. Runbook `laptop-host.md` section 10.
 
 ## R0-E. Laptop set-up and first deploy
 
@@ -183,6 +195,8 @@ Write `docs/runbooks/break-glass.md` for the laptop:
 - **Microsoft 365 locked for every admin:** this is why a second, emergency admin account is recommended. It is a cloud-only account with a long password and a hardware key or authenticator, kept offline, and used only in an emergency, as Microsoft recommends. Without it, recovery goes through Microsoft support.
 
 Each case has exact commands and the audit events to check afterwards. Rehearse the first case once on the laptop and record it in the R0 report.
+
+**Written 2026-10-25:** [docs/runbooks/break-glass.md](../runbooks/break-glass.md), five cases with commands and audit events to check. The re-link rehearsal on the laptop is still required.
 
 ## R0-G. Real Entra sign-in (R0-01)
 

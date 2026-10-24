@@ -111,19 +111,24 @@ function ownerUrlFailures(services) {
 }
 
 /**
- * The owner CLI prints a one-time sign-in link, so Docker must not log it.
+ * The owner CLI prints a one-time sign-in link, and `files` and `n8n-files` stream
+ * stored files for backups, so Docker must log none of them.
  * @param {Record<string, unknown>} services
  */
 function ownerCliLogFailures(services) {
-  const service = services['owner-cli'];
-  if (!isRecord(service)) {
-    return ['owner-cli is missing'];
+  const failures = [];
+  for (const name of ['owner-cli', 'files', 'n8n-files']) {
+    const service = services[name];
+    if (!isRecord(service)) {
+      failures.push(`${name} is missing`);
+      continue;
+    }
+    const logging = service.logging;
+    if (!isRecord(logging) || logging.driver !== 'none') {
+      failures.push(`${name} logging driver is not none`);
+    }
   }
-  const logging = service.logging;
-  if (!isRecord(logging) || logging.driver !== 'none') {
-    return ['owner-cli logging driver is not none'];
-  }
-  return [];
+  return failures;
 }
 
 /**

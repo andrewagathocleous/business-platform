@@ -43,6 +43,7 @@ for path in \
   infra/postgres \
   infra/launchd \
   infra/backup \
+  infra/health \
   tools/release \
   docs/runbooks; do
   if [[ -n "$(git ls-tree HEAD -- "$path")" ]]; then

@@ -2,6 +2,7 @@
 # Deploys one release on the live laptop (R0-E).
 #
 #   ./deploy-laptop.sh bp-<tag>.tar
+#   ./deploy-laptop.sh --unpack-only bp-<tag>.tar   (a new laptop, before a restore)
 #
 # 1. Checks bp-<tag>.tar against bp-<tag>.tar.sha256 next to it.
 # 2. Unpacks it to $BP_HOME/releases/<tag> (default ~/business-platform).
@@ -10,14 +11,20 @@
 # 5. With existing data, runs the release's backup first and stops if it fails.
 # 6. Runs migrate and starts the stack (`up -d --wait`), then checks /api/health/ready.
 # 7. Points $BP_HOME/current at the release and prints the running tag.
-# It never prints an env value.
+# --unpack-only stops after loading the images and pointing current at the release, so a
+# new laptop can restore a backup into an empty project. It never prints an env value.
 set -euo pipefail
 
 usage() {
-  echo "usage: ./deploy-laptop.sh bp-<tag>.tar" >&2
+  echo "usage: ./deploy-laptop.sh [--unpack-only] bp-<tag>.tar" >&2
   exit 2
 }
 
+unpack_only=0
+if [[ "${1:-}" == "--unpack-only" ]]; then
+  unpack_only=1
+  shift
+fi
 bundle="${1:-}"
 [[ -n "$bundle" && -f "$bundle" ]] || usage
 bundle_dir="$(cd "$(dirname "$bundle")" && pwd -P)"
@@ -108,6 +115,12 @@ for image in bp-api bp-web bp-migrate; do
     exit 1
   fi
 done
+
+if ((unpack_only)); then
+  ln -sfn "$release" "$BP_HOME/current"
+  echo "deploy: release $tag unpacked and loaded, not started; current points at it"
+  exit 0
+fi
 
 # Fail closed: a Docker error must not be mistaken for "no data yet".
 if ! existing="$(docker volume ls -q --filter name=^business-platform-live_bp_postgres$)"; then

@@ -35,6 +35,11 @@ if [[ ! -d "$env_dir" ]]; then
   exit 2
 fi
 
+starting=0
+case " $* " in
+  *" up "* | *" start "* | *" restart "*) starting=1 ;;
+esac
+
 if ((wait_docker)); then
   for _ in $(seq 1 60); do
     if docker info >/dev/null 2>&1; then
@@ -42,6 +47,24 @@ if ((wait_docker)); then
     fi
     sleep 5
   done
+fi
+
+# Starting the stack holds the stack lock, which a restore holds for its whole run, so
+# a start and a restore never interleave (run-locked.pl: a kernel lock, never stale).
+mkdir -p "$BP_HOME/state"
+if ((starting)) && [[ "${BP_STACK_LOCKED:-}" != "1" ]]; then
+  export BP_STACK_LOCKED=1
+  exec "$here/run-locked.pl" "$BP_HOME/state/stack.lock" nowait \
+    --busy "laptop-compose: a restore is running; nothing was started." \
+    /bin/bash "$here/laptop-compose.sh" "$@"
+fi
+
+# Checked under the lock: an unfinished restore leaves partial data, so start nothing.
+marker="$BP_HOME/state/restore-in-progress"
+if ((starting)) && [[ -f "$marker" ]]; then
+  echo "laptop-compose: a restore of the live stack did not finish ($marker)." >&2
+  echo "laptop-compose: run laptop-restore.sh again; nothing was started." >&2
+  exit 1
 fi
 
 export BP_IMAGE_TAG="$tag"

@@ -125,6 +125,8 @@ describe('laptop-compose.sh', () => {
     mkdirSync(join(home, 'env'));
     writeFileSync(join(release, 'RELEASE'), 'tag=abc1234\ncommit=x\n');
     writeFileSync(join(release, 'tools', 'release', 'laptop-compose.sh'), readFileSync(join(here, 'laptop-compose.sh')));
+    writeFileSync(join(release, 'tools', 'release', 'run-locked.pl'), readFileSync(join(here, 'run-locked.pl')));
+    chmodSync(join(release, 'tools', 'release', 'run-locked.pl'), 0o755);
     const bin = join(home, 'bin');
     const log = fakeDocker(bin);
     const result = run(join(release, 'tools', 'release', 'laptop-compose.sh'), ['ps'], {
@@ -141,11 +143,65 @@ describe('laptop-compose.sh', () => {
     expect(calls).toContain(`BP_IMAGE_TAG=abc1234 BP_ENV_DIR=${home}/env`);
   });
 
+  it('will not start the stack while a live restore is unfinished, but still shows status', () => {
+    const home = temp();
+    const release = join(home, 'releases', 'abc1234');
+    mkdirSync(join(release, 'tools', 'release'), { recursive: true });
+    mkdirSync(join(home, 'env'));
+    mkdirSync(join(home, 'state'));
+    writeFileSync(join(home, 'state', 'restore-in-progress'), 'restore of x started\n');
+    writeFileSync(join(release, 'RELEASE'), 'tag=abc1234\n');
+    writeFileSync(join(release, 'tools', 'release', 'laptop-compose.sh'), readFileSync(join(here, 'laptop-compose.sh')));
+    writeFileSync(join(release, 'tools', 'release', 'run-locked.pl'), readFileSync(join(here, 'run-locked.pl')));
+    chmodSync(join(release, 'tools', 'release', 'run-locked.pl'), 0o755);
+    const bin = join(home, 'bin');
+    const log = fakeDocker(bin);
+    const env = { BP_HOME: home, PATH: `${bin}:${process.env.PATH}` };
+    const script = join(release, 'tools', 'release', 'laptop-compose.sh');
+    for (const args of [['up', '-d', '--wait'], ['--wait-docker', 'up', '-d'], ['restart', 'api'], ['start']]) {
+      const refused = run(script, args, env);
+      expect(refused.status).toBe(1);
+      expect(refused.stderr).toContain('did not finish');
+    }
+    // --wait-docker may ask `docker info`; nothing reaches compose.
+    expect(existsSync(log) ? readFileSync(log, 'utf8') : '').not.toContain('compose');
+    expect(run(script, ['ps'], env).status).toBe(0);
+  });
+
+  it('will not start the stack while a restore holds the stack lock', async () => {
+    const home = temp();
+    const release = join(home, 'releases', 'abc1234');
+    mkdirSync(join(release, 'tools', 'release'), { recursive: true });
+    mkdirSync(join(home, 'env'));
+    mkdirSync(join(home, 'state'));
+    writeFileSync(join(release, 'RELEASE'), 'tag=abc1234\n');
+    writeFileSync(join(release, 'tools', 'release', 'laptop-compose.sh'), readFileSync(join(here, 'laptop-compose.sh')));
+    writeFileSync(join(release, 'tools', 'release', 'run-locked.pl'), readFileSync(join(here, 'run-locked.pl')));
+    chmodSync(join(release, 'tools', 'release', 'run-locked.pl'), 0o755);
+    const bin = join(home, 'bin');
+    const log = fakeDocker(bin);
+    const { spawn } = await import('node:child_process');
+    const holder = spawn(join(here, 'run-locked.pl'), [join(home, 'state', 'stack.lock'), 'nowait', '/bin/sleep', '5'], {
+      stdio: 'ignore',
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 300));
+    const refused = run(join(release, 'tools', 'release', 'laptop-compose.sh'), ['up', '-d'], {
+      BP_HOME: home,
+      PATH: `${bin}:${process.env.PATH}`,
+    });
+    holder.kill();
+    expect(refused.status).toBe(75);
+    expect(refused.stderr).toContain('a restore is running');
+    expect(existsSync(log)).toBe(false);
+  });
+
   it('refuses a release without a RELEASE file', () => {
     const home = temp();
     const release = join(home, 'releases', 'x');
     mkdirSync(join(release, 'tools', 'release'), { recursive: true });
     writeFileSync(join(release, 'tools', 'release', 'laptop-compose.sh'), readFileSync(join(here, 'laptop-compose.sh')));
+    writeFileSync(join(release, 'tools', 'release', 'run-locked.pl'), readFileSync(join(here, 'run-locked.pl')));
+    chmodSync(join(release, 'tools', 'release', 'run-locked.pl'), 0o755);
     const result = run(join(release, 'tools', 'release', 'laptop-compose.sh'), ['ps'], { BP_HOME: home });
     expect(result.status).toBe(2);
   });

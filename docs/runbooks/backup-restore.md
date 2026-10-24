@@ -1,6 +1,6 @@
 # Backup and restore
 
-**Nothing in this document is implemented in Phase 1.** There is no backup script, no schedule, and no restore command in the repository. `infra/` has compose, Caddy, Docker and Postgres init only. This is a design and a Phase 5 list. It has not been drilled.
+**For the live laptop (R0), backup and restore are implemented:** `infra/backup/laptop-backup.sh`, `laptop-restore.sh` and `backup-setup.sh`, with the nightly launchd agent. The steps are in [laptop-host.md](laptop-host.md) sections 8 and 9. A backup and restore of a live-style stack with fictional data was drilled on the development Mac on 2026-10-24: both databases and a stored file matched, and the restore took 15 seconds. The drill with real data happens on the laptop before go-live. The rest of this document is the original Phase 1 design for a server, kept for "Moving to a server".
 
 Proposed targets, not measured: **RPO 24 h** and **RTO 8 h**.
 
