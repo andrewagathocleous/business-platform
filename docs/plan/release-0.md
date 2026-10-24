@@ -165,6 +165,14 @@ Deploying a version:
 - **First run:** `owner enrol` (R0-A). The owner opens the link, signs in with Microsoft, and creates the company (R0-B) with real details typed in the app.
 - `outbound.all` and every company switch stay off.
 
+**Implemented 2026-10-25** (planner-implemented; reviewed by Codex). The runbook is [docs/runbooks/laptop-host.md](../runbooks/laptop-host.md). Differences from the outline above:
+
+1. `tools/release/build-images.sh` builds the three images from `git archive HEAD`, never from the working tree, and refuses uncommitted changes. `export-images.sh` takes every shipped file, `deploy-laptop.sh` included, from HEAD.
+2. The bundle is one `bp-<tag>.tar` with its own `RELEASE` file. The deploy checks an exact one-line SHA-256 sidecar, unpacks into staging, and refuses links, extra top-level entries or a mismatched tag before installing. An existing release is reused only when it is identical and has no links.
+3. `laptop-env.sh` writes the env files with fresh secrets, never prints them, takes a lock, and never overwrites a file. The API refuses to start with the Entra placeholders, so registering the Entra app (R0-G) comes before the first deploy.
+4. Postgres role passwords are no longer in SQL. `roles.sql` creates the roles; `infra/postgres/set-passwords.sh` sets each password with `\password`, which sends only a SCRAM verifier. Dev, prod, the laptop and CI use it.
+5. The deploy refuses to continue over existing data until the release has a backup script (R0-C).
+
 ## R0-F. Recovery runbook (P1-G)
 
 Write `docs/runbooks/break-glass.md` for the laptop:

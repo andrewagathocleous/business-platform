@@ -45,12 +45,9 @@ jobs:
           PGPASSWORD: ci-postgres-password
           PGDATABASE: postgres
         run: |
-          psql -v ON_ERROR_STOP=1 \
-            -v bp_owner_password=ci-owner-password \
-            -v bp_app_password=ci-app-password \
-            -v n8n_password=ci-n8n-password \
-            -v bp_owner_createdb=off \
-            -f infra/postgres/roles.sql
+          psql -X -v ON_ERROR_STOP=1 -v bp_owner_createdb=off -f infra/postgres/roles.sql
+          BP_OWNER_PASSWORD=ci-owner-password BP_APP_PASSWORD=ci-app-password N8N_DB_PASSWORD=ci-n8n-password \
+            infra/postgres/set-passwords.sh
       - name: Integration tests
         env:
           DATABASE_URL: postgresql://bp_app:ci-app-password@127.0.0.1:5432/business_platform_test

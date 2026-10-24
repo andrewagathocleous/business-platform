@@ -13,10 +13,12 @@ const LOCAL_CADDY = ['127.0.0.1:8443->443/tcp'];
 const LOCAL_N8N = ['127.0.0.1:15678->5678/tcp'];
 const PROD_CADDY = ['public:80->80/tcp', 'public:443->443/tcp', 'public:443->443/udp'];
 const PROD_N8N = ['127.0.0.1:5678->5678/tcp'];
+const LAPTOP_CADDY = ['127.0.0.1:8443->443/tcp'];
+const LAPTOP_N8N = ['127.0.0.1:15678->5678/tcp'];
 
 /**
  * @param {unknown} config
- * @param {'prod' | 'local'} kind
+ * @param {'prod' | 'local' | 'laptop'} kind
  * @returns {string[]}
  */
 export function validateCompose(kind, config) {
@@ -28,24 +30,30 @@ export function validateCompose(kind, config) {
   failures.push(...portFailures(kind, services));
   failures.push(...networkFailures(services));
   failures.push(...secretFailures(services));
-  if (kind === 'prod') {
+  if (kind === 'prod' || kind === 'laptop') {
     failures.push(...ownerUrlFailures(services));
     failures.push(...ownerCliLogFailures(services));
     failures.push(...prodFlagFailures(config));
-  } else {
+  }
+  if (kind === 'laptop') {
+    failures.push(...laptopFlagFailures(config));
+  } else if (kind === 'local') {
     failures.push(...localFlagFailures(config));
   }
   return failures;
 }
 
 /**
- * @param {'prod' | 'local'} kind
+ * @param {'prod' | 'local' | 'laptop'} kind
  * @param {Record<string, unknown>} services
  */
 function portFailures(kind, services) {
-  const expected = kind === 'prod'
-    ? { caddy: PROD_CADDY, n8n: PROD_N8N }
-    : { caddy: LOCAL_CADDY, n8n: LOCAL_N8N };
+  const expected =
+    kind === 'prod'
+      ? { caddy: PROD_CADDY, n8n: PROD_N8N }
+      : kind === 'laptop'
+        ? { caddy: LAPTOP_CADDY, n8n: LAPTOP_N8N }
+        : { caddy: LOCAL_CADDY, n8n: LOCAL_N8N };
   const failures = [];
   for (const [name, service] of Object.entries(services)) {
     const actual = portsOf(service);
@@ -174,6 +182,30 @@ function prodFlagFailures(config) {
   const secure = valuesOf(entries, 'SESSION_COOKIE_SECURE');
   if (secure.length === 0 || secure.some((value) => value !== 'true')) {
     failures.push('prod SESSION_COOKIE_SECURE is not true');
+  }
+  return failures;
+}
+
+/**
+ * The live laptop: its own project name, production mode on the API and the worker, and
+ * images by tag only.
+ * @param {Record<string, unknown>} config
+ */
+function laptopFlagFailures(config) {
+  const services = /** @type {Record<string, unknown>} */ (config.services);
+  const failures = [];
+  if (config.name !== 'business-platform-live') {
+    failures.push('laptop project name is not business-platform-live');
+  }
+  for (const name of ['api', 'worker']) {
+    if (envMap(services[name]).APP_ENV !== 'production') {
+      failures.push(`laptop ${name} APP_ENV is not production`);
+    }
+  }
+  for (const [name, service] of Object.entries(services)) {
+    if (isRecord(service) && service.build !== undefined) {
+      failures.push(`laptop ${name} has a build section`);
+    }
   }
   return failures;
 }
@@ -462,6 +494,34 @@ function main() {
     failures.push('prod rendered');
     console.log('FAIL prod rendered');
     console.log(prod.error);
+  }
+
+  const laptopArgs = [
+    '--env-file',
+    resolve(placeholderDir, 'interpolate.env'),
+    '-f',
+    'infra/compose/compose.prod.yml',
+    '-f',
+    'infra/compose/compose.laptop.yml',
+    '--profile',
+    'ops',
+  ];
+  quiet('laptop config', laptopArgs, failures);
+  const laptop = rendered(laptopArgs);
+  if (laptop.ok) {
+    const found = validateCompose('laptop', laptop.config);
+    if (found.length === 0) {
+      console.log('PASS laptop rendered');
+    } else {
+      failures.push('laptop rendered');
+      for (const failure of found) {
+        console.log(`FAIL laptop rendered: ${failure}`);
+      }
+    }
+  } else {
+    failures.push('laptop rendered');
+    console.log('FAIL laptop rendered');
+    console.log(laptop.error);
   }
 
   const localStack = resolve(root, '.env.local-stack');

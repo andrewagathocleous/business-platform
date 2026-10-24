@@ -1,41 +1,38 @@
 -- Idempotent roles and databases for local dev, CI and the VPS.
--- Passwords and bp_owner_createdb are psql variables:
---   psql -v bp_owner_password=... -v bp_app_password=... -v n8n_password=... -v bp_owner_createdb=on|off -f roles.sql
+-- bp_owner_createdb is a psql variable:
+--   psql -X -v bp_owner_createdb=on|off -f roles.sql
 -- bp_owner_createdb=on is for local `prisma migrate dev` (shadow database). CI and production pass off.
+--
+-- No password is set here. infra/postgres/set-passwords.sh sets them afterwards with psql's
+-- \password, which sends only a SCRAM verifier, so a plaintext password never appears in SQL,
+-- a server log, pg_stat_activity or a process argument.
 
 \set ON_ERROR_STOP on
 
--- psql does not substitute :'variables' inside dollar quotes, so the DO block is
--- assembled outside them and executed with \gexec.
-SELECT format($sql$
 DO $do$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bp_owner') THEN
-    CREATE ROLE bp_owner LOGIN PASSWORD %L;
+    CREATE ROLE bp_owner LOGIN;
   ELSE
-    ALTER ROLE bp_owner WITH LOGIN PASSWORD %L;
+    ALTER ROLE bp_owner WITH LOGIN;
   END IF;
   ALTER ROLE bp_owner NOSUPERUSER NOBYPASSRLS NOCREATEROLE;
 
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bp_app') THEN
-    CREATE ROLE bp_app LOGIN PASSWORD %L;
+    CREATE ROLE bp_app LOGIN;
   ELSE
-    ALTER ROLE bp_app WITH LOGIN PASSWORD %L;
+    ALTER ROLE bp_app WITH LOGIN;
   END IF;
   ALTER ROLE bp_app NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
 
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'n8n') THEN
-    CREATE ROLE n8n LOGIN PASSWORD %L;
+    CREATE ROLE n8n LOGIN;
   ELSE
-    ALTER ROLE n8n WITH LOGIN PASSWORD %L;
+    ALTER ROLE n8n WITH LOGIN;
   END IF;
   ALTER ROLE n8n NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
 END
 $do$;
-$sql$,
-  :'bp_owner_password', :'bp_owner_password',
-  :'bp_app_password', :'bp_app_password',
-  :'n8n_password', :'n8n_password')\gexec
 
 SELECT CASE
   WHEN :'bp_owner_createdb' = 'on' THEN 'ALTER ROLE bp_owner CREATEDB'

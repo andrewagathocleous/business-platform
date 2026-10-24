@@ -60,6 +60,22 @@ describe('compose config', () => {
     expect(validateCompose('prod', prodConfig())).toEqual([]);
   });
 
+  it('accepts the laptop overlay and rejects a public port, development mode or a build', () => {
+    expect(validateCompose('laptop', laptopConfig())).toEqual([]);
+    const publicPort = laptopConfig();
+    service(publicPort, 'caddy').ports = [{ published: '8443', target: 443, protocol: 'tcp' }];
+    expect(validateCompose('laptop', publicPort).some((failure) => failure.includes('public:8443'))).toBe(true);
+    const devMode = laptopConfig();
+    service(devMode, 'worker').environment.APP_ENV = 'development';
+    expect(validateCompose('laptop', devMode)).toContain('laptop worker APP_ENV is not production');
+    const built = laptopConfig();
+    built.services.api.build = { context: '.' };
+    expect(validateCompose('laptop', built)).toContain('laptop api has a build section');
+    const named = laptopConfig();
+    named.name = 'business-platform';
+    expect(validateCompose('laptop', named)).toContain('laptop project name is not business-platform-live');
+  });
+
   it('rejects local import-fixtures that depends on seed', () => {
     const local = localConfig();
     local.services['import-fixtures'].depends_on = {
@@ -162,4 +178,18 @@ function service(config, name) {
   found.environment ??= {};
   found.ports ??= [];
   return found;
+}
+
+function laptopConfig() {
+  const config = prodConfig();
+  config.name = 'business-platform-live';
+  config.services.caddy.ports = [{ host_ip: '127.0.0.1', published: '8443', target: 443, protocol: 'tcp' }];
+  config.services.caddy.environment = { APP_DOMAIN: 'localhost' };
+  config.services.n8n.ports = [{ host_ip: '127.0.0.1', published: '15678', target: 5678, protocol: 'tcp' }];
+  config.services.api.environment.APP_ENV = 'production';
+  config.services.worker = {
+    networks: { internal: null },
+    environment: { APP_ENV: 'production', AUTH_DEV_LOGIN_ENABLED: 'false', SESSION_COOKIE_SECURE: 'true' },
+  };
+  return config;
 }

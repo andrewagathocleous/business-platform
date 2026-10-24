@@ -9,11 +9,11 @@ if [ -z "${BP_OWNER_PASSWORD:-}" ] || [ -z "${BP_APP_PASSWORD:-}" ] || [ -z "${N
   exit 1
 fi
 
-psql -v ON_ERROR_STOP=1 \
+psql -X -v ON_ERROR_STOP=1 \
   --username "$POSTGRES_USER" \
   --dbname "$POSTGRES_DB" \
-  -v bp_owner_password="$BP_OWNER_PASSWORD" \
-  -v bp_app_password="$BP_APP_PASSWORD" \
-  -v n8n_password="$N8N_DB_PASSWORD" \
   -v bp_owner_createdb="${BP_OWNER_CREATEDB:-on}" \
   -f /opt/business-platform/roles.sql
+
+# The passwords stay in the environment. set-passwords.sh sends only SCRAM verifiers.
+/opt/business-platform/set-passwords.sh --username "$POSTGRES_USER" --dbname "$POSTGRES_DB"

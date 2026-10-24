@@ -193,6 +193,7 @@ services:
       - bp_postgres:/var/lib/postgresql
       - ../postgres/init/01-roles-and-dbs.sh:/docker-entrypoint-initdb.d/01-roles-and-dbs.sh:ro
       - ../postgres/roles.sql:/opt/business-platform/roles.sql:ro
+      - ../postgres/set-passwords.sh:/opt/business-platform/set-passwords.sh:ro
     networks:
       - internal
     healthcheck:
