@@ -83,6 +83,10 @@ const EXEMPTIONS: { route: string; reason: string }[] = [
     route: 'POST /api/c/:companyId/print-accounts/printnode/test',
     reason: 'Tests this company\'s PrintNode key. No object id.',
   },
+  {
+    route: 'GET /api/c/:companyId/integrations/health',
+    reason: 'Health for this company. No object id. Counts come from this company only.',
+  },
 ];
 
 type Agent = ReturnType<typeof request.agent>;

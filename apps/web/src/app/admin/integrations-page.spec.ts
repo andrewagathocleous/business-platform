@@ -255,8 +255,24 @@ async function setup(
   TestBed.inject(CompanyContextStore).grants.set(permissions.map(grant));
   const fixture = TestBed.createComponent(IntegrationsPage);
   fixture.detectChanges();
-  return { fixture, http: TestBed.inject(HttpTestingController) };
+  const http = TestBed.inject(HttpTestingController);
+  // The status panel reads once on load; its own spec covers it.
+  http.expectOne('/api/c/company-1/integrations/health').flush(EMPTY_HEALTH);
+  return { fixture, http };
 }
+
+const EMPTY_HEALTH = {
+  now: '2026-10-24T12:00:00.000Z',
+  prestashop: [],
+  printing: {
+    printNodeKeySet: false,
+    printNodeKeySetAt: null,
+    printers: [],
+    lastDiscoveryAt: null,
+    mappings: [],
+    failedLast24h: 0,
+  },
+};
 
 function flushStores(
   http: HttpTestingController,

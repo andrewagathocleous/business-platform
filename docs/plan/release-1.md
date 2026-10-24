@@ -234,6 +234,12 @@ On the Integrations screen, for each connection:
 
 For PrintNode: account ok, computers online or offline, last refresh. Read-only, `integration.view`.
 
+Implemented 2026-10-24 (planner-implemented while Cursor was at its weekly limit). The contract is `GET /c/:companyId/integrations/health` in [docs/integrations/prestashop.md](../integrations/prestashop.md). Differences from the bullets above:
+
+1. Error after max(15 minutes, 5 intervals), not a flat 15 minutes, so a long poll interval does not show an error between two normal polls. Warning after 3 intervals, as planned.
+2. PrintNode "account ok" and "computers online" are not a live call. Viewing the screen makes no provider call. It shows whether a key is set, each printer's state and when discovery last saw it, and the gift-card and packing-slip mappings. The PrintNode Test button (R1-B) checks the account itself.
+3. Added: orders needing review per store, imports still waiting after 15 minutes, and print jobs that failed or became uncertain in the last 24 hours.
+
 ## R1-F. Printer set-up and gift-card template (P2-11)
 
 **Mappings for the shop location:**

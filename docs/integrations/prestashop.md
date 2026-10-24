@@ -52,6 +52,24 @@ A new connection is paused, read-only, and does not write back to the shop. It p
 
 The key is encrypted before the connection row is updated. If that update fails, the new credential is revoked. The screen and the API return whether a key is set and when, never the key, a hint, or the credential id. Request bodies are not logged, so the logging redaction list was not given a `key` field.
 
+## Status on the Integrations screen
+
+`GET /c/:companyId/integrations/health` (`integration.view`) reads the database only and makes no provider call. The screen refreshes it every minute while the page is visible. For each non-archived PrestaShop store with a live connection:
+
+| Status | When | What to do |
+| --- | --- | --- |
+| OK, "Orders are arriving" | Active, and the last sync is within 3 poll intervals | Nothing |
+| Check, "No sync yet" | Active, but no poll has finished yet | Wait one interval. If it stays, check that the n8n W0 workflow is active |
+| Check, "Last sync N minutes ago" | Active, and the last sync is older than 3 intervals | Usually a slow or failed run; the next interval retries |
+| Problem, "Orders have stopped arriving" | Active, and the last sync is older than max(15 minutes, 5 intervals) | Check that n8n is running and W0 is active, then that the shop is reachable (Test connection) |
+| Check, "The last check failed: class" | Active, and an error was recorded after the last sync | See the class in [Errors and audits](#errors-and-audits); the next interval retries |
+| Problem, "The shop rejected the key" | `auth_failed` | Create a new GET-only key in PrestaShop, replace it, Test, then Start sync |
+| Paused, "Sync is paused" | `paused` | Test, then Start sync |
+
+The row also shows the last sync time in the company timezone, whether the key is set, orders that need review (linked to the orders list with `order.view`), imports that failed, and imports still waiting after 15 minutes (linked to the automation page with `automation.view`).
+
+The printing part shows whether a PrintNode key is set, each printer with its online or offline state and when discovery last saw it (mock printers are labelled "Simulated"), the gift-card and packing-slip mapping for each location, and print jobs that failed or became uncertain in the last 24 hours.
+
 ## Polling
 
 n8n W0 (`workflows/n8n/exports/w0-store-sync.json`) is an inactive schedule, every minute. It POSTs `http://api:3000/api/automation/v1/c/REPLACE_WITH_COMPANY_ID/store-sync`. The company id is replaced after import. The Header Auth credential `bp store-sync token` is not in the export.

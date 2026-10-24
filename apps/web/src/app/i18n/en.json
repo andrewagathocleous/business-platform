@@ -759,6 +759,51 @@
       "wrong_platform": "This store is not a PrestaShop store.",
       "first_import_locked": "The first import time is locked because sync has already started.",
       "settings_invalid": "Check the shop URL, timezone, first import time and poll interval."
+    },
+    "health": {
+      "title": "Status",
+      "refresh": "Refresh",
+      "loadError": "The status could not be loaded.",
+      "prestashop": "PrestaShop",
+      "noStores": "No PrestaShop stores yet.",
+      "notConnected": "Not connected",
+      "lastSync": "Last sync",
+      "never": "Never",
+      "keyNotSet": "Key not set",
+      "level": {
+        "ok": "OK",
+        "warning": "Check",
+        "error": "Problem",
+        "paused": "Paused"
+      },
+      "reason": {
+        "ok": "Orders are arriving",
+        "no_sync_yet": "No sync yet",
+        "sync_late": "Last sync {{minutes}} minutes ago",
+        "sync_stale": "Orders have stopped arriving: last sync {{minutes}} minutes ago",
+        "auth_failed": "The shop rejected the key",
+        "paused": "Sync is paused",
+        "last_run_failed": "The last check failed: {{errorClass}}"
+      },
+      "reviewRequired": "{{count}} orders need review",
+      "failedImports": "{{count}} imports failed",
+      "waitingImports": "{{count}} imports waiting",
+      "printing": "Printing",
+      "printNodeKeySet": "PrintNode key set",
+      "printNodeKeyNotSet": "PrintNode key not set",
+      "noPrinters": "No printers yet.",
+      "printer": {
+        "online": "Online",
+        "offline": "Offline",
+        "unknown": "Unknown"
+      },
+      "simulated": "Simulated",
+      "lastSeen": "Last seen",
+      "giftCards": "Gift cards",
+      "packingSlips": "Packing slips",
+      "notMapped": "Not mapped",
+      "printersLink": "Printer settings",
+      "failedPrints": "{{count}} print jobs failed or uncertain in the last 24 hours"
     }
   }
 }

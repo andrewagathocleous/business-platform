@@ -72,6 +72,14 @@ export type {
 export { decimalString, documentLineSchema, documentTotalsSchema } from './contracts/document';
 export type { DocumentLineDto, DocumentTotalsDto } from './contracts/document';
 
+export { connectionHealth } from './integrations/connection-health';
+export type {
+  ConnectionHealth,
+  ConnectionHealthInput,
+  ConnectionHealthLevel,
+  ConnectionHealthReason,
+} from './integrations/connection-health';
+
 export { normalizeForDuplicateCheck } from './text/normalize';
 export { addDaysToBusinessDate, businessDateInZone } from './time/business-date';
 export { isIanaTimeZone } from './time/iana-zone';

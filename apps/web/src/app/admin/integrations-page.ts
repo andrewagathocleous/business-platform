@@ -17,6 +17,7 @@ import { CompanyContextStore } from '../core/company-context.store';
 import { ActiveLang } from '../format/active-lang';
 import { CompanyDatePipe } from '../format/company-date.pipe';
 import { fieldValue } from '../orders/field-value';
+import { IntegrationHealthPanel } from './integration-health';
 
 const PAYMENT_STATUSES = [
   'pending',
@@ -68,10 +69,13 @@ type PrintTestBody = { ok: true; email: string } | { ok: false; errorClass: stri
 @Component({
   selector: 'bp-integrations-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, Button, CompanyDatePipe, RouterLink],
+  imports: [TranslocoPipe, Button, CompanyDatePipe, RouterLink, IntegrationHealthPanel],
   template: `
     <section class="screen">
       <h1>{{ 'integrations.title' | transloco }}</h1>
+      @if (companyId()) {
+        <bp-integration-health [companyId]="companyId()" />
+      }
       @if (loadingStores()) {
         <p role="status">{{ 'integrations.loading' | transloco }}</p>
       }
