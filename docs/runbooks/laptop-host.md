@@ -1,10 +1,11 @@
 # Live laptop host
 
-How the platform runs for real on the dedicated M4 MacBook Air (Release 0, step R0-E). The laptop is the only client: you open `https://localhost:8443` in its own browser. Nothing on the internet connects to it; it only makes outbound calls (PrestaShop, PrintNode, Microsoft).
+How the platform runs for real on the dedicated M4 MacBook Air (Release 0, step R0-E). The laptop is the only client: you open `https://localhost:8443` in its own browser. Nothing on the internet connects to it; it only makes outbound calls (PrestaShop, PrintNode, Microsoft, and GitHub and Docker Hub when a release is built).
 
 | Thing | Where |
 | --- | --- |
 | Compose project | `business-platform-live` (`compose.prod.yml` plus `compose.laptop.yml`) |
+| Source for building releases | `~/business-platform-src`, branch `deploy_prod`, read through a read-only deploy key |
 | Releases | `~/business-platform/releases/<tag>/`, with `~/business-platform/current` pointing at the running one |
 | Secrets | `~/business-platform/env/*.env`, directory `0700`, files `0600`, never in a backup or in git |
 | Address | `https://localhost:8443`, n8n editor on `http://127.0.0.1:15678` |
@@ -28,6 +29,28 @@ Every command below that starts with `lc` means `~/business-platform/current/too
 
    The symlink lets `docker compose` find Homebrew's Compose plugin; `docker compose version` must print a version. `brew services` starts Colima again at every login.
 3. Keep Time Machine away from the database: `tmutil addexclusion -p ~/.colima`. Time Machine copies the VM disk while Postgres is writing, which is not a backup. The real backup is R0-C.
+4. Give the laptop **read-only** access to the code on GitHub with a deploy key. A deploy key reads this one repository and nothing else, so the laptop never holds your GitHub login, and nobody who gets into it can change or delete a repository.
+
+   ```sh
+   mkdir -p -m 700 ~/.ssh
+   ssh-keygen -t ed25519 -N "" -C "business-platform laptop (read-only)" -f ~/.ssh/bp_deploy
+   cat >>~/.ssh/config <<'EOF'
+   Host github-bp
+     HostName github.com
+     User git
+     IdentityFile ~/.ssh/bp_deploy
+     IdentitiesOnly yes
+   EOF
+   pbcopy <~/.ssh/bp_deploy.pub
+   ```
+
+   The key has no passphrase: it can only read this repository, and FileVault protects the disk. On GitHub, open the repository, then Settings, Deploy keys, Add deploy key. Paste the key (it is on the clipboard), name it "business-platform laptop", and leave **Allow write access** unticked. Then:
+
+   ```sh
+   git clone --branch deploy_prod git@github-bp:andrewagathocleous/business-platform.git ~/business-platform-src
+   ```
+
+   The first connection asks you to accept GitHub's host key. Accept it only if the fingerprint matches GitHub's page "GitHub's SSH key fingerprints". Git comes with the command line tools that Homebrew installed.
 
 ## 2. Register the app in Microsoft Entra (once)
 
@@ -38,19 +61,27 @@ Follow R0-G in `docs/plan/release-0.md`: a single-tenant app, the web redirect U
 
 Also copy your own user's **Object ID** (Entra admin center, Users, your user) for the owner link in step 6.
 
-## 3. Build and export a release (development Mac)
+## 3. Build a release (laptop, from GitHub)
+
+A release is whatever the `deploy_prod` branch holds. Merging `develop` into it, on the development Mac, is the deliberate release step; the laptop only builds that branch.
 
 ```sh
-tools/release/build-images.sh            # builds bp-api, bp-migrate, bp-web at HEAD's short SHA
-tools/release/export-images.sh <tag>     # writes var/releases/bp-<tag>.tar, .sha256 and deploy-laptop.sh
+cd ~/business-platform-src
+git pull --ff-only
+tools/release/build-images.sh                  # builds bp-api, bp-migrate, bp-web at HEAD's short SHA
+tools/release/export-images.sh "$(git rev-parse --short HEAD)"
+                                               # writes var/releases/bp-<tag>.tar, .sha256 and deploy-laptop.sh
 ```
 
-Both refuse uncommitted changes or a tag that is not HEAD. Copy the three files to the laptop (AirDrop, USB or `scp`).
+Build outside shop hours: it keeps the processor busy for 15–20 minutes, and the first build downloads the base images. `build-images.sh` refuses uncommitted changes, so never edit files in this folder. Keep the three newest bundles in `var/releases`, for going back a version (Everyday), and delete older ones.
+
+**Without GitHub** (for example, the laptop cannot reach it): run the same two scripts in the repository on the development Mac, copy the three files from its `var/releases` to the laptop (AirDrop, USB or `scp`), and run `./deploy-laptop.sh bp-<tag>.tar` where you copied them.
 
 ## 4. First deploy (laptop)
 
 ```sh
-./deploy-laptop.sh bp-<tag>.tar
+cd ~/business-platform-src
+var/releases/deploy-laptop.sh var/releases/bp-<tag>.tar
 ```
 
 The first run unpacks the release, then stops because there are no env files yet. Create them:
@@ -62,9 +93,9 @@ The first run unpacks the release, then stops because there are no env files yet
 It writes fresh random secrets and prints none of them. Then:
 1. Open `~/business-platform/env/api.env` in a text editor, and replace the three `replace-me` values with the Entra values from step 2. The API refuses to start in production with a placeholder.
 2. Copy `APP_MASTER_KEYS` (from `api.env`) and `N8N_ENCRYPTION_KEY` (from `n8n.env`) into your password manager (L3). Without them, a restored backup cannot open the stored keys.
-3. Run `./deploy-laptop.sh bp-<tag>.tar` again.
+3. Run the same deploy command again.
 
-The deploy checks the file's SHA-256, loads the images, migrates, starts the stack, checks `/api/health/ready`, and points `current` at the release. On later deploys it backs up first and stops if the backup fails (R0-C).
+The deploy checks the file's SHA-256, loads the images, migrates, starts the stack, checks `/api/health/ready`, and points `current` at the release. On later deploys it backs up first and stops if the backup fails (R0-C). Every later release is section 3, then the deploy command.
 
 ## 5. Trust the local certificate (once)
 
@@ -124,8 +155,8 @@ It copies the backup to a private folder, checks the manifest, asks for the secr
 
 **Disaster recovery** (a new laptop), in this order, so no empty stack is created first:
 1. Steps 1 and 2 above, and `brew install age`.
-2. Copy the newest release bundle to the laptop and run `./deploy-laptop.sh --unpack-only bp-<tag>.tar`. It loads the images without starting anything, and stops to ask for env files.
-3. Run `~/business-platform/releases/<tag>/tools/release/laptop-env.sh`. Then, in `api.env` and `n8n.env`, replace `APP_MASTER_KEYS` and `N8N_ENCRYPTION_KEY` with the **old** values from your password manager, and fill in the Entra values. Run `./deploy-laptop.sh --unpack-only bp-<tag>.tar` again.
+2. Build the release (section 3), then run `var/releases/deploy-laptop.sh --unpack-only var/releases/bp-<tag>.tar` in `~/business-platform-src`. It loads the images without starting anything, and stops to ask for env files.
+3. Run `~/business-platform/releases/<tag>/tools/release/laptop-env.sh`. Then, in `api.env` and `n8n.env`, replace `APP_MASTER_KEYS` and `N8N_ENCRYPTION_KEY` with the **old** values from your password manager, and fill in the Entra values. Run the same `--unpack-only` command again.
 4. Restore into the live project: `~/business-platform/current/infra/backup/laptop-restore.sh "<backup>" --project business-platform-live`.
 5. Steps 5 and 7, then section 8 (a new backup key pair is fine).
 6. Check the queued print jobs (Admin, Automation), then turn the company switches back on there. The global `outbound.all` switch is left as it was in the backup.
@@ -154,6 +185,6 @@ Allow notifications for "Script Editor" in System Settings, Notifications, the f
 | Start again | `lc up -d --wait` |
 | Check only loopback listens | `lsof -nP -iTCP -sTCP:LISTEN` shows the stack on `127.0.0.1` only |
 
-**Going back a version.** Run `deploy-laptop.sh` with the previous bundle. Migrations only move forward. If the new version changed the database and the old one cannot run on it, restore the backup taken just before the deploy (R0-C).
+**Going back a version.** Run `deploy-laptop.sh` with the previous bundle in `~/business-platform-src/var/releases`. Migrations only move forward. If the new version changed the database and the old one cannot run on it, restore the backup taken just before the deploy (R0-C).
 
 **Switches.** `outbound.all` and every company switch stay off until a release's live checks say otherwise.

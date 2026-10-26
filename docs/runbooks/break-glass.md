@@ -64,7 +64,7 @@ With it, sign in to the Entra admin center, restore access to your normal accoun
 
 ## 5. A deploy went wrong
 
-Deploy the previous bundle again (`deploy-laptop.sh` with the older `bp-<tag>.tar`). If that deploy fails because the newer version changed the database, restore the backup that the newer deploy took just before it started, **with the older release's own restore script**, so the older images and migrations are used:
+Deploy the previous bundle again (`deploy-laptop.sh` with the older `bp-<tag>.tar` in `~/business-platform-src/var/releases`). If that deploy fails because the newer version changed the database, restore the backup that the newer deploy took just before it started, **with the older release's own restore script**, so the older images and migrations are used:
 
 ```sh
 ~/business-platform/releases/<older tag>/infra/backup/laptop-restore.sh \
