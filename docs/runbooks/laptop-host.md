@@ -63,7 +63,7 @@ Also copy your own user's **Object ID** (Entra admin center, Users, your user) f
 
 ## 3. Build a release (laptop, from GitHub)
 
-A release is whatever the `deploy_prod` branch holds. Merging `develop` into it, on the development Mac, is the deliberate release step; the laptop only builds that branch.
+A release is whatever the `deploy_prod` branch holds. Code reaches it through `develop` → `main` (Staging) → `deploy_uat` (UAT) → `deploy_prod` (PROD), and you do each promotion; the laptop only builds `deploy_prod`.
 
 ```sh
 cd ~/business-platform-src
@@ -75,7 +75,17 @@ tools/release/export-images.sh "$(git rev-parse --short HEAD)"
 
 Build outside shop hours: it keeps the processor busy for 15–20 minutes, and the first build downloads the base images. `build-images.sh` refuses uncommitted changes, so never edit files in this folder. Keep the three newest bundles in `var/releases`, for going back a version (Everyday), and delete older ones.
 
-**Without GitHub** (for example, the laptop cannot reach it): run the same two scripts in the repository on the development Mac, copy the three files from its `var/releases` to the laptop (AirDrop, USB or `scp`), and run `./deploy-laptop.sh bp-<tag>.tar` where you copied them.
+**Without GitHub** (for example, the laptop cannot reach it): build on the development Mac from a separate, clean copy of `deploy_prod`, never from your working folder, which is usually on `develop`. The scripts build whatever commit the folder holds.
+
+```sh
+git fetch origin
+git worktree add --detach ../bp-release origin/deploy_prod
+cd ../bp-release
+tools/release/build-images.sh
+tools/release/export-images.sh "$(git rev-parse --short HEAD)"
+```
+
+Copy the three files from `../bp-release/var/releases` to the laptop (AirDrop, USB or `scp`), and run `./deploy-laptop.sh bp-<tag>.tar` where you copied them. Then remove the copy: `git worktree remove --force ../bp-release` from the main folder.
 
 ## 4. First deploy (laptop)
 
@@ -154,7 +164,7 @@ Restore the newest backup into a scratch copy. Only Postgres, migrate and the AP
 It copies the backup to a private folder, checks the manifest, asks for the secret key (hidden), proves the key opens every file, restores, **turns every company automation switch off** (audited; every outbound action, such as printing, needs its company switch), runs migrate, waits for the API, and prints row counts and the time taken. You can also pipe the key from your password manager's command-line tool instead of typing it. Compare the counts with `lc exec -T postgres psql -X -U postgres -d business_platform -c "select count(*) from sales_order"` on the live stack. Record the time and the counts, not the data, in `docs/releases/r0-report.md`. Then delete the scratch copy with the `down -v` command it prints.
 
 **Disaster recovery** (a new laptop), in this order, so no empty stack is created first:
-1. Steps 1 and 2 above, and `brew install age`.
+1. Steps 1 and 2 above, and `brew install age`. Step 1 creates a new deploy key; on GitHub (Settings, Deploy keys) delete the old laptop's key, because deploy keys never expire.
 2. Build the release (section 3), then run `var/releases/deploy-laptop.sh --unpack-only var/releases/bp-<tag>.tar` in `~/business-platform-src`. It loads the images without starting anything, and stops to ask for env files.
 3. Run `~/business-platform/releases/<tag>/tools/release/laptop-env.sh`. Then, in `api.env` and `n8n.env`, replace `APP_MASTER_KEYS` and `N8N_ENCRYPTION_KEY` with the **old** values from your password manager, and fill in the Entra values. Run the same `--unpack-only` command again.
 4. Restore into the live project: `~/business-platform/current/infra/backup/laptop-restore.sh "<backup>" --project business-platform-live`.

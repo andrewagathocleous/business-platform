@@ -63,5 +63,6 @@ From the machine-wide `~/.agents/AGENTS.md`, the planner → implementer → rev
 
 ## Git
 
-- Work on `develop`. `deploy_uat` and `deploy_prod` are release branches, and merging into them is a deliberate release action.
+- Work on `develop`. Agents push only `develop`, and only when the user asks.
+- Code is promoted `develop` → `main` (Staging) → `deploy_uat` (UAT) → `deploy_prod` (PROD). The user does each promotion; it is a deliberate release action. The live laptop builds only `deploy_prod`.
 - Never commit `.env*` (except `.env.example`), generated PDFs, backups, n8n credential exports or real customer data.

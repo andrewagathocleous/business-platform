@@ -184,7 +184,7 @@ Deploying a version:
 3. `laptop-env.sh` writes the env files with fresh secrets, never prints them, takes a lock, and never overwrites a file. The API refuses to start with the Entra placeholders, so registering the Entra app (R0-G) comes before the first deploy.
 4. Postgres role passwords are no longer in SQL. `roles.sql` creates the roles; `infra/postgres/set-passwords.sh` sets each password with `\password`, which sends only a SCRAM verifier. Dev, prod, the laptop and CI use it.
 5. The deploy refuses to continue over existing data until the release has a backup script (R0-C).
-6. **Releases are built on the laptop** (the user's choice, 2026-10-26). It clones the `deploy_prod` branch through a read-only deploy key and runs the same build, export and deploy scripts. Merging `develop` into `deploy_prod` is the release step. Building on the development Mac and copying the bundle still works when the laptop cannot reach GitHub.
+6. **Releases are built on the laptop** (the user's choice, 2026-10-26). It clones the `deploy_prod` branch through a read-only deploy key and runs the same build, export and deploy scripts. The user promotes code `develop` → `main` (Staging) → `deploy_uat` (UAT) → `deploy_prod` (PROD). Building on the development Mac and copying the bundle still works when the laptop cannot reach GitHub.
 
 ## R0-F. Recovery runbook (P1-G)
 

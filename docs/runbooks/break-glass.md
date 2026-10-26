@@ -48,7 +48,8 @@ Every session of that owner ends. Sign in again with Microsoft.
    - the PrestaShop Webservice key: create a new one in PrestaShop, delete the old one, and enter the new one on the Integrations screen;
    - the PrintNode API key: create a new one at printnode.com, delete the old one, and enter it on the Integrations screen;
    - the Entra client secret: create a new secret for the app registration, put it in `api.env`, recreate the API with `lc up -d --force-recreate api worker`, check that you can sign in, and only then delete the old secret;
-   - your Microsoft sessions: sign out of other sessions in your Microsoft account.
+   - your Microsoft sessions: sign out of other sessions in your Microsoft account;
+   - the GitHub deploy key: on the repository's Settings, Deploy keys, delete the old laptop's key (deploy keys never expire).
 5. Re-enrol yourself if the restore did not bring your Microsoft link (case 1).
 
 **Check afterwards:** the restore printed the expected row counts; the Integrations status shows both connections set; the audit log shows `integration.credential_replaced` for each key.
