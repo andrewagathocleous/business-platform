@@ -59,6 +59,8 @@ Each release is done when its code is reviewed and tested, it is deployed to pro
 
 ## R2: invoicing and receivables
 
+Plan: [docs/plan/release-2.md](plan/release-2.md) (2026-10-27, local branch `r2-invoices`).
+
 | ID | Item | Blocked by |
 |---|---|---|
 | P3-01 | Review EU/Cyprus invoice requirements (mandatory fields, simplified invoices, credit notes, retention); configurable rules; accountant sign-off checklist | U1 |
@@ -69,6 +71,7 @@ Each release is done when its code is reviewed and tested, it is deployed to pro
 | P3-07 | Receivables reports (issued, collected, unpaid, ageing; cash vs invoiced labelled) and accountant export | P3-04 |
 | P3-12 | Client CSV import/export with formula-injection protection | — |
 | R2-01 | Tax codes and invoice series set up through the app (today only the seed creates them) | P3-01 |
+| R2-02 | Invoices built from shop orders, for stores whose invoice authority is `platform`. Needs the raw order line prices (today `0.3333 × 3` is stored as `0.33` with a `1.00` line total), each line's tax code or rate, discounts, and client matching; deferred from R2 by the plan review (2026-10-27) | A1, R2-C |
 
 ## R3: Shopify orders
 
