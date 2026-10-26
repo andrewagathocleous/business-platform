@@ -54,7 +54,12 @@ jobs:
           DATABASE_URL_OWNER: postgresql://bp_owner:ci-owner-password@127.0.0.1:5432/business_platform_test
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ci-postgres-password
-        run: pnpm test:integration
+          APP_MASTER_KEY_ACTIVE: k1
+        # A random throwaway master key for each run; local runs read theirs from .env.
+        run: |
+          key="$(openssl rand -base64 32)"
+          echo "::add-mask::$key"
+          APP_MASTER_KEYS="{\"k1\":\"$key\"}" pnpm test:integration
       - name: Build
         run: pnpm build
       - name: Check the web bundle for secrets

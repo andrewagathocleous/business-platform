@@ -118,6 +118,7 @@ Each release is done when its code is reviewed and tested, it is deployed to pro
 | P5-06 | Release process: `deploy_uat` and `deploy_prod` branches, deployment as a deliberate release action |
 | P5-07 | Recovery runbooks: lost VPS, compromised credential, broken deployment, PrintNode PC unavailable |
 | H-01 | Invitations still accept a `preferred_username` match when `email_verified` is not true (`invitationEmailMatches`). Owner enrolment no longer does (R0-A review, 2026-10-24). Decide at R0-G, with the real Entra claims, whether invitations should require a verified email or an expected object id too |
+| H-02 | Test isolation: `orders.integration.test.ts` expects `JobRunner.drainOnce()` to process exactly 1 job, but it runs every due job in the database. When `isolation`, `company-setup` or `documents` runs first (Vitest runs failed files first on the next run), a job they left due makes it 2 and 9 orders tests fail. Clear or scope due jobs before that assertion (found 2026-10-27 while fixing CI) |
 | P5-08 | Audit hash-chain or external anchoring for tamper evidence |
 | P2-10 | Order "assigned-only" view mode for stricter fulfilment roles (A2) |
 

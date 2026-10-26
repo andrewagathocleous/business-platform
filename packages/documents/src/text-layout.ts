@@ -153,11 +153,11 @@ function wrapLine(line: string, fontSize: number, maxWidth: number): string[] | 
   const lines: string[] = [];
   let rest = line;
   while (rest.length > 0) {
-    if (widthOf(rest, fontSize) <= maxWidth) {
+    const fitEnd = longestPrefix(rest, fontSize, maxWidth);
+    if (fitEnd === rest.length) {
       lines.push(rest);
       break;
     }
-    const fitEnd = longestPrefix(rest, fontSize, maxWidth);
     if (fitEnd <= 0) {
       return null;
     }
@@ -177,9 +177,18 @@ function wrapLine(line: string, fontSize: number, maxWidth: number): string[] | 
   return lines;
 }
 
+/**
+ * Probes 1, 2, 4, … characters before the binary search, so each wrapped line
+ * costs about its own length, not the length of the rest of the message.
+ */
 function longestPrefix(text: string, fontSize: number, maxWidth: number): number {
   let low = 0;
-  let high = text.length;
+  let high = 1;
+  while (high < text.length && widthOf(text.slice(0, high), fontSize) <= maxWidth) {
+    low = high;
+    high *= 2;
+  }
+  high = Math.min(high, text.length);
   while (low < high) {
     const mid = Math.ceil((low + high) / 2);
     if (widthOf(text.slice(0, mid), fontSize) <= maxWidth) {
