@@ -1,0 +1,85 @@
+{
+  "_meta": {
+    "shape": "Shopify Admin GraphQL Order",
+    "apiVersion": "unverified; check in Phase 2"
+  },
+  "id": "gid://shopify/Order/1001",
+  "name": "#1001",
+  "createdAt": "2026-03-01T10:00:00.000Z",
+  "updatedAt": "2026-03-02T09:00:00.000Z",
+  "displayFinancialStatus": "PAID",
+  "displayFulfillmentStatus": "UNFULFILLED",
+  "cancelledAt": null,
+  "email": "giorgos.dimitriou.order@example.test",
+  "phone": "+35799001009",
+  "note": "Παρακαλώ μετά τις 17:00.",
+  "currencyCode": "EUR",
+  "customer": {
+    "id": "gid://shopify/Customer/1001",
+    "displayName": "Γιώργος Δημητρίου",
+    "email": "giorgos.dimitriou.order@example.test",
+    "phone": "+35799001009"
+  },
+  "shippingAddress": {
+    "firstName": "Μαρία",
+    "lastName": "Παπαδοπούλου",
+    "address1": "1 Demo Street",
+    "address2": "Διαμέρισμα 2",
+    "city": "Λευκωσία",
+    "zip": "1000",
+    "countryCodeV2": "CY",
+    "phone": "+35799001002"
+  },
+  "billingAddress": {
+    "firstName": "Γιώργος",
+    "lastName": "Δημητρίου",
+    "address1": "1 Demo Street",
+    "city": "Λευκωσία",
+    "zip": "1000",
+    "countryCodeV2": "CY",
+    "phone": "+35799001009"
+  },
+  "customAttributes": [
+    { "key": "gift_wrap", "value": "yes" },
+    {
+      "key": "Gift Message",
+      "value": "Χρόνια πολλά, Μαρία!\n\nΜε αγάπη, \nΓιώργος & Ελένη — «καλή χρονιά»"
+    }
+  ],
+  "shippingLine": { "code": "local", "title": "Local courier" },
+  "lineItems": {
+    "nodes": [
+      {
+        "id": "gid://shopify/LineItem/1001-1",
+        "sku": "NUTS",
+        "title": "Mixed nuts",
+        "variantTitle": "250 g",
+        "quantity": 2,
+        "originalUnitPriceSet": { "shopMoney": { "amount": "8.5000", "currencyCode": "EUR" } },
+        "originalTotalSet": { "shopMoney": { "amount": "17.00", "currencyCode": "EUR" } }
+      },
+      {
+        "id": "gid://shopify/LineItem/1001-2",
+        "sku": "GIFTBOX",
+        "title": "Gift box",
+        "variantTitle": null,
+        "quantity": 1,
+        "originalUnitPriceSet": { "shopMoney": { "amount": "18.0000", "currencyCode": "EUR" } },
+        "originalTotalSet": { "shopMoney": { "amount": "18.00", "currencyCode": "EUR" } }
+      },
+      {
+        "id": "gid://shopify/LineItem/1001-3",
+        "sku": "WRAP",
+        "title": "Gift wrapping",
+        "variantTitle": null,
+        "quantity": 1,
+        "originalUnitPriceSet": { "shopMoney": { "amount": "3.0000", "currencyCode": "EUR" } },
+        "originalTotalSet": { "shopMoney": { "amount": "3.00", "currencyCode": "EUR" } }
+      }
+    ]
+  },
+  "subtotalPriceSet": { "shopMoney": { "amount": "38.00", "currencyCode": "EUR" } },
+  "totalShippingPriceSet": { "shopMoney": { "amount": "5.00", "currencyCode": "EUR" } },
+  "totalTaxSet": { "shopMoney": { "amount": "0.00", "currencyCode": "EUR" } },
+  "totalPriceSet": { "shopMoney": { "amount": "43.00", "currencyCode": "EUR" } }
+}

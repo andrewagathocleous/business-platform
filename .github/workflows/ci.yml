@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.6-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-postgres-password
+          POSTGRES_DB: postgres
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      NX_DAEMON: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@12.14.0 --activate
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Lint, typecheck and unit tests
+        run: pnpm lint && pnpm typecheck && pnpm test
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Create roles and databases
+        env:
+          PGHOST: 127.0.0.1
+          PGUSER: postgres
+          PGPASSWORD: ci-postgres-password
+          PGDATABASE: postgres
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -v bp_owner_createdb=off -f infra/postgres/roles.sql
+          BP_OWNER_PASSWORD=ci-owner-password BP_APP_PASSWORD=ci-app-password N8N_DB_PASSWORD=ci-n8n-password \
+            infra/postgres/set-passwords.sh
+      - name: Integration tests
+        env:
+          DATABASE_URL: postgresql://bp_app:ci-app-password@127.0.0.1:5432/business_platform_test
+          DATABASE_URL_OWNER: postgresql://bp_owner:ci-owner-password@127.0.0.1:5432/business_platform_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-postgres-password
+          APP_MASTER_KEY_ACTIVE: k1
+        # A random throwaway master key for each run; local runs read theirs from .env.
+        run: |
+          key="$(openssl rand -base64 32)"
+          echo "::add-mask::$key"
+          APP_MASTER_KEYS="{\"k1\":\"$key\"}" pnpm test:integration
+      - name: Build
+        run: pnpm build
+      - name: Check the web bundle for secrets
+        run: node tools/check-bundle.mjs
+      - name: Smoke-check the built API
+        env:
+          DATABASE_URL_TEST: postgresql://bp_app:ci-app-password@127.0.0.1:5432/business_platform_test
+        run: node tools/smoke-dist.mjs
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Dependency audit (report only, not blocking)
+        run: pnpm audit --prod --audit-level high
+        continue-on-error: true

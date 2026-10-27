@@ -1,0 +1,11 @@
+{
+	email {$ACME_EMAIL}
+	admin 127.0.0.1:2019
+}
+
+import app.caddy
+
+{$APP_DOMAIN} {
+	import app
+	header >Strict-Transport-Security "max-age=31536000; includeSubDomains"
+}
