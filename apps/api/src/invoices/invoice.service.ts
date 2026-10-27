@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { TenantDb, type TenantTransaction } from '@bp/db';
 import {
@@ -5,18 +6,34 @@ import {
   businessDateInZone,
   calculateDocumentTotals,
   currencyMinorDigits,
+  deliveryDeadline,
   DocumentValidationError,
+  printedUnitAmount,
+  vatExclusiveUnitPrice,
+  type DeliveryDeadlineRule,
   type DocumentTotals,
 } from '@bp/domain';
-import { renderInvoiceDraft, type DocumentLanguage } from '@bp/documents';
+import {
+  ISSUED_RENDER_VERSION,
+  renderInvoiceDraft,
+  renderIssuedInvoice,
+  type DocumentLanguage,
+  type IssuedInvoicePdfInput,
+} from '@bp/documents';
+import { storageKey, type StorageAdapter } from '@bp/integrations';
 import { AuditService } from '../audit/audit.service';
 import { isUuid } from '../authz/company-path';
 import type { RequestContext } from '../authz/request-context';
 import { CommerceError, settleCommerceError } from '../commerce/errors';
 import { decimalField, fixed, formatDateOnly, parseDateOnly } from '../commerce/format';
 import { requireActor } from '../commerce/http';
+import { uuidv7 } from '../correlation/correlation';
 import { PrismaService } from '../database/prisma.service';
 import type { RequestMeta } from '../identity/request-meta';
+import { integrityFailed, isStorageMiss } from '../storage/file-errors';
+import { STORAGE } from '../storage/storage.module';
+import { FileIntegrityError, readVerifiedFile } from '../storage/verified-file';
+import { issueProblems } from './issue-validation';
 
 export type InvoiceLineInput = {
   position: number;
@@ -36,6 +53,8 @@ export type InvoiceWrite = {
   pricesIncludeTax: boolean;
   issueDate?: string | null;
   dueDate?: string | null;
+  /** Time of supply. Empty means the issue date. */
+  supplyDate?: string | null;
   reference?: string | null;
   notes?: string | null;
   terms?: string | null;
@@ -49,6 +68,7 @@ export type InvoicePatch = {
   pricesIncludeTax?: boolean;
   issueDate?: string | null;
   dueDate?: string | null;
+  supplyDate?: string | null;
   reference?: string | null;
   notes?: string | null;
   terms?: string | null;
@@ -103,6 +123,10 @@ export type InvoiceSummary = {
   pricesIncludeTax: boolean;
   issueDate: string | null;
   dueDate: string | null;
+  supplyDate: string | null;
+  deliveryDeadline: string | null;
+  number: string | null;
+  issuedAt: string | null;
   reference: string | null;
   subtotal: string;
   discountTotal: string;
@@ -159,14 +183,94 @@ type ClientRow = {
 type CompanyRow = {
   legalName: string;
   tradingName: string;
+  countryCode: string;
   vatNumber: string | null;
   registrationNumber: string | null;
+  taxOffice: string | null;
   address: unknown;
   timezone: string;
   paymentTermsDays: number;
   documentLanguage: 'en' | 'el';
   defaultCurrency: string;
+  invoiceTermsEn: string | null;
+  invoiceTermsEl: string | null;
+  defaultInvoiceSeriesId: string | null;
 };
+
+/** Test seams. Production leaves `hooks` null. */
+export type IssueHooks = {
+  /** After the number is allocated and before the PDF is rendered and stored. */
+  afterNumberAllocated?: () => Promise<void>;
+};
+
+export type IssueResult = {
+  invoice: InvoiceDetail;
+  /** `delivery_deadline_passed`: issued late. Never a refusal (invoice-requirements.md, section 2). */
+  warnings: string[];
+};
+
+type TaxCodeLock = {
+  id: string;
+  code: string;
+  name: string;
+  ratePercent: string;
+  kind: string;
+  noteEn: string | null;
+  noteEl: string | null;
+  active: boolean;
+  deadlineRule: DeliveryDeadlineRule;
+};
+
+type AddressSnapshot = {
+  line1: string | null;
+  line2: string | null;
+  city: string | null;
+  region: string | null;
+  postalCode: string | null;
+  countryCode: string | null;
+};
+
+type SellerSnapshot = {
+  legalName: string;
+  tradingName: string;
+  vatNumber: string | null;
+  registrationNumber: string | null;
+  taxOffice: string | null;
+  address: AddressSnapshot;
+  addressLines: string[];
+};
+
+type BuyerSnapshot = {
+  clientId: string;
+  displayName: string;
+  legalName: string | null;
+  vatNumber: string | null;
+  taxId: string | null;
+  email: string | null;
+  address: AddressSnapshot | null;
+  addressLines: string[];
+};
+
+type BankSnapshot = {
+  bankName: string;
+  accountHolder: string;
+  iban: string;
+  bic: string | null;
+};
+
+type TaxSnapshot = {
+  code: string;
+  name: string;
+  kind: string;
+  ratePercent: string;
+  noteEn: string | null;
+  noteEl: string | null;
+  deadlineRule: DeliveryDeadlineRule;
+};
+
+const ISSUED_KIND = 'invoice_pdf';
+/** Kinds whose legal note the issued PDF prints. */
+const NOTED_KINDS = new Set(['exempt', 'reverse_charge', 'zero', 'out_of_scope']);
 
 const detailInclude = {
   client: true,
@@ -177,10 +281,13 @@ const detailInclude = {
 @Injectable()
 export class InvoiceService {
   private readonly tenants: TenantDb;
+  /** Test seam. Production leaves it null. */
+  hooks: IssueHooks | null = null;
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(STORAGE) private readonly storage: StorageAdapter,
   ) {
     this.tenants = new TenantDb(prisma.client);
   }
@@ -277,6 +384,7 @@ export class InvoiceService {
         const totals = calculated(input.pricesIncludeTax, lines);
         const issueDate = input.issueDate ? parseDateOnly(input.issueDate, 'issueDate') : null;
         const dueDate = this.dueDate(input.dueDate, issueDate, client, company);
+        const supplyDate = input.supplyDate ? parseDateOnly(input.supplyDate, 'supplyDate') : null;
         const created = await tx.invoice.create({
           data: {
             companyId: ctx.companyId,
@@ -288,6 +396,7 @@ export class InvoiceService {
             pricesIncludeTax: input.pricesIncludeTax,
             issueDate,
             dueDate,
+            supplyDate,
             reference: input.reference ?? null,
             notes: input.notes ?? null,
             terms: input.terms ?? null,
@@ -388,6 +497,12 @@ export class InvoiceService {
             : patch.dueDate
               ? parseDateOnly(patch.dueDate, 'dueDate')
               : null;
+        const supplyDate =
+          patch.supplyDate === undefined
+            ? current.supplyDate
+            : patch.supplyDate
+              ? parseDateOnly(patch.supplyDate, 'supplyDate')
+              : null;
         const written = await tx.invoice.updateMany({
           where: {
             id: current.id,
@@ -402,6 +517,7 @@ export class InvoiceService {
             pricesIncludeTax,
             issueDate,
             dueDate,
+            supplyDate,
             reference: patch.reference === undefined ? current.reference : patch.reference,
             notes: patch.notes === undefined ? current.notes : patch.notes,
             terms: patch.terms === undefined ? current.terms : patch.terms,
@@ -449,15 +565,422 @@ export class InvoiceService {
     }
   }
 
+  /**
+   * Issues a draft invoice: one transaction, locks in the plan's order (company, switches,
+   * tax codes, invoice, series). The number, the frozen snapshot and the sealed PDF commit
+   * together, so a rollback consumes no number.
+   */
+  async issue(
+    ctx: RequestContext,
+    invoiceId: string,
+    input: { expectedVersion: number },
+    meta: RequestMeta,
+  ): Promise<IssueResult> {
+    const actor = requireActor(ctx);
+    try {
+      // Issues queue on the series lock while each renders its PDF, so allow for the queue.
+      return await this.tenants.run(
+        this.context(ctx, actor),
+        (tx) => this.issueIn(tx, ctx, actor, invoiceId, input.expectedVersion, meta),
+        { timeoutMs: 30_000, maxWaitMs: 15_000 },
+      );
+    } catch (error) {
+      return this.fail(ctx, meta, numberTakenOr(error, invoiceId));
+    }
+  }
+
+  private async issueIn(
+    tx: TenantTransaction,
+    ctx: RequestContext,
+    actor: string,
+    invoiceId: string,
+    expectedVersion: number,
+    meta: RequestMeta,
+  ): Promise<IssueResult> {
+    if (!isUuid(invoiceId)) {
+      throw new CommerceError(404, 'invoice_not_found', 'invoice', null, 'Not found');
+    }
+    const id = invoiceId.toLowerCase();
+    const companyId = ctx.companyId;
+    // Another company's id is 404 before anything else answers. This read takes no lock.
+    const visible = await tx.invoice.findFirst({ where: { id, companyId }, select: { id: true } });
+    if (!visible) {
+      throw new CommerceError(404, 'invoice_not_found', 'invoice', id, 'Not found');
+    }
+    // 1. The company, so its currency and settings hold until commit.
+    const company = await this.company(tx, companyId, { lock: true });
+    // 2. The switches, checked at execution time.
+    await requireIssuance(tx, companyId, id);
+    // 3. The tax codes the draft uses, by id. They are read before the invoice is locked,
+    //    then checked against the locked draft below.
+    const usedCodes = await tx.invoiceLine.findMany({
+      where: { companyId, invoiceId: id },
+      select: { taxCodeId: true },
+      distinct: ['taxCodeId'],
+    });
+    const taxCodes = await lockTaxCodes(
+      tx,
+      companyId,
+      usedCodes.map((line) => line.taxCodeId),
+    );
+    // 4. The invoice.
+    const lockedRows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id::text AS id FROM invoice
+      WHERE company_id = ${companyId}::uuid AND id = ${id}::uuid
+      FOR UPDATE
+    `;
+    if (lockedRows.length === 0) {
+      throw new CommerceError(404, 'invoice_not_found', 'invoice', id, 'Not found');
+    }
+    const current = await this.load(tx, companyId, id);
+    if (current.status !== 'draft') {
+      throw new CommerceError(
+        409,
+        'not_draft',
+        'invoice',
+        id,
+        'Only a draft can be issued.',
+        'invoice.issue',
+      );
+    }
+    if (current.documentType === 'credit_note') {
+      throw new CommerceError(
+        409,
+        'credit_note_draft',
+        'invoice',
+        id,
+        'Credit notes are issued through the credit-note routes.',
+        'invoice.issue',
+      );
+    }
+    if (current.documentType !== 'invoice') {
+      throw new CommerceError(
+        409,
+        'not_issuable',
+        'invoice',
+        id,
+        'A quote is not issued.',
+        'invoice.issue',
+      );
+    }
+    if (current.version !== expectedVersion) {
+      throw new CommerceError(
+        409,
+        'version_conflict',
+        'invoice',
+        id,
+        'version conflict',
+        'invoice.issue',
+      );
+    }
+    const taxById = new Map(taxCodes.map((code) => [code.id, code]));
+    if (current.lines.some((line) => !taxById.has(line.taxCodeId))) {
+      throw new CommerceError(
+        409,
+        'version_conflict',
+        'invoice',
+        id,
+        'version conflict',
+        'invoice.issue',
+      );
+    }
+    if (current.currency !== 'EUR' || company.defaultCurrency.trim().toUpperCase() !== 'EUR') {
+      throw new CommerceError(
+        422,
+        'currency_not_supported',
+        'invoice',
+        id,
+        'Documents are issued in EUR only, by a company whose currency is EUR.',
+        'invoice.issue',
+      );
+    }
+    for (const line of current.lines) {
+      const code = taxById.get(line.taxCodeId);
+      if (
+        !code ||
+        fixed(line.taxRatePercent, 4) !== decimalField(code.ratePercent, 4, 'taxRatePercent')
+      ) {
+        // A code's rate is locked while any line uses it (R2-B), so this should never happen.
+        throw new CommerceError(
+          409,
+          'tax_code_changed',
+          'invoice',
+          id,
+          `Line ${String(line.position)} has a VAT rate its tax code no longer has. Save the draft again.`,
+          'invoice.issue',
+        );
+      }
+    }
+    const client = await tx.client.findFirst({
+      where: { id: current.clientId, companyId },
+      include: { addresses: true },
+    });
+    if (!client) {
+      throw new CommerceError(404, 'client_not_found', 'client', current.clientId, 'Not found');
+    }
+    const bank = await tx.companyBankAccount.findFirst({
+      where: { companyId, shownOnInvoices: true, active: true },
+    });
+    // No lines is reported by the validation below as `lines`, not as a calculation error.
+    const totals =
+      current.lines.length > 0
+        ? calculated(current.pricesIncludeTax, storedLines(current.lines))
+        : null;
+    // 6. The series, last. The clock is read only after it is locked, so a higher number
+    //    never carries an earlier date, and every date below comes from this one instant.
+    const seriesId = company.defaultInvoiceSeriesId;
+    const series = seriesId ? await lockSeries(tx, companyId, seriesId) : null;
+    const issuedAt = new Date();
+    const issueDate = businessDateInZone(issuedAt, company.timezone);
+    const supplyDate = formatDateOnly(current.supplyDate) ?? issueDate;
+    const termsDays = client.paymentTermsDays ?? company.paymentTermsDays;
+    if (!Number.isInteger(termsDays) || termsDays < 0) {
+      throw new CommerceError(400, 'invalid_terms', 'invoice', id, 'payment terms are invalid');
+    }
+    const dueDate = addDaysToBusinessDate(issueDate, termsDays);
+    const seller = sellerSnapshot(company);
+    const buyer = buyerSnapshot(client);
+    const problems = issueProblems({
+      seller: { legalName: seller.legalName, vatNumber: seller.vatNumber, address: seller.address },
+      buyer: { vatNumber: buyer.vatNumber, address: buyer.address },
+      lines: current.lines.map((line) => {
+        const code = taxById.get(line.taxCodeId);
+        return {
+          position: line.position,
+          description: line.description,
+          kind: code?.kind ?? 'standard',
+          noteEn: code?.noteEn ?? null,
+          noteEl: code?.noteEl ?? null,
+          taxCodeActive: code?.active ?? false,
+        };
+      }),
+      total: totals?.total ?? '0.00',
+      supplyDate,
+      issueDate,
+      seriesId,
+    });
+    if (problems.length > 0 || !totals) {
+      throw new CommerceError(
+        422,
+        'invoice_incomplete',
+        'invoice',
+        id,
+        'The invoice is missing details it must show.',
+        'invoice.issue',
+        { fields: problems },
+      );
+    }
+    const deadline = deliveryDeadline(
+      supplyDate,
+      current.lines.map((line) => (taxById.get(line.taxCodeId) as TaxCodeLock).deadlineRule),
+    );
+    if (!series || !series.active || series.documentType !== 'invoice') {
+      throw new CommerceError(
+        422,
+        'series_unavailable',
+        'invoice_series',
+        seriesId,
+        'The default invoice series is not an active invoice series.',
+        'invoice.issue',
+      );
+    }
+    const numberSeq = series.nextNumber;
+    const number = `${series.prefix}${String(numberSeq).padStart(series.padding, '0')}`;
+    const taken = await tx.invoice.findFirst({
+      where: { companyId, number },
+      select: { id: true },
+    });
+    if (taken) {
+      throw numberTaken(id, number);
+    }
+    await tx.$executeRaw`
+      UPDATE invoice_series
+      SET next_number = next_number + 1, version = version + 1
+      WHERE company_id = ${companyId}::uuid AND id = ${series.id}::uuid
+    `;
+    await this.hooks?.afterNumberAllocated?.();
+
+    // Freeze the tax codes on the lines and the summary while the document is still a draft;
+    // the immutability trigger refuses any change to them once it is issued.
+    const amounts = new Map(totals.lines.map((line) => [line.position, line]));
+    for (const line of current.lines) {
+      const computed = amounts.get(line.position);
+      if (!computed) {
+        throw new CommerceError(
+          400,
+          'line_totals_missing',
+          'invoice',
+          id,
+          'line totals are missing',
+        );
+      }
+      await tx.invoiceLine.update({
+        where: { id: line.id },
+        data: {
+          lineSubtotal: computed.lineSubtotal,
+          lineDiscount: computed.lineDiscount,
+          lineNet: computed.lineNet,
+          lineGross: computed.lineGross,
+          taxSnapshot: taxSnapshot(taxById.get(line.taxCodeId) as TaxCodeLock),
+        },
+      });
+    }
+    await tx.invoiceTaxSummary.deleteMany({ where: { companyId, invoiceId: id } });
+    const codeByKey = new Map(taxCodes.map((code) => [code.code, code]));
+    await tx.invoiceTaxSummary.createMany({
+      data: totals.taxSummary.map((group) => {
+        const code = codeByKey.get(group.taxCode);
+        if (!code) {
+          throw new CommerceError(
+            400,
+            'tax_summary_missing',
+            'invoice',
+            id,
+            'tax summary is missing a code',
+          );
+        }
+        return {
+          companyId,
+          invoiceId: id,
+          taxCodeId: code.id,
+          taxRatePercent: decimalField(code.ratePercent, 4, 'taxRatePercent'),
+          net: group.net,
+          tax: group.tax,
+          gross: group.gross,
+          taxSnapshot: taxSnapshot(code),
+        };
+      }),
+    });
+
+    const language = languageOf(current.language, company.documentLanguage);
+    const bankCopy: BankSnapshot | null = bank
+      ? {
+          bankName: bank.bankName,
+          accountHolder: bank.accountHolder,
+          iban: bank.iban,
+          bic: bank.bic,
+        }
+      : null;
+    const terms = present(current.terms)
+      ? current.terms
+      : ((language === 'el' ? company.invoiceTermsEl : company.invoiceTermsEn) ?? null);
+    const pdf = await renderIssuedInvoice(
+      issuedPdfInput({
+        language,
+        number,
+        issueDate,
+        supplyDate,
+        dueDate,
+        current,
+        totals,
+        seller,
+        buyer,
+        bank: bankCopy,
+        terms,
+        codeByKey,
+      }),
+    );
+    const fileId = uuidv7();
+    const key = storageKey({ companyId, kind: ISSUED_KIND, id: fileId, at: issuedAt });
+    await this.storage.put(key, pdf);
+    await tx.storedFile.create({
+      data: {
+        id: fileId,
+        companyId,
+        kind: ISSUED_KIND,
+        storageKey: key,
+        contentType: 'application/pdf',
+        sizeBytes: pdf.length,
+        sha256: createHash('sha256').update(pdf).digest('hex'),
+        sourceType: 'invoice',
+        sourceId: id,
+        sourceVersion: current.version + 1,
+        createdById: actor,
+        sealed: true,
+      },
+    });
+    const written = await tx.invoice.updateMany({
+      where: { id, companyId, status: 'draft', version: expectedVersion },
+      data: {
+        status: 'issued',
+        issueDate: parseDateOnly(issueDate, 'issueDate'),
+        dueDate: parseDateOnly(dueDate, 'dueDate'),
+        supplyDate: parseDateOnly(supplyDate, 'supplyDate'),
+        deliveryDeadline: parseDateOnly(deadline, 'deliveryDeadline'),
+        seriesId: series.id,
+        number,
+        numberSeq,
+        ...moneyFields(totals),
+        sellerSnapshot: seller,
+        buyerSnapshot: buyer,
+        ...(bankCopy ? { bankSnapshot: bankCopy } : {}),
+        termsSnapshot: terms,
+        renderVersion: ISSUED_RENDER_VERSION,
+        pdfFileId: fileId,
+        issuedAt,
+        issuedById: actor,
+        updatedById: actor,
+        version: { increment: 1 },
+      },
+    });
+    if (written.count !== 1) {
+      throw new CommerceError(
+        409,
+        'version_conflict',
+        'invoice',
+        id,
+        'version conflict',
+        'invoice.issue',
+      );
+    }
+    const late = deadline < issueDate;
+    await this.audit.record(tx, {
+      companyId,
+      actorType: 'user',
+      actorId: actor,
+      actorLabel: ctx.actorLabel,
+      action: 'invoice.issued',
+      objectType: 'invoice',
+      objectId: id,
+      outcome: 'success',
+      ip: meta.ip,
+      userAgent: meta.userAgent,
+      details: {
+        number,
+        total: totals.total,
+        version: current.version + 1,
+        pdfFileId: fileId,
+        ...(late ? { late: true } : {}),
+      },
+    });
+    return {
+      invoice: toDetail(await this.load(tx, companyId, id)),
+      warnings: late ? ['delivery_deadline_passed'] : [],
+    };
+  }
+
   async pdf(
     ctx: RequestContext,
     invoiceId: string,
     meta: RequestMeta,
-  ): Promise<{ id: string; bytes: Buffer }> {
+  ): Promise<{ id: string; bytes: Buffer; fileName: string }> {
     const actor = requireActor(ctx);
     try {
       const input = await this.tenants.run(this.context(ctx, actor), async (tx) => {
         const invoice = await this.load(tx, ctx.companyId, invoiceId);
+        if (invoice.status === 'issued') {
+          // The stored file is the legal document. It is never rendered again.
+          const file = invoice.pdfFileId
+            ? await tx.storedFile.findFirst({
+                where: { id: invoice.pdfFileId, companyId: ctx.companyId },
+                select: { id: true, storageKey: true, sizeBytes: true, sha256: true },
+              })
+            : null;
+          if (!file) {
+            throw new CommerceError(404, 'pdf_not_found', 'invoice', invoice.id, 'Not found');
+          }
+          return { kind: 'issued' as const, id: invoice.id, number: invoice.number, file };
+        }
         if (invoice.status !== 'draft') {
           throw new CommerceError(
             409,
@@ -476,6 +999,7 @@ export class InvoiceService {
           throw new CommerceError(404, 'client_not_found', 'client', invoice.clientId, 'Not found');
         }
         return {
+          kind: 'draft' as const,
           id: invoice.id,
           pdf: {
             language: languageOf(invoice.language, 'en'),
@@ -524,7 +1048,32 @@ export class InvoiceService {
           },
         };
       });
-      return { id: input.id, bytes: await renderInvoiceDraft(input.pdf) };
+      if (input.kind === 'issued') {
+        let bytes: Buffer;
+        try {
+          bytes = await readVerifiedFile(this.storage, input.file);
+        } catch (error) {
+          if (error instanceof FileIntegrityError) {
+            throw integrityFailed(input.file.id, error);
+          }
+          if (isStorageMiss(error)) {
+            throw new CommerceError(
+              404,
+              'pdf_not_found',
+              'stored_file',
+              input.file.id,
+              'Not found',
+            );
+          }
+          throw new Error('storage read failed');
+        }
+        return { id: input.id, bytes, fileName: `${safeFileName(input.number ?? input.id)}.pdf` };
+      }
+      return {
+        id: input.id,
+        bytes: await renderInvoiceDraft(input.pdf),
+        fileName: `draft-${input.id}.pdf`,
+      };
     } catch (error) {
       return this.fail(ctx, meta, error);
     }
@@ -615,9 +1164,10 @@ export class InvoiceService {
     }
     // FOR SHARE, ordered by id: a tax-code edit (FOR UPDATE) waits for this draft, or this draft
     // reads the edited row. Either way the stored line rate equals the code's rate.
-    const taxCodes = taxIds.length === 0 ? [] : await tx.$queryRaw<
-      { id: string; code: string; ratePercent: string; active: boolean }[]
-    >`
+    const taxCodes =
+      taxIds.length === 0
+        ? []
+        : await tx.$queryRaw<{ id: string; code: string; ratePercent: string; active: boolean }[]>`
       SELECT id::text AS id, code, rate_percent::text AS "ratePercent", active FROM tax_code
       WHERE company_id = ${companyId}::uuid AND id = ANY(${taxIds}::uuid[])
       ORDER BY id
@@ -876,6 +1426,10 @@ function toSummary(row: {
   pricesIncludeTax: boolean;
   issueDate: Date | null;
   dueDate: Date | null;
+  supplyDate: Date | null;
+  deliveryDeadline: Date | null;
+  number: string | null;
+  issuedAt: Date | null;
   reference: string | null;
   subtotal: { toFixed(digits: number): string };
   discountTotal: { toFixed(digits: number): string };
@@ -897,6 +1451,10 @@ function toSummary(row: {
     pricesIncludeTax: row.pricesIncludeTax,
     issueDate: formatDateOnly(row.issueDate),
     dueDate: formatDateOnly(row.dueDate),
+    supplyDate: formatDateOnly(row.supplyDate),
+    deliveryDeadline: formatDateOnly(row.deliveryDeadline),
+    number: row.number,
+    issuedAt: row.issuedAt ? row.issuedAt.toISOString() : null,
     reference: row.reference,
     subtotal: fixed(row.subtotal, 2),
     discountTotal: fixed(row.discountTotal, 2),
@@ -972,10 +1530,13 @@ function jsonAddressLines(value: unknown): string[] {
     return [];
   }
   const record = value as Record<string, unknown>;
-  return ['line1', 'line2', 'city', 'region', 'postalCode', 'countryCode'].flatMap((key) => {
-    const line = record[key];
-    return typeof line === 'string' && line.length > 0 ? [line] : [];
-  });
+  // Company setup stores `postcode`; older rows may say `postalCode`.
+  return ['line1', 'line2', 'city', 'region', 'postcode', 'postalCode', 'countryCode'].flatMap(
+    (key) => {
+      const line = record[key];
+      return typeof line === 'string' && line.length > 0 ? [line] : [];
+    },
+  );
 }
 
 function clientAddressLines(
@@ -990,8 +1551,7 @@ function clientAddressLines(
     isDefault: boolean;
   }[],
 ): string[] {
-  const billing = addresses.filter((address) => address.kind === 'billing');
-  const chosen = billing.find((address) => address.isDefault) ?? billing[0] ?? addresses[0];
+  const chosen = chosenAddress(addresses);
   if (!chosen) {
     return [];
   }
@@ -1003,4 +1563,322 @@ function clientAddressLines(
     chosen.postalCode,
     chosen.countryCode,
   ].flatMap((line) => (line ? [line] : []));
+}
+
+type ClientAddress = ClientRow['addresses'][number];
+
+/** The default billing address, else the first billing address, else any address. */
+function chosenAddress<T extends { kind: string; isDefault: boolean }>(
+  addresses: readonly T[],
+): T | undefined {
+  const billing = addresses.filter((address) => address.kind === 'billing');
+  return billing.find((address) => address.isDefault) ?? billing[0] ?? addresses[0];
+}
+
+/** Both switches, `FOR SHARE`, so turning one off waits for this issue or refuses it. */
+async function requireIssuance(
+  tx: TenantTransaction,
+  companyId: string,
+  invoiceId: string,
+): Promise<void> {
+  const rows = await tx.$queryRaw<{ key: string; enabled: boolean; companyId: string | null }[]>`
+    SELECT key, enabled, company_id::text AS "companyId"
+    FROM automation_switch
+    WHERE (company_id IS NULL AND key = 'outbound.all')
+       OR (company_id = ${companyId}::uuid AND key = 'invoice.issue_real')
+    ORDER BY id
+    FOR SHARE
+  `;
+  const outbound = rows.some(
+    (row) => row.companyId === null && row.key === 'outbound.all' && row.enabled,
+  );
+  const issuing = rows.some(
+    (row) =>
+      row.companyId === companyId.toLowerCase() && row.key === 'invoice.issue_real' && row.enabled,
+  );
+  if (!outbound || !issuing) {
+    throw new CommerceError(
+      409,
+      'issuance_disabled',
+      'invoice',
+      invoiceId,
+      'Issuing real invoices is switched off.',
+      'invoice.issue',
+      { outboundAll: outbound, invoiceIssueReal: issuing },
+    );
+  }
+}
+
+async function lockTaxCodes(
+  tx: TenantTransaction,
+  companyId: string,
+  ids: readonly string[],
+): Promise<TaxCodeLock[]> {
+  if (ids.length === 0) {
+    return [];
+  }
+  return tx.$queryRaw<TaxCodeLock[]>`
+    SELECT id::text AS id, code, name, rate_percent::text AS "ratePercent", kind::text AS kind,
+           note_en AS "noteEn", note_el AS "noteEl", active, deadline_rule::text AS "deadlineRule"
+    FROM tax_code
+    WHERE company_id = ${companyId}::uuid AND id = ANY(${[...ids]}::uuid[])
+    ORDER BY id
+    FOR SHARE
+  `;
+}
+
+async function lockSeries(
+  tx: TenantTransaction,
+  companyId: string,
+  seriesId: string,
+): Promise<{
+  id: string;
+  documentType: string;
+  prefix: string;
+  nextNumber: number;
+  padding: number;
+  active: boolean;
+} | null> {
+  const rows = await tx.$queryRaw<
+    {
+      id: string;
+      documentType: string;
+      prefix: string;
+      nextNumber: number;
+      padding: number;
+      active: boolean;
+    }[]
+  >`
+    SELECT id::text AS id, document_type::text AS "documentType", prefix,
+           next_number AS "nextNumber", padding, active
+    FROM invoice_series
+    WHERE company_id = ${companyId}::uuid AND id = ${seriesId}::uuid
+    FOR UPDATE
+  `;
+  return rows[0] ?? null;
+}
+
+function numberTaken(invoiceId: string, number: string | null): CommerceError {
+  return new CommerceError(
+    409,
+    'number_taken',
+    'invoice',
+    invoiceId,
+    `${number ? `The number ${number}` : 'The next number'} is already used by another series. Give the series a different prefix.`,
+    'invoice.issue',
+  );
+}
+
+/** A unique violation while issuing means the number exists already (two series, one prefix). */
+function numberTakenOr(error: unknown, invoiceId: string): unknown {
+  return isUniqueViolation(error) ? numberTaken(invoiceId.toLowerCase(), null) : error;
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+  if ('code' in error && (error.code === 'P2002' || error.code === '23505')) {
+    return true;
+  }
+  return 'cause' in error && isUniqueViolation(error.cause);
+}
+
+function present(value: string | null | undefined): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function sellerSnapshot(company: CompanyRow): SellerSnapshot {
+  const record =
+    company.address && typeof company.address === 'object' && !Array.isArray(company.address)
+      ? (company.address as Record<string, unknown>)
+      : {};
+  const text = (key: string): string | null => {
+    const value = record[key];
+    return typeof value === 'string' && value.length > 0 ? value : null;
+  };
+  return {
+    legalName: company.legalName,
+    tradingName: company.tradingName,
+    vatNumber: company.vatNumber,
+    registrationNumber: company.registrationNumber,
+    taxOffice: company.taxOffice,
+    address: {
+      line1: text('line1'),
+      line2: text('line2'),
+      city: text('city'),
+      region: text('region'),
+      postalCode: text('postcode') ?? text('postalCode'),
+      countryCode: text('countryCode') ?? company.countryCode,
+    },
+    addressLines: jsonAddressLines(company.address),
+  };
+}
+
+function buyerSnapshot(client: {
+  id: string;
+  displayName: string;
+  legalName: string | null;
+  vatNumber: string | null;
+  taxId: string | null;
+  email: string | null;
+  addresses: ClientAddress[];
+}): BuyerSnapshot {
+  const chosen = chosenAddress(client.addresses);
+  return {
+    clientId: client.id,
+    displayName: client.displayName,
+    legalName: client.legalName,
+    vatNumber: client.vatNumber,
+    taxId: client.taxId,
+    email: client.email,
+    address: chosen
+      ? {
+          line1: chosen.line1,
+          line2: chosen.line2,
+          city: chosen.city,
+          region: chosen.region,
+          postalCode: chosen.postalCode,
+          countryCode: chosen.countryCode,
+        }
+      : null,
+    addressLines: clientAddressLines(client.addresses),
+  };
+}
+
+function taxSnapshot(code: TaxCodeLock): TaxSnapshot {
+  return {
+    code: code.code,
+    name: code.name,
+    kind: code.kind,
+    ratePercent: decimalField(code.ratePercent, 4, 'taxRatePercent'),
+    noteEn: code.noteEn,
+    noteEl: code.noteEl,
+    deadlineRule: code.deadlineRule,
+  };
+}
+
+/** The PDF shows the frozen snapshot, never live data. */
+function issuedPdfInput(args: {
+  language: DocumentLanguage;
+  number: string;
+  issueDate: string;
+  supplyDate: string;
+  dueDate: string;
+  current: {
+    currency: string;
+    pricesIncludeTax: boolean;
+    reference: string | null;
+    notes: string | null;
+    lines: {
+      position: number;
+      description: string;
+      quantity: { toFixed(digits: number): string };
+      unit: string;
+      unitPrice: { toFixed(digits: number): string };
+      discountPercent: { toFixed(digits: number): string };
+      taxCodeId: string;
+      taxRatePercent: { toFixed(digits: number): string };
+    }[];
+  };
+  totals: DocumentTotals;
+  seller: SellerSnapshot;
+  buyer: BuyerSnapshot;
+  bank: BankSnapshot | null;
+  terms: string | null;
+  codeByKey: ReadonlyMap<string, TaxCodeLock>;
+}): IssuedInvoicePdfInput {
+  const { current, totals } = args;
+  const amounts = new Map(totals.lines.map((line) => [line.position, line]));
+  const lines = [...current.lines]
+    .sort((left, right) => left.position - right.position)
+    .map((line) => {
+      const rate = fixed(line.taxRatePercent, 4);
+      const unitPrice = fixed(line.unitPrice, 4);
+      return {
+        description: line.description,
+        quantity: printedQuantity(fixed(line.quantity, 4)),
+        unit: line.unit,
+        unitPrice: printedUnitAmount(
+          current.pricesIncludeTax ? vatExclusiveUnitPrice(unitPrice, rate) : unitPrice,
+        ),
+        discountPercent: fixed(line.discountPercent, 2),
+        taxRatePercent: printedUnitAmount(rate),
+        lineNet: amounts.get(line.position)?.lineNet ?? '',
+      };
+    });
+  const groups = [...totals.taxSummary].sort((left, right) =>
+    left.taxCode.localeCompare(right.taxCode),
+  );
+  const notes: string[] = [];
+  for (const group of groups) {
+    const code = args.codeByKey.get(group.taxCode);
+    if (!code || !NOTED_KINDS.has(code.kind)) {
+      continue;
+    }
+    const ordered =
+      args.language === 'el' ? [code.noteEl, code.noteEn] : [code.noteEn, code.noteEl];
+    for (const note of ordered) {
+      const line = present(note) ? `${code.code}: ${note}` : null;
+      if (line && !notes.includes(line)) {
+        notes.push(line);
+      }
+    }
+  }
+  return {
+    language: args.language,
+    documentType: 'invoice',
+    number: args.number,
+    issueDate: args.issueDate,
+    supplyDate: args.supplyDate,
+    dueDate: args.dueDate,
+    currency: current.currency,
+    pricesIncludeTax: current.pricesIncludeTax,
+    reference: current.reference,
+    notes: current.notes,
+    terms: args.terms,
+    seller: {
+      name: args.seller.legalName,
+      otherName: args.seller.tradingName,
+      vatNumber: args.seller.vatNumber,
+      registrationNumber: args.seller.registrationNumber,
+      addressLines: args.seller.addressLines,
+    },
+    buyer: {
+      name: args.buyer.legalName ?? args.buyer.displayName,
+      otherName: args.buyer.legalName ? args.buyer.displayName : null,
+      vatNumber: args.buyer.vatNumber,
+      registrationNumber: null,
+      addressLines: args.buyer.addressLines,
+    },
+    bank: args.bank,
+    lines,
+    taxSummary: groups.map((group) => {
+      const code = args.codeByKey.get(group.taxCode);
+      return {
+        code: group.taxCode,
+        name: code?.name ?? group.taxCode,
+        ratePercent: printedUnitAmount(group.taxRatePercent),
+        net: group.net,
+        tax: group.tax,
+        gross: group.gross,
+      };
+    }),
+    vatNotes: notes,
+    subtotal: totals.subtotal,
+    discountTotal: totals.discountTotal,
+    netTotal: totals.netTotal,
+    taxTotal: totals.taxTotal,
+    total: totals.total,
+  };
+}
+
+/** 1.0000 prints 1 and 2.5000 prints 2.5. */
+function printedQuantity(value: string): string {
+  return value.includes('.') ? value.replace(/\.?0+$/, '') : value;
+}
+
+/** Letters, digits, dot, dash and underscore only, for a Content-Disposition file name. */
+function safeFileName(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 100) || 'invoice';
 }

@@ -22,7 +22,15 @@ const CODED_CONFLICTS = new Set([
   'document_type_locked',
   'credit_note_draft',
   'file_integrity_failed',
+  'issuance_disabled',
+  'not_issuable',
+  'not_draft',
+  'number_taken',
+  'tax_code_changed',
 ]);
+
+/** 409 reasons that are refusals by a switch, so they are audited as denials. */
+const DENIED_CONFLICTS = new Set(['issuance_disabled']);
 
 export class CommerceError extends Error {
   override readonly name = 'CommerceError';
@@ -79,14 +87,19 @@ export async function settleCommerceError(
         action: error.action ?? `${error.objectType}.update`,
         objectType: error.objectType,
         objectId: error.objectId,
-        outcome: 'failure',
+        outcome: DENIED_CONFLICTS.has(error.reason) ? 'denied' : 'failure',
         ip: meta.ip,
         userAgent: meta.userAgent,
         details,
       });
     });
     if (error.status === 422) {
-      throw new UnprocessableEntityException({ code: error.reason, message: error.message });
+      const fields = error.details?.fields;
+      throw new UnprocessableEntityException({
+        code: error.reason,
+        message: error.message,
+        ...(Array.isArray(fields) ? { fields } : {}),
+      });
     }
     if (error.reason === 'already_printed') {
       const printJobId = error.details?.printJobId;

@@ -716,14 +716,16 @@ describe('clients, catalogue and invoice drafts', () => {
     expect(greekText).toContain(flatten(WATERMARK));
     expect(greekText).toContain('Πελάτης');
 
+    // The seeded companies keep invoice.issue_real off, so nothing issues here.
     const issue = await send(
       adminA,
       'post',
       `/api/c/${companyA}/invoices/${quoteId}/issue`,
       undefined,
-      {},
+      { expectedVersion: 0 },
     );
-    expect(issue.status).toBe(404);
+    expect(issue.status).toBe(409);
+    expect(errorCode(bodyOf(issue))).toBe('issuance_disabled');
   });
 
   it('hides the other company and denies fulfilment access to invoices', async () => {

@@ -159,6 +159,18 @@ Every write is audited, versioned (`expectedVersion`, 409 `version_conflict`) an
 - `readVerifiedFile` serves `GET /files/:id` and print submits. A print records `file.integrity_failed` in its own transaction, so a cancel or a lost lease cannot drop it.
 - `TRUNCATE` of `audit_event` is BACKLOG H-03.
 
+**As built, R2-C2 (2026-10-28).** The issue action, its database guards and the issued template.
+- The number comes from the company's default series for the document type; the issue call does not choose a series. Two series with the same prefix would collide on `(company_id, number)`; that is 409 `number_taken`.
+- The draft's own issue and due dates are replaced at issue, as step 6 says. The draft keeps an optional `supplyDate`.
+- Validation failures are 422 `invoice_incomplete` with `error.fields`, for example `seller.vatNumber`, `buyer.address`, `lines.2.legalNote`, `supplyDate.afterIssue`, `series.missing`. An inactive tax code on a line is `lines.N.taxCodeInactive`.
+- The terms snapshot is the draft's terms, or else the company's terms in the document language.
+- The PDF prints the notes of exempt, zero-rated, reverse-charge and out-of-scope codes, in the document language first.
+- `invoice_issued_complete_check` requires every issued field, `supply_date <= issue_date`, no quote, and snapshots that hold the particulars: the seller's name, VAT number and street address, the buyer's name and street address, and an IBAN when there are bank details. The trigger `invoice_issue_guard` refuses an insert as issued, an issue from anything but a draft, a PDF that is not a sealed `invoice_pdf` made for this document, and lines or tax-summary rows without their tax snapshot (or a line without a description).
+- The clock is read once, after the series lock: the issue, supply and due dates and `issued_at` come from that instant, so a higher number never carries an earlier date.
+- A line whose stored rate differs from its code is 409 `tax_code_changed`; a blank line description is `lines.N.description`.
+- The issue transaction waits up to 15 s for a connection and runs up to 30 s, because issues queue on the series lock while each renders its PDF (`TenantDb.run` gained `maxWaitMs`).
+- Still to come in R2-C3: the orphan-object cleanup job, deliveries, printing two copies, and the screens.
+
 **Tests (integration, real Postgres).**
 - 20 concurrent issues in one series give numbers 1 to 20, each exactly once.
 - Two concurrent issues of the same draft: exactly one succeeds.

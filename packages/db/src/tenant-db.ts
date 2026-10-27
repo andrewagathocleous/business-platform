@@ -23,7 +23,7 @@ export class TenantDb {
   async run<T>(
     ctx: TenantContext,
     fn: (tx: TenantTransaction) => Promise<T>,
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number; maxWaitMs?: number },
   ): Promise<T> {
     if (!UUID.test(ctx.companyId)) {
       throw new Error('companyId must be a uuid');
@@ -38,7 +38,11 @@ export class TenantDb {
         await tx.$queryRaw`SELECT set_config('app.correlation_id', ${ctx.correlationId}, true)`;
         return fn(tx);
       },
-      { timeout: options?.timeoutMs ?? 15_000 },
+      {
+        timeout: options?.timeoutMs ?? 15_000,
+        // How long to wait for a pooled connection before the transaction starts.
+        ...(options?.maxWaitMs ? { maxWait: options.maxWaitMs } : {}),
+      },
     );
   }
 }

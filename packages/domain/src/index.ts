@@ -81,6 +81,12 @@ export type {
 } from './integrations/connection-health';
 
 export { isValidBic, isValidIban, normalizeBic, normalizeIban } from './banking/iban';
+export {
+  deliveryDeadline,
+  printedUnitAmount,
+  vatExclusiveUnitPrice,
+} from './invoicing/issue-rules';
+export type { DeliveryDeadlineRule } from './invoicing/issue-rules';
 export { normalizeForDuplicateCheck } from './text/normalize';
 export { addDaysToBusinessDate, businessDateInZone } from './time/business-date';
 export { isIanaTimeZone } from './time/iana-zone';

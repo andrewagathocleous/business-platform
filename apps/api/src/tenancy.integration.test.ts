@@ -1031,6 +1031,12 @@ describe('privileged MFA withholding', () => {
       ];
       expect(body.withheldPermissions).toEqual(expect.arrayContaining(finance));
       expect(grants(body).filter((grant) => finance.includes(grant.permission))).toEqual([]);
+      const issueDenied = await support.agent
+        .post(`/api/c/${companyA}/invoices/${randomUUID()}/issue`)
+        .set('X-Correlation-Id', cid('mfa-issue'))
+        .set('X-XSRF-TOKEN', support.xsrf)
+        .send({ expectedVersion: 0 });
+      expect(issueDenied.status).toBe(403);
       const taxDenied = await support.agent
         .post(`/api/c/${companyA}/tax-codes`)
         .set('X-Correlation-Id', cid('mfa-tax'))

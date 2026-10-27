@@ -1,5 +1,5 @@
 import { type INestApplication } from '@nestjs/common';
-import { createPrismaClient, TenantDb, type TenantTransaction } from '@bp/db';
+import { TenantDb, type TenantTransaction } from '@bp/db';
 import { Test } from '@nestjs/testing';
 import { Logger } from 'nestjs-pino';
 import { spawnSync } from 'node:child_process';
@@ -490,31 +490,6 @@ describe('finance settings', () => {
     expect(errorCode(inactiveDefault.body)).toBe('series_inactive');
   });
 
-  it('refuses a currency change once a document is issued', async () => {
-    const draft = await createDraft(
-      admin,
-      companyA,
-      clientId,
-      await standardTax(companyA),
-      cid('cur-draft'),
-    );
-    const draftId = stringField(record(record(draft.body).invoice), 'id');
-    // R2-C issues documents. Until then, mark this draft issued directly, and put it back after.
-    await inCompany(companyA, (tx) =>
-      tx.invoice.update({ where: { id: draftId }, data: { status: 'issued' } }),
-    );
-    try {
-      const refused = await send(admin, 'patch', `/api/c/${companyA}/company`, cid('cur-locked'), {
-        expectedVersion: await companyVersion(companyA),
-        defaultCurrency: 'USD',
-      });
-      expect(refused.status).toBe(409);
-      expect(errorCode(refused.body)).toBe('currency_locked');
-    } finally {
-      await revertIssued(companyA, draftId);
-    }
-  });
-
   it('validates IBANs and shows at most one bank account on invoices', async () => {
     const invalid = await send(admin, 'post', `/api/c/${companyA}/bank-accounts`, cid('bank-bad'), {
       bankName: 'Fictional Bank',
@@ -753,38 +728,6 @@ describe('finance settings', () => {
     expect(errorCode(usdDraft.body)).toBe('currency_not_supported');
   });
 });
-
-/**
- * Puts a test document back to draft. The issued-invoice trigger refuses this for every role,
- * so the owner disables it inside one transaction; other sessions never see it disabled.
- */
-async function revertIssued(companyId: string, invoiceId: string): Promise<void> {
-  const ownerUrl = process.env.DATABASE_URL_OWNER;
-  if (!ownerUrl) {
-    throw new Error('DATABASE_URL_OWNER is required');
-  }
-  const owner = createPrismaClient(ownerUrl);
-  try {
-    const databases = await owner.$queryRaw<{ current_database: string }[]>`
-      SELECT current_database() AS current_database
-    `;
-    assertDatabaseNameIsTest(databases[0]?.current_database, 'DATABASE_URL_OWNER');
-    await owner.$transaction(async (tx) => {
-      // RLS applies to the owner too, so the company must be set or the update matches nothing.
-      await tx.$executeRaw`SELECT set_config('app.company_id', ${companyId}, true)`;
-      await tx.$executeRaw`ALTER TABLE invoice DISABLE TRIGGER invoice_issued_immutable`;
-      const reverted = await tx.$executeRaw`
-        UPDATE invoice SET status = 'draft' WHERE id = ${invoiceId}::uuid AND status = 'issued'
-      `;
-      await tx.$executeRaw`ALTER TABLE invoice ENABLE TRIGGER invoice_issued_immutable`;
-      if (reverted !== 1) {
-        throw new Error(`expected to revert one invoice, reverted ${String(reverted)}`);
-      }
-    });
-  } finally {
-    await owner.$disconnect();
-  }
-}
 
 async function createDraft(
   session: Session,

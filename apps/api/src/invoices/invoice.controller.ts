@@ -39,6 +39,7 @@ const invoiceFields = {
   pricesIncludeTax: z.boolean(),
   issueDate: z.string().nullable().optional(),
   dueDate: z.string().nullable().optional(),
+  supplyDate: z.string().nullable().optional(),
   reference: z.string().max(200).nullable().optional(),
   notes: z.string().max(20_000).nullable().optional(),
   terms: z.string().max(20_000).nullable().optional(),
@@ -58,6 +59,7 @@ const invoicePatch = z
     pricesIncludeTax: invoiceFields.pricesIncludeTax.optional(),
     issueDate: invoiceFields.issueDate,
     dueDate: invoiceFields.dueDate,
+    supplyDate: invoiceFields.supplyDate,
     reference: invoiceFields.reference,
     notes: invoiceFields.notes,
     terms: invoiceFields.terms,
@@ -66,6 +68,8 @@ const invoicePatch = z
   .refine((body) => Object.keys(body).some((key) => key !== 'expectedVersion'), {
     message: 'no changes',
   });
+
+const invoiceIssue = z.object({ expectedVersion: z.number().int().nonnegative() }).strict();
 
 const companyIdParam = ApiParam({
   name: 'companyId',
@@ -139,7 +143,10 @@ export class InvoiceController {
   @Header('Cache-Control', 'no-store')
   @Header('X-Content-Type-Options', 'nosniff')
   @RequirePermission('invoice.view')
-  @ApiOperation({ summary: 'Render a draft invoice PDF. Drafts are not stored.' })
+  @ApiOperation({
+    summary:
+      'The PDF. An issued document returns its stored, verified file; a draft is rendered with a watermark and not stored.',
+  })
   async pdf(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
@@ -147,7 +154,7 @@ export class InvoiceController {
     @Param('id') id: string,
   ): Promise<StreamableFile> {
     const file = await this.invoices.pdf(requireContext(req, companyId), id, requestMeta(req));
-    const disposition = `inline; filename="draft-${file.id}.pdf"`;
+    const disposition = `inline; filename="${file.fileName}"`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', disposition);
     return new StreamableFile(file.bytes, {
@@ -166,12 +173,27 @@ export class InvoiceController {
     return { invoice };
   }
 
+  @Post(':id/issue')
+  @HttpCode(200)
+  @idParam
+  @RequirePermission('invoice.issue')
+  @ApiOperation({
+    summary:
+      'Issue a draft invoice: number, frozen snapshot and stored PDF, in one transaction. Needs outbound.all and invoice.issue_real on. 409 issuance_disabled when either is off; 422 invoice_incomplete lists the missing fields.',
+  })
+  async issue(@Req() req: Request, @Param('companyId') companyId: string, @Param('id') id: string) {
+    const parsed = invoiceIssue.safeParse(unknownBody(req));
+    if (!parsed.success) {
+      throw new BadRequestException(issueMessage(parsed.error));
+    }
+    return this.invoices.issue(requireContext(req, companyId), id, parsed.data, requestMeta(req));
+  }
+
   @Patch(':id')
   @idParam
   @RequirePermission('invoice.draft')
   @ApiOperation({
-    summary:
-      'Edit a draft. expectedVersion must match. A mismatch is 409. There is no issue endpoint.',
+    summary: 'Edit a draft. expectedVersion must match. A mismatch is 409.',
   })
   async update(
     @Req() req: Request,

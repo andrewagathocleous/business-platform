@@ -7,7 +7,8 @@ import {
   type DocumentLanguage,
   type GiftMessageTemplate as GiftCard,
 } from '@bp/documents';
-import { StoragePathError, type StorageAdapter } from '@bp/integrations';
+import type { StorageAdapter } from '@bp/integrations';
+import { integrityFailed, isStorageMiss } from '../storage/file-errors';
 import { FileIntegrityError, readVerifiedFile } from '../storage/verified-file';
 import { AuditService } from '../audit/audit.service';
 import type { RequestContext } from '../authz/request-context';
@@ -676,27 +677,4 @@ function stringField(record: Record<string, unknown>, key: string): string {
   return typeof value === 'string' ? value : '';
 }
 
-/** Audited as `file.integrity_failed`; no byte of the file is sent. */
-function integrityFailed(fileId: string, error: FileIntegrityError): CommerceError {
-  return new CommerceError(
-    409,
-    'file_integrity_failed',
-    'stored_file',
-    fileId,
-    'The stored file failed its integrity check and was not sent.',
-    'file.integrity_failed',
-    { integrity: error.reason },
-  );
-}
-
-function isStorageMiss(error: unknown): boolean {
-  if (error instanceof StoragePathError) {
-    return true;
-  }
-  return isFsCode(error, 'ENOENT') || isFsCode(error, 'ELOOP') || isFsCode(error, 'ENOTDIR');
-}
-
-function isFsCode(error: unknown, code: string): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
-}
 

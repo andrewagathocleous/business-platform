@@ -6,6 +6,8 @@ export type ErrorBody = {
     message: string;
     correlationId: string;
     printJobId?: string;
+    /** Field codes a 422 names, for example `seller.vatNumber`. */
+    fields?: string[];
   };
 };
 
@@ -23,6 +25,7 @@ const STATUS_CODES: Readonly<Record<number, string>> = {
 export function errorBody(exception: unknown, correlationId: string): { status: number; body: ErrorBody } {
   const status = statusOf(exception);
   const printJobId = explicitPrintJobId(exception);
+  const fields = explicitFields(exception, status);
   return {
     status,
     body: {
@@ -31,9 +34,27 @@ export function errorBody(exception: unknown, correlationId: string): { status: 
         message: publicMessage(exception, status),
         correlationId,
         ...(printJobId ? { printJobId } : {}),
+        ...(fields ? { fields } : {}),
       },
     },
   };
+}
+
+const FIELD_CODE = /^[a-zA-Z][a-zA-Z0-9_.]{0,79}$/;
+
+/** A 422 may name the fields that failed. Only short, plain field codes pass through. */
+function explicitFields(exception: unknown, status: number): string[] | undefined {
+  if (status !== 422 || !(exception instanceof HttpException)) {
+    return undefined;
+  }
+  const response = exception.getResponse();
+  if (!isRecord(response) || !Array.isArray(response.fields)) {
+    return undefined;
+  }
+  const fields = response.fields.filter(
+    (field): field is string => typeof field === 'string' && FIELD_CODE.test(field),
+  );
+  return fields.length > 0 ? fields.slice(0, 100) : undefined;
 }
 
 /** Domain guards put a stable code on the exception body, for example `payment_not_settled`. */

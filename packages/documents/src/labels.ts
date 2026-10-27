@@ -32,6 +32,18 @@ export type DocumentLabels = {
   terms: string;
   pricesIncludeTax: string;
   pricesExcludeTax: string;
+  number: string;
+  supplyDate: string;
+  vatNumber: string;
+  registrationNumber: string;
+  unitPriceExclVat: string;
+  netTotalExclVat: string;
+  totalVat: string;
+  totalPayable: string;
+  vatNotes: string;
+  bankDetails: string;
+  bank: string;
+  accountHolder: string;
 };
 
 const EN: DocumentLabels = {
@@ -66,6 +78,18 @@ const EN: DocumentLabels = {
   terms: 'Terms',
   pricesIncludeTax: 'Prices include tax',
   pricesExcludeTax: 'Prices exclude tax',
+  number: 'No.',
+  supplyDate: 'Date of supply',
+  vatNumber: 'VAT no.',
+  registrationNumber: 'Company reg. no.',
+  unitPriceExclVat: 'Unit price excl. VAT',
+  netTotalExclVat: 'Total excl. VAT',
+  totalVat: 'Total VAT',
+  totalPayable: 'Total payable',
+  vatNotes: 'VAT notes',
+  bankDetails: 'Bank details',
+  bank: 'Bank',
+  accountHolder: 'Account holder',
 };
 
 const EL: DocumentLabels = {
@@ -100,6 +124,18 @@ const EL: DocumentLabels = {
   terms: 'Όροι',
   pricesIncludeTax: 'Οι τιμές περιλαμβάνουν φόρο',
   pricesExcludeTax: 'Οι τιμές δεν περιλαμβάνουν φόρο',
+  number: 'Αριθμός',
+  supplyDate: 'Χρόνος προμήθειας',
+  vatNumber: 'Αρ. Μητρώου ΦΠΑ',
+  registrationNumber: 'Αρ. Εγγραφής Εταιρείας',
+  unitPriceExclVat: 'Τιμή μονάδας χωρίς ΦΠΑ',
+  netTotalExclVat: 'Σύνολο χωρίς ΦΠΑ',
+  totalVat: 'Σύνολο ΦΠΑ',
+  totalPayable: 'Πληρωτέο σύνολο',
+  vatNotes: 'Σημειώσεις ΦΠΑ',
+  bankDetails: 'Τραπεζικά στοιχεία',
+  bank: 'Τράπεζα',
+  accountHolder: 'Δικαιούχος',
 };
 
 export function labelsFor(language: DocumentLanguage): DocumentLabels {

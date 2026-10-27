@@ -32,6 +32,23 @@ describe('errorBody', () => {
     expect(rendered.body.error.message).toBe('payment_not_settled');
   });
 
+  it('lists the failed field codes of a 422 and drops anything else', () => {
+    const rendered = errorBody(
+      new UnprocessableEntityException({
+        code: 'invoice_incomplete',
+        message: 'missing details',
+        fields: ['seller.vatNumber', 'lines.2.legalNote', '<script>', 42],
+      }),
+      'corr-12345678',
+    );
+    expect(rendered.body.error.fields).toEqual(['seller.vatNumber', 'lines.2.legalNote']);
+    const conflict = errorBody(
+      new ConflictException({ code: 'not_draft', message: 'x', fields: ['seller.vatNumber'] }),
+      'corr-12345678',
+    );
+    expect(conflict.body.error.fields).toBeUndefined();
+  });
+
   it('returns the existing print job id for already_printed', () => {
     const rendered = errorBody(
       new ConflictException({

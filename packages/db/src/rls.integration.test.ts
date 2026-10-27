@@ -254,6 +254,159 @@ describe('row level security', () => {
     ).rejects.toThrow();
   });
 
+  it('issues a document only from a draft, complete, with its own sealed PDF', async () => {
+    const ctx = { companyId: companyA, actor: userId, correlationId: randomUUID() };
+    /** A draft with one line and one tax-summary row, copied from the fixture graph. */
+    const draftOf = async (tx: TenantTransaction, documentType?: 'quote') => {
+      const source = await tx.invoice.findUniqueOrThrow({ where: { id: graphA.invoice } });
+      const line = await tx.invoiceLine.findUniqueOrThrow({ where: { id: graphA.invoice_line } });
+      const summary = await tx.invoiceTaxSummary.findUniqueOrThrow({
+        where: { id: graphA.invoice_tax_summary },
+      });
+      const draft = await tx.invoice.create({
+        data: {
+          companyId: companyA,
+          documentType: documentType ?? 'invoice',
+          clientId: source.clientId,
+          currency: source.currency,
+          language: source.language,
+          pricesIncludeTax: source.pricesIncludeTax,
+          subtotal: source.subtotal,
+          discountTotal: source.discountTotal,
+          netTotal: source.netTotal,
+          taxTotal: source.taxTotal,
+          total: source.total,
+          createdById: userId,
+        },
+      });
+      await tx.invoiceLine.create({
+        data: {
+          companyId: companyA,
+          invoiceId: draft.id,
+          position: line.position,
+          kind: line.kind,
+          description: line.description,
+          quantity: line.quantity,
+          unit: line.unit,
+          unitPrice: line.unitPrice,
+          discountPercent: line.discountPercent,
+          taxCodeId: line.taxCodeId,
+          taxRatePercent: line.taxRatePercent,
+          lineSubtotal: line.lineSubtotal,
+          lineDiscount: line.lineDiscount,
+          lineNet: line.lineNet,
+          lineGross: line.lineGross,
+        },
+      });
+      await tx.invoiceTaxSummary.create({
+        data: {
+          companyId: companyA,
+          invoiceId: draft.id,
+          taxCodeId: summary.taxCodeId,
+          taxRatePercent: summary.taxRatePercent,
+          net: summary.net,
+          tax: summary.tax,
+          gross: summary.gross,
+        },
+      });
+      return draft;
+    };
+    for (const tenant of [appTenant, ownerTenant]) {
+      // The trigger runs before the CHECK, so a bare status change fails on the PDF first.
+      await expect(
+        tenant.run(ctx, async (tx) => {
+          const draft = await draftOf(tx);
+          await tx.invoice.update({ where: { id: draft.id }, data: { status: 'issued' } });
+        }),
+      ).rejects.toThrow(/needs its own sealed PDF/);
+      for (const supplyDate of [null, '2026-10-29']) {
+        await expect(
+          tenant.run(ctx, async (tx) => {
+            const draft = await draftOf(tx);
+            await markIssued(tx, companyA, draft.id, userId, { supplyDate });
+          }),
+        ).rejects.toThrow(/invoice_issued_complete_check/);
+      }
+      // A snapshot must hold the particulars, not merely be present. Tabs and newlines are blank.
+      for (const sellerSnapshot of [
+        'null',
+        '{}',
+        '{"legalName":"Demo","vatNumber":" ","address":{}}',
+        '{"legalName":"\\t\\n","vatNumber":"CY00000000X","address":{"line1":"1 Demo Street","city":"Nicosia"}}',
+      ]) {
+        await expect(
+          tenant.run(ctx, async (tx) => {
+            const draft = await draftOf(tx);
+            await markIssued(tx, companyA, draft.id, userId, { sellerSnapshot });
+          }),
+        ).rejects.toThrow(/invoice_issued_complete_check/);
+      }
+      await expect(
+        tenant.run(ctx, async (tx) => {
+          const draft = await draftOf(tx);
+          await markIssued(tx, companyA, draft.id, userId, { lineSnapshots: false });
+        }),
+      ).rejects.toThrow(/needs lines, each with a description and its tax snapshot/);
+      await expect(
+        tenant.run(ctx, async (tx) => {
+          const draft = await draftOf(tx);
+          await tx.invoiceLine.updateMany({
+            where: { invoiceId: draft.id },
+            data: { description: '\t\n' },
+          });
+          await markIssued(tx, companyA, draft.id, userId);
+        }),
+      ).rejects.toThrow(/needs lines, each with a description and its tax snapshot/);
+      await expect(
+        tenant.run(ctx, async (tx) => {
+          const draft = await draftOf(tx);
+          await markIssued(tx, companyA, draft.id, userId, { sealed: false });
+        }),
+      ).rejects.toThrow(/needs its own sealed PDF/);
+      await expect(
+        tenant.run(ctx, async (tx) => {
+          const draft = await draftOf(tx);
+          await markIssued(tx, companyA, draft.id, userId, { sourceId: graphA.invoice });
+        }),
+      ).rejects.toThrow(/needs its own sealed PDF/);
+      await expect(
+        tenant.run(ctx, async (tx) => {
+          const quote = await draftOf(tx, 'quote');
+          await markIssued(tx, companyA, quote.id, userId);
+        }),
+      ).rejects.toThrow(/invoice_issued_complete_check/);
+      await expect(
+        tenant.run(ctx, async (tx) => {
+          const source = await tx.invoice.findUniqueOrThrow({ where: { id: graphA.invoice } });
+          await tx.invoice.create({
+            data: {
+              companyId: companyA,
+              documentType: 'invoice',
+              status: 'issued',
+              clientId: source.clientId,
+              currency: source.currency,
+              language: source.language,
+              pricesIncludeTax: source.pricesIncludeTax,
+              subtotal: source.subtotal,
+              discountTotal: source.discountTotal,
+              netTotal: source.netTotal,
+              taxTotal: source.taxTotal,
+              total: source.total,
+              createdById: userId,
+            },
+          });
+        }),
+      ).rejects.toThrow(/never inserted as issued/);
+    }
+    // The same steps with a sealed PDF of its own succeed.
+    const issued = await appTenant.run(ctx, async (tx) => {
+      const draft = await draftOf(tx);
+      expect(await markIssued(tx, companyA, draft.id, userId)).toBe(1);
+      return tx.invoice.findUniqueOrThrow({ where: { id: draft.id }, select: { status: true } });
+    });
+    expect(issued.status).toBe('issued');
+  });
+
   it('rejects changes to an issued invoice, its lines and its tax summary', async () => {
     const ctx = { companyId: companyA, actor: userId, correlationId: randomUUID() };
     const other = await appTenant.run(ctx, async (tx) => {
@@ -320,9 +473,7 @@ describe('row level security', () => {
       };
     });
 
-    await ownerTenant.run(ctx, (tx) =>
-      tx.invoice.update({ where: { id: graphA.invoice }, data: { status: 'issued' } }),
-    );
+    await ownerTenant.run(ctx, (tx) => markIssued(tx, companyA, graphA.invoice, userId));
 
     const immutable = /immutable/i;
     await expect(
@@ -471,6 +622,20 @@ describe('row level security', () => {
           lineGross: sourceLine.lineGross,
         },
       });
+      const sourceSummary = await tx.invoiceTaxSummary.findUniqueOrThrow({
+        where: { id: graphA.invoice_tax_summary },
+      });
+      await tx.invoiceTaxSummary.create({
+        data: {
+          companyId: companyA,
+          invoiceId: created.id,
+          taxCodeId: sourceSummary.taxCodeId,
+          taxRatePercent: sourceSummary.taxRatePercent,
+          net: sourceSummary.net,
+          tax: sourceSummary.tax,
+          gross: sourceSummary.gross,
+        },
+      });
       return { invoiceId: created.id, lineId: line.id };
     });
 
@@ -502,11 +667,7 @@ describe('row level security', () => {
       await issuer.$transaction(
         async (tx) => {
           await tx.$queryRaw`SELECT set_config('app.company_id', ${companyA}, true)`;
-          const updated = await tx.$executeRaw`
-            UPDATE invoice
-            SET status = 'issued'
-            WHERE id = ${draft.invoiceId}::uuid
-          `;
+          const updated = await markIssued(tx, companyA, draft.invoiceId, userId);
           if (updated !== 1) {
             throw new Error(`expected to lock one draft invoice, updated ${String(updated)}`);
           }
@@ -777,6 +938,82 @@ function bareTable(name: string): string {
   const unquoted = name.replaceAll('"', '');
   const dot = unquoted.lastIndexOf('.');
   return dot === -1 ? unquoted : unquoted.slice(dot + 1);
+}
+
+/**
+ * Marks a draft issued the way the issue action leaves it: a number in a fresh series, every
+ * particular present, and its own sealed PDF row. The UPDATE locks the invoice row.
+ */
+async function markIssued(
+  tx: TenantTransaction,
+  companyId: string,
+  invoiceId: string,
+  userId: string,
+  options: {
+    sealed?: boolean;
+    sourceId?: string;
+    supplyDate?: string | null;
+    sellerSnapshot?: string;
+    lineSnapshots?: boolean;
+  } = {},
+): Promise<number> {
+  const tag = randomUUID().slice(0, 8);
+  if (options.lineSnapshots ?? true) {
+    const snapshot = JSON.stringify({ code: 'STD19', kind: 'standard', ratePercent: '19.0000' });
+    await tx.$executeRaw`
+      UPDATE invoice_line SET tax_snapshot = ${snapshot}::jsonb WHERE invoice_id = ${invoiceId}::uuid
+    `;
+    await tx.$executeRaw`
+      UPDATE invoice_tax_summary SET tax_snapshot = ${snapshot}::jsonb
+      WHERE invoice_id = ${invoiceId}::uuid
+    `;
+  }
+  const address = { line1: '1 Demo Street', city: 'Nicosia', countryCode: 'CY' };
+  const seller =
+    options.sellerSnapshot ??
+    JSON.stringify({ legalName: 'Demo Company A Ltd (fictional)', vatNumber: 'CY00000000X', address });
+  const buyer = JSON.stringify({ displayName: 'Demo client (fictional)', address });
+  const series = await tx.invoiceSeries.create({
+    data: {
+      companyId,
+      documentType: 'invoice',
+      code: `RLS${tag}`,
+      prefix: `RLS${tag}-`,
+      nextNumber: 2,
+    },
+  });
+  const file = await tx.storedFile.create({
+    data: {
+      companyId,
+      kind: 'invoice_pdf',
+      storageKey: `companies/${companyId}/test/issued-${tag}.pdf`,
+      contentType: 'application/pdf',
+      sizeBytes: 4,
+      sha256: '0'.repeat(64),
+      sourceType: 'invoice',
+      sourceId: options.sourceId ?? invoiceId,
+      createdById: userId,
+      sealed: options.sealed ?? true,
+    },
+  });
+  return tx.$executeRaw`
+    UPDATE invoice
+    SET status = 'issued',
+        series_id = ${series.id}::uuid,
+        number = ${`RLS${tag}-1`},
+        number_seq = 1,
+        issue_date = DATE '2026-10-28',
+        due_date = DATE '2026-11-27',
+        supply_date = ${options.supplyDate === undefined ? '2026-10-28' : options.supplyDate}::date,
+        delivery_deadline = DATE '2026-11-27',
+        seller_snapshot = ${seller}::jsonb,
+        buyer_snapshot = ${buyer}::jsonb,
+        render_version = 1,
+        pdf_file_id = ${file.id}::uuid,
+        issued_at = now(),
+        issued_by = ${userId}::uuid
+    WHERE id = ${invoiceId}::uuid
+  `;
 }
 
 const COMPANY_SCOPED_PARENTS = [
