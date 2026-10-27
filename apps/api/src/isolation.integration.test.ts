@@ -543,6 +543,14 @@ function sweepCases(adminB: Session, fx: Fixtures): SweepCase[] {
       invoiceSnap(fx),
     ),
     onB(
+      'invoice-delivery',
+      'POST /api/c/:companyId/invoices/:id/deliveries',
+      'post',
+      b(`/invoices/${fx.invoiceA}/deliveries`),
+      () => invoiceSnap(fx),
+      { method: 'other', deliveredOn: '2026-10-28' },
+    ),
+    onB(
       'invoice-issue',
       'POST /api/c/:companyId/invoices/:id/issue',
       'post',

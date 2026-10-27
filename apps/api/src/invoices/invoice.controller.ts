@@ -70,6 +70,14 @@ const invoicePatch = z
   });
 
 const invoiceIssue = z.object({ expectedVersion: z.number().int().nonnegative() }).strict();
+const deliveryBody = z
+  .object({
+    method: z.enum(['handed_over', 'posted', 'emailed_outside_platform', 'other']),
+    deliveredOn: z.string(),
+    paperCopyKept: z.boolean().optional(),
+    note: z.string().max(500).nullable().optional(),
+  })
+  .strict();
 
 const companyIdParam = ApiParam({
   name: 'companyId',
@@ -128,7 +136,10 @@ export class InvoiceController {
 
   @Get()
   @RequirePermission('invoice.view')
-  @ApiOperation({ summary: 'List invoices. Filters: status, clientId, from, to, q.' })
+  @ApiOperation({
+    summary:
+      'List invoices. Filters: status, clientId, from, to, q, and delivery=pending (issued, not yet delivered, earliest deadline first).',
+  })
   async list(@Req() req: Request, @Param('companyId') companyId: string) {
     const invoices = await this.invoices.list(
       requireContext(req, companyId),
@@ -189,6 +200,31 @@ export class InvoiceController {
     return this.invoices.issue(requireContext(req, companyId), id, parsed.data, requestMeta(req));
   }
 
+  @Post(':id/deliveries')
+  @HttpCode(200)
+  @idParam
+  @RequirePermission('invoice.issue')
+  @ApiOperation({
+    summary:
+      'Record how and when an issued document reached the client. Append-only. Paper methods need paperCopyKept; emailing needs the client to accept e-invoices (409 e_invoice_not_accepted).',
+  })
+  async recordDelivery(
+    @Req() req: Request,
+    @Param('companyId') companyId: string,
+    @Param('id') id: string,
+  ) {
+    const parsed = deliveryBody.safeParse(unknownBody(req));
+    if (!parsed.success) {
+      throw new BadRequestException(issueMessage(parsed.error));
+    }
+    return this.invoices.recordDelivery(
+      requireContext(req, companyId),
+      id,
+      parsed.data,
+      requestMeta(req),
+    );
+  }
+
   @Patch(':id')
   @idParam
   @RequirePermission('invoice.draft')
@@ -219,6 +255,10 @@ function parseInvoiceQuery(query: Record<string, unknown>): InvoiceQuery {
   if (status !== undefined && status !== 'draft' && status !== 'issued' && status !== 'cancelled') {
     throw new BadRequestException('status is invalid');
   }
+  const delivery = query.delivery;
+  if (delivery !== undefined && delivery !== 'pending') {
+    throw new BadRequestException('delivery is invalid');
+  }
   const clientId = query.clientId;
   if (clientId !== undefined && (typeof clientId !== 'string' || !isUuid(clientId))) {
     throw new BadRequestException('clientId is invalid');
@@ -231,6 +271,7 @@ function parseInvoiceQuery(query: Record<string, unknown>): InvoiceQuery {
   }
   return {
     status,
+    delivery,
     clientId: typeof clientId === 'string' ? clientId : undefined,
     from,
     to,

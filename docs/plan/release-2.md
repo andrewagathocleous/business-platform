@@ -171,6 +171,11 @@ Every write is audited, versioned (`expectedVersion`, 409 `version_conflict`) an
 - The issue transaction waits up to 15 s for a connection and runs up to 30 s, because issues queue on the series lock while each renders its PDF (`TenantDb.run` gained `maxWaitMs`).
 - Still to come in R2-C3: the orphan-object cleanup job, deliveries, printing two copies, and the screens.
 
+**As built, R2-C3a (2026-10-28).** Deliveries, as the "Delivery" paragraph above says, plus:
+- The delivery date may not be before the issue date or after today's business date (422 `delivered_before_issue`, `delivered_in_future`). `other` needs no paper copy.
+- The e-invoice consent is the client's current flag, read `FOR SHARE` so it cannot change while the delivery is recorded.
+- The receivables list is `GET …/invoices?delivery=pending`; the screen comes with R2-C3c. Printing is R2-C3b; the orphan cleanup is R2-C3d.
+
 **Tests (integration, real Postgres).**
 - 20 concurrent issues in one series give numbers 1 to 20, each exactly once.
 - Two concurrent issues of the same draft: exactly one succeeds.

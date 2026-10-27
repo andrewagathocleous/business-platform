@@ -77,6 +77,8 @@ export type InvoicePatch = {
 
 export type InvoiceQuery = {
   status?: 'draft' | 'issued' | 'cancelled';
+  /** `pending`: issued documents with no delivery recorded yet, earliest deadline first. */
+  delivery?: 'pending';
   clientId?: string;
   from?: string;
   to?: string;
@@ -127,6 +129,8 @@ export type InvoiceSummary = {
   deliveryDeadline: string | null;
   number: string | null;
   issuedAt: string | null;
+  /** The latest recorded delivery date, or null when none is recorded. */
+  lastDeliveredOn: string | null;
   reference: string | null;
   subtotal: string;
   discountTotal: string;
@@ -143,6 +147,26 @@ export type InvoiceDetail = InvoiceSummary & {
   terms: string | null;
   lines: InvoiceLineView[];
   taxSummary: TaxSummaryView[];
+  deliveries: DeliveryView[];
+};
+
+export type DeliveryMethod = 'handed_over' | 'posted' | 'emailed_outside_platform' | 'other';
+
+export type DeliveryInput = {
+  method: DeliveryMethod;
+  deliveredOn: string;
+  paperCopyKept?: boolean;
+  note?: string | null;
+};
+
+export type DeliveryView = {
+  id: string;
+  method: DeliveryMethod;
+  deliveredOn: string;
+  paperCopyKept: boolean;
+  note: string | null;
+  recordedById: string;
+  createdAt: string;
 };
 
 type ReadyLine = {
@@ -276,7 +300,11 @@ const detailInclude = {
   client: true,
   lines: { orderBy: { position: 'asc' as const }, include: { taxCode: true } },
   taxSummary: { include: { taxCode: true } },
+  deliveries: { orderBy: { createdAt: 'asc' as const } },
 } as const;
+
+/** Paper deliveries keep the company's printed copy (reg. 11Γ(4)). */
+const PAPER_METHODS = new Set<DeliveryMethod>(['handed_over', 'posted']);
 
 @Injectable()
 export class InvoiceService {
@@ -336,6 +364,9 @@ export class InvoiceService {
         where: {
           companyId: ctx.companyId,
           ...(query.status ? { status: query.status } : {}),
+          ...(query.delivery === 'pending'
+            ? { status: 'issued' as const, deliveries: { none: {} } }
+            : {}),
           ...(query.clientId ? { clientId: query.clientId.toLowerCase() } : {}),
           ...(from || to
             ? { issueDate: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } }
@@ -351,8 +382,14 @@ export class InvoiceService {
               }
             : {}),
         },
-        include: { client: true },
-        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+        include: {
+          client: true,
+          deliveries: { select: { deliveredOn: true }, orderBy: { deliveredOn: 'desc' }, take: 1 },
+        },
+        orderBy:
+          query.delivery === 'pending'
+            ? [{ deliveryDeadline: 'asc' }, { id: 'asc' }]
+            : [{ updatedAt: 'desc' }, { id: 'desc' }],
       }),
     );
     return rows.map((row) => toSummary(row));
@@ -959,6 +996,141 @@ export class InvoiceService {
     };
   }
 
+  /**
+   * Records how and when an issued document reached the client (Cyprus VAT reg. 11(5), 11(6)).
+   * The record is append-only. A delivery after the deadline is recorded with a warning.
+   */
+  async recordDelivery(
+    ctx: RequestContext,
+    invoiceId: string,
+    input: DeliveryInput,
+    meta: RequestMeta,
+  ): Promise<{ invoice: InvoiceDetail; delivery: DeliveryView; warnings: string[] }> {
+    const actor = requireActor(ctx);
+    try {
+      return await this.tenants.run(this.context(ctx, actor), async (tx) => {
+        if (!isUuid(invoiceId)) {
+          throw new CommerceError(404, 'invoice_not_found', 'invoice', null, 'Not found');
+        }
+        const id = invoiceId.toLowerCase();
+        const companyId = ctx.companyId;
+        const invoice = await tx.invoice.findFirst({
+          where: { id, companyId },
+          select: { id: true, status: true, clientId: true, issueDate: true, deliveryDeadline: true },
+        });
+        if (!invoice) {
+          throw new CommerceError(404, 'invoice_not_found', 'invoice', id, 'Not found');
+        }
+        if (invoice.status !== 'issued') {
+          throw new CommerceError(
+            409,
+            'not_issued',
+            'invoice',
+            id,
+            'Only an issued document is delivered.',
+            'invoice.delivery_recorded',
+          );
+        }
+        const company = await this.company(tx, companyId);
+        const deliveredOn = parseDateOnly(input.deliveredOn, 'deliveredOn');
+        const delivered = formatDateOnly(deliveredOn) ?? input.deliveredOn;
+        const issued = formatDateOnly(invoice.issueDate) ?? '';
+        if (delivered < issued) {
+          throw new CommerceError(
+            422,
+            'delivered_before_issue',
+            'invoice',
+            id,
+            'A document cannot be delivered before its issue date.',
+            'invoice.delivery_recorded',
+          );
+        }
+        if (delivered > businessDateInZone(new Date(), company.timezone)) {
+          throw new CommerceError(
+            422,
+            'delivered_in_future',
+            'invoice',
+            id,
+            'The delivery date is in the future.',
+            'invoice.delivery_recorded',
+          );
+        }
+        if (PAPER_METHODS.has(input.method) && input.paperCopyKept !== true) {
+          throw new CommerceError(
+            422,
+            'paper_copy_required',
+            'invoice',
+            id,
+            'Keep the company copy of a paper invoice, then record the delivery.',
+            'invoice.delivery_recorded',
+          );
+        }
+        if (input.method === 'emailed_outside_platform') {
+          // FOR SHARE: the consent cannot be withdrawn while this delivery is recorded.
+          const client = await tx.$queryRaw<{ acceptsEInvoices: boolean }[]>`
+            SELECT accepts_e_invoices AS "acceptsEInvoices" FROM client
+            WHERE company_id = ${companyId}::uuid AND id = ${invoice.clientId}::uuid
+            FOR SHARE
+          `;
+          if (client[0]?.acceptsEInvoices !== true) {
+            throw new CommerceError(
+              409,
+              'e_invoice_not_accepted',
+              'invoice',
+              id,
+              'This client has not accepted electronic invoices. Print it and deliver it on paper.',
+              'invoice.delivery_recorded',
+            );
+          }
+        }
+        const created = await tx.invoiceDelivery.create({
+          data: {
+            companyId,
+            invoiceId: id,
+            method: input.method,
+            deliveredOn,
+            paperCopyKept: input.paperCopyKept ?? false,
+            note: input.note ?? null,
+            recordedById: actor,
+          },
+        });
+        const deadline = formatDateOnly(invoice.deliveryDeadline);
+        const late = deadline !== null && delivered > deadline;
+        await this.audit.record(tx, {
+          companyId,
+          actorType: 'user',
+          actorId: actor,
+          actorLabel: ctx.actorLabel,
+          action: 'invoice.delivery_recorded',
+          objectType: 'invoice',
+          objectId: id,
+          outcome: 'success',
+          ip: meta.ip,
+          userAgent: meta.userAgent,
+          details: {
+            deliveryId: created.id,
+            method: created.method,
+            deliveredOn: delivered,
+            paperCopyKept: created.paperCopyKept,
+            ...(late ? { late: true } : {}),
+          },
+        });
+        const detail = toDetail(await this.load(tx, companyId, id));
+        const delivery = detail.deliveries.find((entry) => entry.id === created.id);
+        if (!delivery) {
+          throw new Error('the recorded delivery is missing');
+        }
+        return {
+          invoice: detail,
+          delivery,
+          warnings: late ? ['delivered_after_deadline'] : [],
+        };
+      });
+    } catch (error) {
+      return this.fail(ctx, meta, error);
+    }
+  }
+
   async pdf(
     ctx: RequestContext,
     invoiceId: string,
@@ -1430,6 +1602,7 @@ function toSummary(row: {
   deliveryDeadline: Date | null;
   number: string | null;
   issuedAt: Date | null;
+  deliveries: { deliveredOn: Date }[];
   reference: string | null;
   subtotal: { toFixed(digits: number): string };
   discountTotal: { toFixed(digits: number): string };
@@ -1455,6 +1628,13 @@ function toSummary(row: {
     deliveryDeadline: formatDateOnly(row.deliveryDeadline),
     number: row.number,
     issuedAt: row.issuedAt ? row.issuedAt.toISOString() : null,
+    lastDeliveredOn: formatDateOnly(
+      row.deliveries.reduce<Date | null>(
+        (latest, delivery) =>
+          latest === null || delivery.deliveredOn > latest ? delivery.deliveredOn : latest,
+        null,
+      ),
+    ),
     reference: row.reference,
     subtotal: fixed(row.subtotal, 2),
     discountTotal: fixed(row.discountTotal, 2),
@@ -1468,7 +1648,7 @@ function toSummary(row: {
 }
 
 function toDetail(
-  row: Parameters<typeof toSummary>[0] & {
+  row: Omit<Parameters<typeof toSummary>[0], 'deliveries'> & {
     notes: string | null;
     terms: string | null;
     lines: (Parameters<typeof storedLines>[0][number] & {
@@ -1487,12 +1667,30 @@ function toDetail(
       gross: { toFixed(digits: number): string };
       taxCode: { code: string };
     }[];
+    deliveries: {
+      id: string;
+      method: DeliveryMethod;
+      deliveredOn: Date;
+      paperCopyKept: boolean;
+      note: string | null;
+      recordedById: string;
+      createdAt: Date;
+    }[];
   },
 ): InvoiceDetail {
   return {
     ...toSummary(row),
     notes: row.notes,
     terms: row.terms,
+    deliveries: row.deliveries.map((delivery) => ({
+      id: delivery.id,
+      method: delivery.method,
+      deliveredOn: formatDateOnly(delivery.deliveredOn) ?? '',
+      paperCopyKept: delivery.paperCopyKept,
+      note: delivery.note,
+      recordedById: delivery.recordedById,
+      createdAt: delivery.createdAt.toISOString(),
+    })),
     lines: row.lines.map((line) => ({
       id: line.id,
       position: line.position,

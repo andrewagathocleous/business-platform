@@ -545,6 +545,120 @@ describe('issuing invoices', () => {
     expect(errorCode(currency.body)).toBe('currency_locked');
   });
 
+  it('records deliveries: paper keeps its copy, e-mail needs consent, dates are checked', async () => {
+    const draft = await createDraft();
+    const issued = await issue(draft.id, draft.version, cid('deliver'));
+    expect(issued.status, text(issued)).toBe(200);
+    const today = businessDateInZone(new Date(), TIMEZONE);
+    const deliver = (body: Record<string, unknown>, name: string) =>
+      send(admin, 'post', `/api/c/${company}/invoices/${draft.id}/deliveries`, cid(name), body);
+    expect(await pendingIds()).toContain(draft.id);
+
+    const refusals: [Record<string, unknown>, number, string][] = [
+      [{ method: 'handed_over', deliveredOn: today }, 422, 'paper_copy_required'],
+      [{ method: 'posted', deliveredOn: today, paperCopyKept: false }, 422, 'paper_copy_required'],
+      [
+        { method: 'other', deliveredOn: addDaysToBusinessDate(today, 1) },
+        422,
+        'delivered_in_future',
+      ],
+      [
+        { method: 'other', deliveredOn: addDaysToBusinessDate(today, -1) },
+        422,
+        'delivered_before_issue',
+      ],
+      [{ method: 'emailed_outside_platform', deliveredOn: today }, 409, 'e_invoice_not_accepted'],
+    ];
+    for (const [index, [body, status, code]] of refusals.entries()) {
+      const refused = await deliver(body, `deliver-refused-${String(index)}`);
+      expect(refused.status, text(refused)).toBe(status);
+      expect(errorCode(refused.body)).toBe(code);
+    }
+    expect(await pendingIds()).toContain(draft.id);
+
+    const client = await send(
+      admin,
+      'get',
+      `/api/c/${company}/clients/${clientId}`,
+      cid('consent-get'),
+    );
+    const consent = await send(
+      admin,
+      'patch',
+      `/api/c/${company}/clients/${clientId}`,
+      cid('consent'),
+      {
+        expectedVersion: numberField(record(record(client.body).client), 'version'),
+        acceptsEInvoices: true,
+      },
+    );
+    expect(consent.status, text(consent)).toBe(200);
+    const emailed = await deliver(
+      { method: 'emailed_outside_platform', deliveredOn: today },
+      'deliver-email',
+    );
+    expect(emailed.status, text(emailed)).toBe(200);
+    expect(arrayOf(record(emailed.body).warnings)).toEqual([]);
+
+    const note = 'Posted with tracking (demo)\n  second line, kept as typed ';
+    const correlationId = cid('deliver-paper');
+    const posted = await deliver(
+      { method: 'posted', deliveredOn: today, paperCopyKept: true, note },
+      'deliver-paper',
+    );
+    expect(posted.status, text(posted)).toBe(200);
+    const invoice = record(record(posted.body).invoice);
+    expect(invoice.lastDeliveredOn).toBe(today);
+    expect(arrayOf(invoice.deliveries).map((entry) => record(entry).method)).toEqual([
+      'emailed_outside_platform',
+      'posted',
+    ]);
+    expect(record(record(posted.body).delivery)).toMatchObject({ paperCopyKept: true, note });
+    expect(await pendingIds()).not.toContain(draft.id);
+    const audit = await auditEvents(correlationId);
+    expect(audit.map((event) => [event.action, event.outcome])).toEqual([
+      ['invoice.delivery_recorded', 'success'],
+    ]);
+
+    const other = await createDraft();
+    const notIssued = await send(
+      admin,
+      'post',
+      `/api/c/${company}/invoices/${other.id}/deliveries`,
+      cid('deliver-draft'),
+      { method: 'other', deliveredOn: today },
+    );
+    expect(notIssued.status).toBe(409);
+    expect(errorCode(notIssued.body)).toBe('not_issued');
+  });
+
+  it('warns when the delivery is after the deadline', async () => {
+    const supplyDate = addDaysToBusinessDate(businessDateInZone(new Date(), TIMEZONE), -45);
+    const draft = await createDraft({ supplyDate });
+    const issued = await issue(draft.id, draft.version, cid('deliver-late-issue'));
+    expect(issued.status, text(issued)).toBe(200);
+    const late = await send(
+      admin,
+      'post',
+      `/api/c/${company}/invoices/${draft.id}/deliveries`,
+      cid('deliver-late'),
+      { method: 'other', deliveredOn: businessDateInZone(new Date(), TIMEZONE) },
+    );
+    expect(late.status, text(late)).toBe(200);
+    expect(arrayOf(record(late.body).warnings)).toEqual(['delivered_after_deadline']);
+  });
+
+  async function pendingIds(): Promise<string[]> {
+    const response = await send(
+      admin,
+      'get',
+      `/api/c/${company}/invoices?delivery=pending`,
+      cid('pending'),
+    );
+    expect(response.status, text(response)).toBe(200);
+    return arrayOf(record(response.body).invoices).map((entry) => stringField(record(entry), 'id'));
+  }
+
   async function createDraft(
     options: {
       pricesIncludeTax?: boolean;
