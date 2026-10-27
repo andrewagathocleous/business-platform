@@ -1,5 +1,4 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { Readable } from 'node:stream';
 import { TenantDb, type TenantTransaction } from '@bp/db';
 import { parseAmount } from '@bp/domain';
 import {
@@ -9,6 +8,7 @@ import {
   type GiftMessageTemplate as GiftCard,
 } from '@bp/documents';
 import { StoragePathError, type StorageAdapter } from '@bp/integrations';
+import { FileIntegrityError, readVerifiedFile } from '../storage/verified-file';
 import { AuditService } from '../audit/audit.service';
 import type { RequestContext } from '../authz/request-context';
 import { isUuid } from '../authz/company-path';
@@ -281,8 +281,11 @@ export class DocumentService {
       });
       let bytes: Buffer;
       try {
-        bytes = await readStream(await this.storage.get(file.storageKey));
+        bytes = await readVerifiedFile(this.storage, file);
       } catch (error) {
+        if (error instanceof FileIntegrityError) {
+          throw integrityFailed(file.id, error);
+        }
         if (isStorageMiss(error)) {
           throw new CommerceError(404, 'not_found', 'stored_file', file.id, 'Not found');
         }
@@ -673,20 +676,17 @@ function stringField(record: Record<string, unknown>, key: string): string {
   return typeof value === 'string' ? value : '';
 }
 
-async function readStream(stream: Readable): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  try {
-    for await (const chunk of stream) {
-      chunks.push(toBuffer(chunk));
-    }
-  } catch (error) {
-    stream.destroy();
-    if (isStorageMiss(error)) {
-      throw new StoragePathError('storage object was not found');
-    }
-    throw new Error('storage read failed');
-  }
-  return Buffer.concat(chunks);
+/** Audited as `file.integrity_failed`; no byte of the file is sent. */
+function integrityFailed(fileId: string, error: FileIntegrityError): CommerceError {
+  return new CommerceError(
+    409,
+    'file_integrity_failed',
+    'stored_file',
+    fileId,
+    'The stored file failed its integrity check and was not sent.',
+    'file.integrity_failed',
+    { integrity: error.reason },
+  );
 }
 
 function isStorageMiss(error: unknown): boolean {
@@ -700,9 +700,3 @@ function isFsCode(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
 
-function toBuffer(chunk: unknown): Buffer {
-  if (typeof chunk === 'string' || chunk instanceof Uint8Array) {
-    return Buffer.from(chunk);
-  }
-  throw new Error('storage returned an unexpected chunk');
-}

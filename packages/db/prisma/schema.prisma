@@ -133,6 +133,16 @@ enum InvoiceStatus {
   @@map("invoice_status")
 }
 
+/// How an issued document reached the customer (Cyprus VAT reg. 11(5) and 11(6) concern delivery).
+enum InvoiceDeliveryMethod {
+  handed_over
+  posted
+  emailed_outside_platform
+  other
+
+  @@map("invoice_delivery_method")
+}
+
 enum InvoiceLineKind {
   item
   shipping
@@ -312,6 +322,7 @@ model UserAccount {
   invoicesCreated        Invoice[]          @relation("InvoiceCreatedBy")
   invoicesUpdated        Invoice[]          @relation("InvoiceUpdatedBy")
   invoicesIssued         Invoice[]          @relation("InvoiceIssuedBy")
+  invoiceDeliveries      InvoiceDelivery[]  @relation("InvoiceDeliveryRecordedBy")
   ordersAssigned         SalesOrder[]       @relation("OrderAssignedTo")
   orderNotes             OrderNote[]
   filesCreated           StoredFile[]       @relation("FileCreatedBy")
@@ -447,6 +458,7 @@ model Company {
   invoices           Invoice[]
   invoiceLines       InvoiceLine[]
   invoiceTaxSummaries InvoiceTaxSummary[]
+  invoiceDeliveries  InvoiceDelivery[]
   salesOrders        SalesOrder[]
   salesOrderLines    SalesOrderLine[]
   orderNotes         OrderNote[]
@@ -896,6 +908,10 @@ model Invoice {
   pricesIncludeTax Boolean             @map("prices_include_tax")
   issueDate        DateTime?           @map("issue_date") @db.Date
   dueDate          DateTime?           @map("due_date") @db.Date
+  /// Time of supply, Cyprus VAT reg. 12(1)(β). Defaults to the issue date at issue; never after it.
+  supplyDate       DateTime?           @map("supply_date") @db.Date
+  /// The date the issued document must reach the customer by (reg. 11(5) or 11(6)).
+  deliveryDeadline DateTime?           @map("delivery_deadline") @db.Date
   seriesId         String?             @map("series_id") @db.Uuid
   series           InvoiceSeries?      @relation(fields: [companyId, seriesId], references: [companyId, id])
   number           String?
@@ -917,14 +933,25 @@ model Invoice {
   issuedById       String?             @map("issued_by") @db.Uuid
   issuedBy         UserAccount?        @relation("InvoiceIssuedBy", fields: [issuedById], references: [id])
   issuedAt         DateTime?           @map("issued_at") @db.Timestamptz(6)
+  /// Frozen at issue: later edits to the company, client, bank account or terms never change the document.
+  sellerSnapshot   Json?               @map("seller_snapshot") @db.JsonB
+  buyerSnapshot    Json?               @map("buyer_snapshot") @db.JsonB
+  bankSnapshot     Json?               @map("bank_snapshot") @db.JsonB
+  termsSnapshot    String?             @map("terms_snapshot")
+  renderVersion    Int?                @map("render_version")
+  /// The issued PDF, the legal document. Same company by construction.
+  pdfFileId        String?             @map("pdf_file_id") @db.Uuid
+  pdfFile          StoredFile?         @relation(fields: [companyId, pdfFileId], references: [companyId, id])
   version          Int                 @default(0)
   createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   lines      InvoiceLine[]
   taxSummary InvoiceTaxSummary[]
+  deliveries InvoiceDelivery[]
 
   @@unique([companyId, id])
+  @@unique([companyId, number])
   @@map("invoice")
 }
 
@@ -950,6 +977,8 @@ model InvoiceLine {
   lineDiscount    Decimal         @map("line_discount") @db.Decimal(19, 2)
   lineNet         Decimal         @map("line_net") @db.Decimal(19, 2)
   lineGross       Decimal         @map("line_gross") @db.Decimal(19, 2)
+  /// Frozen at issue: the tax code's code, name, kind and legal notes in both languages.
+  taxSnapshot     Json?           @map("tax_snapshot") @db.JsonB
 
   @@map("invoice_line")
 }
@@ -966,8 +995,30 @@ model InvoiceTaxSummary {
   net            Decimal  @db.Decimal(19, 2)
   tax            Decimal  @db.Decimal(19, 2)
   gross          Decimal  @db.Decimal(19, 2)
+  taxSnapshot    Json?    @map("tax_snapshot") @db.JsonB
 
   @@map("invoice_tax_summary")
+}
+
+/// Append-only: bp_app may insert and read, never update or delete.
+model InvoiceDelivery {
+  id            String                @id @default(uuid(7)) @db.Uuid
+  companyId     String                @map("company_id") @db.Uuid
+  company       Company               @relation(fields: [companyId], references: [id])
+  invoiceId     String                @map("invoice_id") @db.Uuid
+  invoice       Invoice               @relation(fields: [companyId, invoiceId], references: [companyId, id])
+  method        InvoiceDeliveryMethod
+  /// Business date in the company's timezone.
+  deliveredOn   DateTime              @map("delivered_on") @db.Date
+  /// Paper delivery keeps a second printed copy for the company's file (reg. 11Γ(4)).
+  paperCopyKept Boolean               @default(false) @map("paper_copy_kept")
+  note          String?
+  recordedById  String                @map("recorded_by") @db.Uuid
+  recordedBy    UserAccount           @relation("InvoiceDeliveryRecordedBy", fields: [recordedById], references: [id])
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([companyId, invoiceId])
+  @@map("invoice_delivery")
 }
 
 model SalesOrder {
@@ -1063,8 +1114,11 @@ model StoredFile {
   createdById   String         @map("created_by") @db.Uuid
   createdBy     UserAccount    @relation("FileCreatedBy", fields: [createdById], references: [id])
   createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// Set when an issued document adopts this file. A trigger then refuses every update and delete.
+  sealed        Boolean        @default(false)
 
   printJobs PrintJob[]
+  invoices  Invoice[]
 
   @@unique([companyId, id])
   @@map("stored_file")

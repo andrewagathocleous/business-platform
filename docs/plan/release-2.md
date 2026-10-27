@@ -153,6 +153,12 @@ Every write is audited, versioned (`expectedVersion`, 409 `version_conflict`) an
 
 **Printing.** "Print" on an issued document queues its stored PDF to the printer mapped to document type `invoice` (the HP), with the existing first-print and reprint rules.
 
+**As built, R2-C1 (2026-10-27).** The schema, the delivery table, sealed files and the verified reader land first, in their own step.
+- `stored_file.sealed` is one-way. The trigger `stored_file_sealed_guard` refuses update and delete of a sealed row for every role, and `refuse_truncate()` refuses `TRUNCATE` of `stored_file`, `invoice`, `invoice_line`, `invoice_tax_summary` and `invoice_delivery`.
+- `invoice_delivery` is insert-and-read for `bp_app`, with a CHECK that paper deliveries kept their copy.
+- `readVerifiedFile` serves `GET /files/:id` and print submits. A print records `file.integrity_failed` in its own transaction, so a cancel or a lost lease cannot drop it.
+- `TRUNCATE` of `audit_event` is BACKLOG H-03.
+
 **Tests (integration, real Postgres).**
 - 20 concurrent issues in one series give numbers 1 to 20, each exactly once.
 - Two concurrent issues of the same draft: exactly one succeeds.

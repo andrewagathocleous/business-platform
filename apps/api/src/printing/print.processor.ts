@@ -1,4 +1,3 @@
-import { Readable } from 'node:stream';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { TenantTransaction } from '@bp/db';
 import { can } from '@bp/domain';
@@ -23,6 +22,7 @@ import {
 import { uuidv7 } from '../correlation/correlation';
 import { orderScopes } from '../orders/order.scope';
 import { STORAGE } from '../storage/storage.module';
+import { FileIntegrityError, readVerifiedFile } from '../storage/verified-file';
 import { PrintProviderRegistry } from './print-providers';
 import { refreshDelaySeconds } from './refresh-delay';
 
@@ -41,6 +41,8 @@ const RECORD_ATTEMPTS = 3;
 
 /** Test seams. Production leaves `hooks` null. */
 export type PrintProcessorHooks = {
+  /** After the file row is located and before its bytes are read and verified. */
+  afterLocate?: () => Promise<void>;
   /** After the submitting claim commits and before the provider call. */
   afterClaim?: () => Promise<void>;
   /** Inside the recording transaction, before either row is locked. */
@@ -92,11 +94,22 @@ export class PrintProcessor {
     );
     let pdf: Buffer | null = null;
     if (located) {
+      await this.hooks?.afterLocate?.();
       try {
-        pdf = await readStream(await this.storage.get(located.storageKey));
+        pdf = await readVerifiedFile(this.storage, located);
       } catch (error) {
+        if (error instanceof FileIntegrityError) {
+          // Not fenced: a detection is recorded even when this attempt has lost its lease.
+          await external.transaction((tx) =>
+            this.recordIntegrityFailure(tx, companyId, payload.printJobId, located.id, error),
+          );
+        }
         const reason =
-          error instanceof StoragePathError || isFsMiss(error) ? 'file_missing' : 'file_unreadable';
+          error instanceof FileIntegrityError
+            ? 'file_integrity_failed'
+            : error instanceof StoragePathError || isFsMiss(error)
+              ? 'file_missing'
+              : 'file_unreadable';
         await this.failUnread(external, companyId, payload.printJobId, reason);
         return;
       }
@@ -611,7 +624,7 @@ export class PrintProcessor {
     tx: TenantTransaction,
     companyId: string,
     printJobId: string,
-  ): Promise<{ storageKey: string } | null> {
+  ): Promise<{ id: string; storageKey: string; sizeBytes: number; sha256: string } | null> {
     const print = await tx.printJob.findFirst({
       where: { id: printJobId, companyId, status: 'queued' },
       select: { fileId: true },
@@ -621,9 +634,28 @@ export class PrintProcessor {
     }
     const file = await tx.storedFile.findFirst({
       where: { id: print.fileId, companyId },
-      select: { storageKey: true },
+      select: { id: true, storageKey: true, sizeBytes: true, sha256: true },
     });
-    return file ? { storageKey: file.storageKey } : null;
+    return file;
+  }
+
+  private async recordIntegrityFailure(
+    tx: TenantTransaction,
+    companyId: string,
+    printJobId: string,
+    fileId: string,
+    error: FileIntegrityError,
+  ): Promise<void> {
+    await this.audit.record(tx, {
+      companyId,
+      actorType: 'system',
+      actorLabel: 'job-runner',
+      action: 'file.integrity_failed',
+      objectType: 'stored_file',
+      objectId: fileId,
+      outcome: 'failure',
+      details: { printJobId, integrity: error.reason },
+    });
   }
 
   private async failUnread(
@@ -970,26 +1002,6 @@ async function touchProviderState(
 function failureText(state: Extract<ProviderJobStatus, { state: 'failed' }>): string {
   const text = state.message ? `${state.reason}: ${state.message}` : state.reason;
   return text.length > 240 ? text.slice(0, 240) : text;
-}
-
-async function readStream(stream: Readable): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  try {
-    for await (const chunk of stream) {
-      chunks.push(toBuffer(chunk));
-    }
-  } catch (error) {
-    stream.destroy();
-    throw error;
-  }
-  return Buffer.concat(chunks);
-}
-
-function toBuffer(chunk: unknown): Buffer {
-  if (typeof chunk === 'string' || chunk instanceof Uint8Array) {
-    return Buffer.from(chunk);
-  }
-  throw new Error('storage returned an unexpected chunk');
 }
 
 function isFsMiss(error: unknown): boolean {

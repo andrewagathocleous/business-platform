@@ -6,7 +6,7 @@ import { Logger } from 'nestjs-pino';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Writable } from 'node:stream';
@@ -886,6 +886,46 @@ describe('documents, files and company switches', () => {
       expect(logged).not.toContain(storageRoot);
       expect(logged).not.toContain(key);
       expect(logged).not.toContain('ENOENT');
+    } finally {
+      await withCompany(companyA, (tx) => tx.storedFile.deleteMany({ where: { id } }));
+    }
+  });
+
+  it('sends nothing and audits file.integrity_failed when the stored bytes were changed', async () => {
+    const id = randomUUID();
+    const stamped = new Date();
+    const bytes = Buffer.from(`%PDF-1.4 sealed ${runId}`);
+    const key = storageKey({ companyId: companyA, kind: 'packing_slip', id, at: stamped });
+    await storage.put(key, bytes);
+    await withCompany(companyA, (tx) =>
+      tx.storedFile.create({
+        data: storedFile(
+          companyA,
+          id,
+          'packing_slip',
+          adminUserId,
+          stamped,
+          bytes,
+          'order',
+          shopifyOrderId,
+        ),
+      }),
+    );
+    // Same length, one byte changed: only the hash can tell.
+    const tampered = Buffer.from(bytes);
+    tampered[tampered.length - 1] = tampered[tampered.length - 1] === 0x30 ? 0x31 : 0x30;
+    await writeFile(join(storageRoot, key), tampered);
+    try {
+      const correlationId = cid('file-tampered');
+      const response = await fetchPdf(adminA, `/api/c/${companyA}/files/${id}`, correlationId);
+      expect(response.status, preview(response)).toBe(409);
+      const body = bufferOf(response).toString('utf8');
+      expect(body).not.toContain('%PDF');
+      expect(body).toContain('file_integrity_failed');
+      const events = await auditEvents(app, correlationId, companyA);
+      expect(events.map((event) => [event.action, event.outcome, event.objectId])).toEqual([
+        ['file.integrity_failed', 'failure', id],
+      ]);
     } finally {
       await withCompany(companyA, (tx) => tx.storedFile.deleteMany({ where: { id } }));
     }

@@ -2,10 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { config as loadEnv } from 'dotenv';
 import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import {
-  assertDatabaseNameIsTest,
-  assertTestDatabaseUrls,
-} from '../../../tools/test-db-guard.mjs';
+import { assertDatabaseNameIsTest, assertTestDatabaseUrls } from '../../../tools/test-db-guard.mjs';
 import { createPrismaClient, type PrismaClient } from './client';
 import { RLS_EXEMPT_TABLES } from './rls-tables';
 import { TenantDb, type TenantTransaction } from './tenant-db';
@@ -28,6 +25,7 @@ const RLS_TABLES = [
   'integration_credential',
   'integration_inbox',
   'invoice',
+  'invoice_delivery',
   'invoice_line',
   'invoice_series',
   'invoice_tax_summary',
@@ -146,6 +144,91 @@ describe('row level security', () => {
         tx.brand.create({ data: { companyId: companyB, name: 'cross-tenant' } }),
       ),
     ).rejects.toThrow(/row-level security/i);
+  });
+
+  it('keeps delivery records append-only and paper deliveries with their kept copy', async () => {
+    const grants = await app.$queryRaw<{ privilege_type: string }[]>`
+      SELECT privilege_type
+      FROM information_schema.role_table_grants
+      WHERE grantee = 'bp_app' AND table_name = 'invoice_delivery'
+    `;
+    expect(grants.map((row) => row.privilege_type).sort()).toEqual(['INSERT', 'SELECT']);
+    const ctx = { companyId: companyA, actor: userId, correlationId: randomUUID() };
+    await expect(
+      appTenant.run(ctx, (tx) =>
+        tx.invoiceDelivery.update({ where: { id: graphA.invoice_delivery }, data: { note: 'x' } }),
+      ),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      appTenant.run(ctx, (tx) =>
+        tx.invoiceDelivery.delete({ where: { id: graphA.invoice_delivery } }),
+      ),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      appTenant.run(ctx, (tx) =>
+        tx.invoiceDelivery.create({
+          data: {
+            companyId: companyA,
+            invoiceId: graphA.invoice,
+            method: 'handed_over',
+            deliveredOn: new Date('2026-10-27T00:00:00Z'),
+            paperCopyKept: false,
+            recordedById: userId,
+          },
+        }),
+      ),
+    ).rejects.toThrow(/invoice_delivery_paper_copy_check/);
+  });
+
+  it('refuses any change to a sealed stored file, for every role', async () => {
+    const ctx = { companyId: companyA, actor: userId, correlationId: randomUUID() };
+    const marker = randomUUID();
+    const file = await appTenant.run(ctx, (tx) =>
+      tx.storedFile.create({
+        data: {
+          companyId: companyA,
+          kind: 'invoice_pdf',
+          storageKey: `companies/${companyA}/test/sealed-${marker}.pdf`,
+          contentType: 'application/pdf',
+          sizeBytes: 4,
+          sha256: '0'.repeat(64),
+          createdById: userId,
+        },
+      }),
+    );
+    await appTenant.run(ctx, (tx) =>
+      tx.storedFile.update({ where: { id: file.id }, data: { sealed: true } }),
+    );
+    for (const tenant of [appTenant, ownerTenant]) {
+      await expect(
+        tenant.run(ctx, (tx) =>
+          tx.storedFile.update({ where: { id: file.id }, data: { sha256: '1'.repeat(64) } }),
+        ),
+      ).rejects.toThrow(/sealed stored file is immutable/);
+      await expect(
+        tenant.run(ctx, (tx) =>
+          tx.storedFile.update({ where: { id: file.id }, data: { sealed: false } }),
+        ),
+      ).rejects.toThrow(/sealed stored file is immutable/);
+      await expect(
+        tenant.run(ctx, (tx) => tx.storedFile.delete({ where: { id: file.id } })),
+      ).rejects.toThrow(/sealed stored file is immutable/);
+    }
+    // TRUNCATE skips row triggers, so it has its own guard, which CASCADE cannot get past.
+    for (const statement of [
+      'TRUNCATE stored_file CASCADE',
+      'TRUNCATE invoice CASCADE',
+      'TRUNCATE invoice_line',
+      'TRUNCATE invoice_tax_summary',
+      'TRUNCATE invoice_delivery',
+    ]) {
+      await expect(owner.$executeRawUnsafe(statement)).rejects.toThrow(/is never truncated/);
+    }
+    await expect(app.$executeRawUnsafe('TRUNCATE stored_file CASCADE')).rejects.toThrow();
+    const still = await ownerTenant.run(ctx, (tx) =>
+      tx.storedFile.findUnique({ where: { id: file.id }, select: { sealed: true } }),
+    );
+    expect(still?.sealed).toBe(true);
   });
 
   it('rejects update and delete of audit_event', async () => {
@@ -520,8 +603,10 @@ describe('row level security', () => {
     });
 
     await expect(
-      appTenant.run({ companyId: companyA, actor: userId, correlationId: randomUUID() }, (tx) =>
-        tx.$executeRaw`
+      appTenant.run(
+        { companyId: companyA, actor: userId, correlationId: randomUUID() },
+        (tx) =>
+          tx.$executeRaw`
           UPDATE print_job
           SET queue_job_id = (
             SELECT id FROM job WHERE company_id <> app_current_company() LIMIT 1
@@ -718,6 +803,8 @@ const COMPOSITE_FOREIGN_KEYS: ReadonlyArray<readonly [string, string]> = [
   ['invoice', 'FOREIGN KEY (company_id, client_id) REFERENCES client(company_id, id)'],
   ['invoice', 'FOREIGN KEY (company_id, series_id) REFERENCES invoice_series(company_id, id)'],
   ['invoice', 'FOREIGN KEY (company_id, source_order_id) REFERENCES sales_order(company_id, id)'],
+  ['invoice', 'FOREIGN KEY (company_id, pdf_file_id) REFERENCES stored_file(company_id, id)'],
+  ['invoice_delivery', 'FOREIGN KEY (company_id, invoice_id) REFERENCES invoice(company_id, id)'],
   ['invoice_line', 'FOREIGN KEY (company_id, invoice_id) REFERENCES invoice(company_id, id)'],
   ['invoice_line', 'FOREIGN KEY (company_id, tax_code_id) REFERENCES tax_code(company_id, id)'],
   ['invoice_line', 'FOREIGN KEY (company_id, product_id) REFERENCES product(company_id, id)'],
@@ -891,6 +978,15 @@ async function insertGraph(
       createdById: userId,
     },
   });
+  const delivery = await tx.invoiceDelivery.create({
+    data: {
+      companyId,
+      invoiceId: invoice.id,
+      method: 'other',
+      deliveredOn: new Date('2026-10-27T00:00:00Z'),
+      recordedById: userId,
+    },
+  });
   const line = await tx.invoiceLine.create({
     data: {
       companyId,
@@ -1050,6 +1146,7 @@ async function insertGraph(
     integration_credential: credential.id,
     integration_inbox: inbox.id,
     invoice: invoice.id,
+    invoice_delivery: delivery.id,
     invoice_line: line.id,
     invoice_series: series.id,
     invoice_tax_summary: summary.id,
