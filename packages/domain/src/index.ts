@@ -80,6 +80,7 @@ export type {
   ConnectionHealthReason,
 } from './integrations/connection-health';
 
+export { isValidBic, isValidIban, normalizeBic, normalizeIban } from './banking/iban';
 export { normalizeForDuplicateCheck } from './text/normalize';
 export { addDaysToBusinessDate, businessDateInZone } from './time/business-date';
 export { isIanaTimeZone } from './time/iana-zone';

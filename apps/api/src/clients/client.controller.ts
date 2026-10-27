@@ -56,6 +56,7 @@ const clientFields = {
     .optional(),
   defaultLanguage: z.enum(['en', 'el']).nullable().optional(),
   paymentTermsDays: z.number().int().min(0).max(3650).nullable().optional(),
+  acceptsEInvoices: z.boolean().optional(),
   contacts: z.array(contactSchema).max(30).optional(),
   addresses: z.array(addressSchema).max(30).optional(),
 };

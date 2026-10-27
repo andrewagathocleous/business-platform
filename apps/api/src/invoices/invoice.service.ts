@@ -270,9 +270,9 @@ export class InvoiceService {
     const actor = requireActor(ctx);
     try {
       return await this.tenants.run(this.context(ctx, actor), async (tx) => {
-        const company = await this.company(tx, ctx.companyId);
+        const company = await this.company(tx, ctx.companyId, { lock: true });
         const client = await this.client(tx, ctx.companyId, input.clientId);
-        const currency = invoiceCurrency(client.defaultCurrency ?? company.defaultCurrency, null);
+        const currency = draftCurrency(company, client, null);
         const lines = await this.resolveLines(tx, ctx.companyId, input.lines);
         const totals = calculated(input.pricesIncludeTax, lines);
         const issueDate = input.issueDate ? parseDateOnly(input.issueDate, 'issueDate') : null;
@@ -344,11 +344,32 @@ export class InvoiceService {
             'version conflict',
           );
         }
-        const company = await this.company(tx, ctx.companyId);
+        if (current.documentType === 'credit_note') {
+          throw new CommerceError(
+            409,
+            'credit_note_draft',
+            'invoice',
+            current.id,
+            'Credit-note drafts are edited through the credit-note routes.',
+            'invoice.updated',
+          );
+        }
+        if (patch.documentType !== undefined && patch.documentType !== current.documentType) {
+          throw new CommerceError(
+            409,
+            'document_type_locked',
+            'invoice',
+            current.id,
+            'A draft keeps its document type. Create a new draft instead.',
+            'invoice.updated',
+          );
+        }
+        // Lock order: company, then tax codes (resolveLines), then the invoice row (updateMany).
+        const company = await this.company(tx, ctx.companyId, { lock: true });
         const client = patch.clientId
           ? await this.client(tx, ctx.companyId, patch.clientId)
           : current.client;
-        const currency = invoiceCurrency(client.defaultCurrency ?? company.defaultCurrency, current.id);
+        const currency = draftCurrency(company, client, current.id);
         const pricesIncludeTax = patch.pricesIncludeTax ?? current.pricesIncludeTax;
         const replaceLines = patch.lines !== undefined || patch.pricesIncludeTax !== undefined;
         const lines = patch.lines
@@ -375,7 +396,6 @@ export class InvoiceService {
             status: 'draft',
           },
           data: {
-            documentType: patch.documentType ?? current.documentType,
             clientId: client.id,
             currency,
             language: languageOf(client.defaultLanguage, company.documentLanguage),
@@ -514,7 +534,15 @@ export class InvoiceService {
     return { companyId: ctx.companyId, actor, correlationId: ctx.correlationId };
   }
 
-  private async company(tx: TenantTransaction, companyId: string): Promise<CompanyRow> {
+  /** With lock, holds the company row FOR SHARE so its currency cannot change before commit. */
+  private async company(
+    tx: TenantTransaction,
+    companyId: string,
+    options: { lock?: boolean } = {},
+  ): Promise<CompanyRow> {
+    if (options.lock) {
+      await tx.$queryRaw`SELECT id FROM company WHERE id = ${companyId}::uuid FOR SHARE`;
+    }
     const company = await tx.company.findUnique({ where: { id: companyId } });
     if (!company) {
       throw new CommerceError(404, 'company_not_found', 'company', companyId, 'Not found');
@@ -585,7 +613,16 @@ export class InvoiceService {
         throw new CommerceError(400, 'invalid_product', 'product', null, 'productId is invalid');
       }
     }
-    const taxCodes = await tx.taxCode.findMany({ where: { companyId, id: { in: taxIds } } });
+    // FOR SHARE, ordered by id: a tax-code edit (FOR UPDATE) waits for this draft, or this draft
+    // reads the edited row. Either way the stored line rate equals the code's rate.
+    const taxCodes = taxIds.length === 0 ? [] : await tx.$queryRaw<
+      { id: string; code: string; ratePercent: string; active: boolean }[]
+    >`
+      SELECT id::text AS id, code, rate_percent::text AS "ratePercent", active FROM tax_code
+      WHERE company_id = ${companyId}::uuid AND id = ANY(${taxIds}::uuid[])
+      ORDER BY id
+      FOR SHARE
+    `;
     const products = await tx.product.findMany({
       where: { companyId, id: { in: productIds } },
       select: { id: true },
@@ -627,7 +664,7 @@ export class InvoiceService {
         discountPercent: decimalField(line.discountPercent ?? '0', 2, 'discountPercent'),
         taxCodeId: tax.id,
         taxCode: tax.code,
-        taxRatePercent: fixed(tax.ratePercent, 4),
+        taxRatePercent: decimalField(tax.ratePercent, 4, 'taxRatePercent'),
       };
     });
   }
@@ -724,6 +761,26 @@ export class InvoiceService {
     }
     throw error;
   }
+}
+
+/** Drafts are in the company currency only. A client with another default currency is refused. */
+function draftCurrency(
+  company: CompanyRow,
+  client: { defaultCurrency: string | null },
+  invoiceId: string | null,
+): string {
+  const currency = invoiceCurrency(company.defaultCurrency, invoiceId);
+  if (client.defaultCurrency && client.defaultCurrency.trim().toUpperCase() !== currency) {
+    throw new CommerceError(
+      422,
+      'currency_not_supported',
+      'invoice',
+      invoiceId,
+      `Drafts are in the company currency (${currency}) only. This client's currency is ${client.defaultCurrency}.`,
+      invoiceId ? 'invoice.updated' : 'invoice.created',
+    );
+  }
+  return currency;
 }
 
 function invoiceCurrency(currency: string, invoiceId: string | null): string {

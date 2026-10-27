@@ -111,6 +111,12 @@ export const routes: Routes = [
         data: { permission: 'company.view' },
       },
       {
+        path: 'admin/invoicing',
+        loadComponent: () => import('./admin/invoicing-page').then((module) => module.InvoicingPage),
+        canActivate: [permissionGuard],
+        data: { permission: 'invoice.view' },
+      },
+      {
         path: 'admin/stores',
         loadComponent: () => import('./admin/stores-page').then((module) => module.StoresPage),
         canActivate: [permissionGuard],

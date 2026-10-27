@@ -28,18 +28,6 @@ export type ProductQuery = {
   active?: boolean;
 };
 
-export type TaxCodeView = {
-  id: string;
-  code: string;
-  name: string;
-  ratePercent: string;
-  kind: string;
-  noteEn: string | null;
-  noteEl: string | null;
-  isExample: boolean;
-  active: boolean;
-};
-
 export type ProductView = {
   id: string;
   sku: string | null;
@@ -79,27 +67,6 @@ export class CatalogService {
     @Inject(AuditService) private readonly audit: AuditService,
   ) {
     this.tenants = new TenantDb(prisma.client);
-  }
-
-  async taxCodes(ctx: RequestContext): Promise<TaxCodeView[]> {
-    const actor = requireActor(ctx);
-    const rows = await this.tenants.run(this.context(ctx, actor), (tx) =>
-      tx.taxCode.findMany({
-        where: { companyId: ctx.companyId },
-        orderBy: [{ code: 'asc' }, { id: 'asc' }],
-      }),
-    );
-    return rows.map((row) => ({
-      id: row.id,
-      code: row.code,
-      name: row.name,
-      ratePercent: fixed(row.ratePercent, 4),
-      kind: row.kind,
-      noteEn: row.noteEn,
-      noteEl: row.noteEl,
-      isExample: row.isExample,
-      active: row.active,
-    }));
   }
 
   async products(ctx: RequestContext, query: ProductQuery): Promise<ProductView[]> {

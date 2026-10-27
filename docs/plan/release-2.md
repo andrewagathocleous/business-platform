@@ -95,6 +95,13 @@ Every write is audited, versioned (`expectedVersion`, 409 `version_conflict`) an
   - The generic `PATCH /invoices/:id` refuses changes to `document_type`, and refuses any change to a credit-note draft (R2-D has its own route).
   - Only drafts in the company currency can be created.
 
+**As built (2026-10-27).**
+- `company_bank_account.is_default` became `shown_on_invoices`, with `active` and `version`. At most one shown account per company (partial unique index), shown ⇒ active (CHECK), and all writes for one company take an advisory lock.
+- The default series are plain columns on `company`. Prisma cannot model a foreign key that reuses `company.id`, and it drops keys it does not model, so the triggers `company_default_series_guard` and `invoice_series_default_guard` check same company and document type instead.
+- A code in use keeps `code`, `name`, `deadline_rule` and `active` editable. Standard and reduced codes need a rate above 0; the other kinds need 0.
+- A series' document type never changes. Deactivating a company default is 409 `series_is_default`.
+- A draft whose client has another default currency is 422 `currency_not_supported`. `GET /tax-codes` moved to the finance-settings controller and returns `inUse`, `deadlineRule` and `version`.
+
 ## R2-C. Issuing (P3-02)
 
 `POST /c/:companyId/invoices/:id/issue` with `expectedVersion` (`invoice.issue`, MFA). In one transaction, with locks in the order above:

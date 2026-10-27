@@ -41,6 +41,7 @@ type ClientView = {
   defaultCurrency: string | null;
   defaultLanguage: string | null;
   paymentTermsDays: number | null;
+  acceptsEInvoices: boolean;
   archivedAt: string | null;
   version: number;
   contacts: {
@@ -221,6 +222,16 @@ type DuplicateMatch = {
           @if (errorFor('paymentTermsDays'); as key) {
             <p class="field-error" role="alert">{{ key | transloco }}</p>
           }
+          <label class="check">
+            <input
+              type="checkbox"
+              name="acceptsEInvoices"
+              [disabled]="!canManage()"
+              [checked]="draft().acceptsEInvoices"
+              (change)="onAcceptsEInvoices($event)"
+            />
+            {{ 'clients.fields.acceptsEInvoices' | transloco }}
+          </label>
 
           <fieldset class="repeat span-all">
             <legend>{{ 'clients.contacts' | transloco }}</legend>
@@ -645,6 +656,13 @@ export class ClientFormPage {
     }));
   }
 
+  onAcceptsEInvoices(event: Event): void {
+    this.touch();
+    const target = event.target;
+    const checked = target instanceof HTMLInputElement && target.checked;
+    this.draft.update((current) => ({ ...current, acceptsEInvoices: checked }));
+  }
+
   onPrimary(index: number, event: Event): void {
     this.touch();
     const target = event.target;
@@ -971,6 +989,7 @@ export class ClientFormPage {
       defaultCurrency: view.defaultCurrency ?? '',
       defaultLanguage: language,
       paymentTermsDays: view.paymentTermsDays === null ? '' : String(view.paymentTermsDays),
+      acceptsEInvoices: view.acceptsEInvoices,
       contacts: view.contacts.map((contact) => ({
         key: this.nextKey(),
         id: contact.id,
@@ -1058,6 +1077,9 @@ function isClientDraft(value: unknown): value is ClientDraft {
     'paymentTermsDays',
   ];
   if (strings.some((field) => typeof value[field] !== 'string')) {
+    return false;
+  }
+  if (typeof value['acceptsEInvoices'] !== 'boolean') {
     return false;
   }
   return Array.isArray(value['contacts']) && Array.isArray(value['addresses']);

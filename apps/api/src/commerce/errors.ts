@@ -10,6 +10,19 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestContext } from '../authz/request-context';
 import type { RequestMeta } from '../identity/request-meta';
 
+/** 409 reasons the client tells apart, so they keep their code in the error body. */
+const CODED_CONFLICTS = new Set([
+  'name_taken',
+  'location_in_use',
+  'code_taken',
+  'tax_code_in_use',
+  'series_in_use',
+  'series_is_default',
+  'currency_locked',
+  'document_type_locked',
+  'credit_note_draft',
+]);
+
 export class CommerceError extends Error {
   override readonly name = 'CommerceError';
 
@@ -88,7 +101,7 @@ export async function settleCommerceError(
         message: error.message,
       });
     }
-    if (error.reason === 'name_taken' || error.reason === 'location_in_use') {
+    if (CODED_CONFLICTS.has(error.reason)) {
       throw new ConflictException({
         code: error.reason,
         message: error.message,

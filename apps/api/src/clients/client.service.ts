@@ -44,6 +44,7 @@ export type ClientWrite = {
   defaultCurrency?: string | null;
   defaultLanguage?: string | null;
   paymentTermsDays?: number | null;
+  acceptsEInvoices?: boolean;
   contacts?: ContactInput[];
   addresses?: AddressInput[];
 };
@@ -101,6 +102,7 @@ export type ClientView = {
   defaultCurrency: string | null;
   defaultLanguage: string | null;
   paymentTermsDays: number | null;
+  acceptsEInvoices: boolean;
   archivedAt: string | null;
   version: number;
   contacts: ContactView[];
@@ -132,6 +134,7 @@ type ClientRow = {
   defaultCurrency: string | null;
   defaultLanguage: string | null;
   paymentTermsDays: number | null;
+  acceptsEInvoices: boolean;
   archivedAt: Date | null;
   version: number;
   createdAt: Date;
@@ -223,7 +226,8 @@ export class ClientService {
           outcome: 'success',
           ip: meta.ip,
           userAgent: meta.userAgent,
-          details: { version: created.version },
+          // Agreement to electronic invoices is consent evidence (reg. 11A(1)(γ)), so it is recorded.
+          details: { version: created.version, acceptsEInvoices: created.acceptsEInvoices },
         });
         return toClient(await this.load(tx, ctx.companyId, created.id));
       });
@@ -305,7 +309,13 @@ export class ClientService {
           outcome: 'success',
           ip: meta.ip,
           userAgent: meta.userAgent,
-          details: { version: saved.version, archived: saved.archivedAt !== null },
+          details: {
+            version: saved.version,
+            archived: saved.archivedAt !== null,
+            ...(saved.acceptsEInvoices !== current.acceptsEInvoices
+              ? { acceptsEInvoices: saved.acceptsEInvoices }
+              : {}),
+          },
         });
         return toClient(saved);
       });
@@ -509,6 +519,7 @@ function clientData(input: ClientWrite) {
     defaultCurrency: input.defaultCurrency ?? null,
     defaultLanguage: input.defaultLanguage ?? null,
     paymentTermsDays: input.paymentTermsDays ?? null,
+    acceptsEInvoices: input.acceptsEInvoices ?? false,
     nameNormalized: nameKey,
     emailNormalized: duplicateKey(email),
     vatNormalized: duplicateKey(vatNumber),
@@ -532,6 +543,7 @@ function merged(current: ClientRow, patch: ClientPatch): ClientWrite {
       patch.defaultLanguage === undefined ? current.defaultLanguage : patch.defaultLanguage,
     paymentTermsDays:
       patch.paymentTermsDays === undefined ? current.paymentTermsDays : patch.paymentTermsDays,
+    acceptsEInvoices: patch.acceptsEInvoices ?? current.acceptsEInvoices,
   };
 }
 
@@ -595,6 +607,7 @@ function toClient(row: ClientRow): ClientView {
     defaultCurrency: row.defaultCurrency,
     defaultLanguage: row.defaultLanguage,
     paymentTermsDays: row.paymentTermsDays,
+    acceptsEInvoices: row.acceptsEInvoices,
     archivedAt: row.archivedAt?.toISOString() ?? null,
     version: row.version,
     contacts: row.contacts.map((contact) => ({

@@ -1019,6 +1019,24 @@ describe('privileged MFA withholding', () => {
       expect(body.mfaStepUpRequired).toBe(true);
       expect(body.withheldPermissions).toEqual(expect.arrayContaining(['member.manage']));
       expect(grants(body).some((grant) => grant.permission === 'member.manage')).toBe(false);
+      const finance = [
+        'invoice.issue',
+        'invoice.credit',
+        'invoice.series.manage',
+        'tax.manage',
+        'payment.record',
+        'invoice.export',
+        'client.import',
+        'client.export',
+      ];
+      expect(body.withheldPermissions).toEqual(expect.arrayContaining(finance));
+      expect(grants(body).filter((grant) => finance.includes(grant.permission))).toEqual([]);
+      const taxDenied = await support.agent
+        .post(`/api/c/${companyA}/tax-codes`)
+        .set('X-Correlation-Id', cid('mfa-tax'))
+        .set('X-XSRF-TOKEN', support.xsrf)
+        .send({ code: `MFA${runId}`.slice(0, 32), name: 'MFA test', ratePercent: '19', kind: 'standard' });
+      expect(taxDenied.status).toBe(403);
       const denied = await support.agent
         .patch(`/api/c/${companyA}/members/${targetMembership.id}`)
         .set('X-Correlation-Id', cid('mfa-denied'))

@@ -183,7 +183,8 @@ type CarriedInvoice = {
           <p data-testid="document-language">{{ languageText() }}</p>
           <label>
             {{ 'invoices.fields.type' | transloco }}
-            <select [disabled]="readOnly()" (change)="setType($event)">
+            <!-- A saved draft keeps its type (the API refuses a change with 409). -->
+            <select [disabled]="readOnly() || invoiceId() !== null" (change)="setType($event)">
               <option value="invoice" [selected]="documentType() === 'invoice'">
                 {{ 'invoices.type.invoice' | transloco }}
               </option>

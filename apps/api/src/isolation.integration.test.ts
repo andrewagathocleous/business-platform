@@ -48,13 +48,17 @@ const EXEMPTIONS: { route: string; reason: string }[] = [
     reason: 'excludeClientId is an exclusion filter. A foreign id is not loaded and does not 404.',
   },
   { route: 'GET /api/c/:companyId/tax-codes', reason: 'Tax-code list. No object id.' },
+  { route: 'POST /api/c/:companyId/tax-codes', reason: 'Creates a tax code. No existing object id.' },
+  { route: 'GET /api/c/:companyId/invoice-series', reason: 'Series list. No object id.' },
+  { route: 'POST /api/c/:companyId/invoice-series', reason: 'Creates a series. No existing object id.' },
+  { route: 'GET /api/c/:companyId/bank-accounts', reason: 'Bank-account list. No object id.' },
+  { route: 'POST /api/c/:companyId/bank-accounts', reason: 'Creates a bank account. No existing object id.' },
   { route: 'GET /api/c/:companyId/products', reason: 'Product list. No object id.' },
   { route: 'GET /api/c/:companyId/invoices', reason: 'Invoice list. No object id.' },
   { route: 'GET /api/c/:companyId/orders', reason: 'Order list. No object id in the path or body.' },
   { route: 'GET /api/c/:companyId/gift-message-templates', reason: 'Template list. No object id.' },
   { route: 'GET /api/c/:companyId/print-jobs', reason: 'Print-job list. No object id in the path or body.' },
   { route: 'GET /api/c/:companyId/printers', reason: 'Printer list. No printer id route.' },
-  { route: 'PATCH /api/c/:companyId/company', reason: 'Edits this company. No other object id.' },
   { route: 'GET /api/c/:companyId/brands', reason: 'Brand list. No object id.' },
   { route: 'POST /api/c/:companyId/brands', reason: 'Creates a brand. No existing object id.' },
   { route: 'GET /api/c/:companyId/locations', reason: 'Location list. No object id.' },
@@ -207,6 +211,9 @@ type Fixtures = {
   clientB: string;
   productA: string;
   taxA: string;
+  seriesA: string;
+  bankA: string;
+  companyBVersion: number;
   invoiceA: string;
   orderA: string;
   printA: string;
@@ -344,10 +351,24 @@ async function loadFixtures(adminA: Session, adminB: Session, companyA: string, 
       select: { id: true, locationId: true },
     }),
   );
+  const seriesA = await inCompany(companyA, (tx) =>
+    tx.invoiceSeries.findFirstOrThrow({ where: { companyId: companyA, code: 'INV' }, select: { id: true } }),
+  );
+  const bank = await send(adminA, 'post', `/api/c/${companyA}/bank-accounts`, cid('fix-bank'), {
+    bankName: `Iso bank ${runId}`,
+    accountHolder: 'Demo Company A Ltd (fictional)',
+    iban: 'CY17 0020 0128 0000 0012 0052 7600',
+  });
+  const companyBRow = await inCompany(companyB, (tx) =>
+    tx.company.findUniqueOrThrow({ where: { id: companyB }, select: { version: true } }),
+  );
   return {
     companyA,
     companyB,
     adminBUserId,
+    seriesA: seriesA.id,
+    bankA: stringField(record(record(expectOk(bank, 'bank account')).bankAccount), 'id'),
+    companyBVersion: companyBRow.version,
     clientA,
     contactA,
     addressA,
@@ -676,6 +697,38 @@ function sweepCases(adminB: Session, fx: Fixtures): SweepCase[] {
       () => identitySnap(fx),
     ),
     onB(
+      'tax-code-patch',
+      'PATCH /api/c/:companyId/tax-codes/:id',
+      'patch',
+      b(`/tax-codes/${fx.taxA}`),
+      () => financeSnap(fx),
+      { expectedVersion: 0, name: 'Stolen tax code' },
+    ),
+    onB(
+      'series-patch',
+      'PATCH /api/c/:companyId/invoice-series/:id',
+      'patch',
+      b(`/invoice-series/${fx.seriesA}`),
+      () => financeSnap(fx),
+      { expectedVersion: 0, prefix: 'STOLEN-' },
+    ),
+    onB(
+      'bank-account-patch',
+      'PATCH /api/c/:companyId/bank-accounts/:id',
+      'patch',
+      b(`/bank-accounts/${fx.bankA}`),
+      () => financeSnap(fx),
+      { expectedVersion: 0, bankName: 'Stolen bank' },
+    ),
+    onB(
+      'company-patch-default-series',
+      'PATCH /api/c/:companyId/company',
+      'patch',
+      b('/company'),
+      () => financeSnap(fx),
+      { expectedVersion: fx.companyBVersion, defaultInvoiceSeriesId: fx.seriesA },
+    ),
+    onB(
       'brand-patch',
       'PATCH /api/c/:companyId/brands/:id',
       'patch',
@@ -914,6 +967,28 @@ function taxSnap(fx: Fixtures): Promise<string> {
         (SELECT count(*)::int FROM product WHERE company_id = ${fx.companyA}::uuid) AS products
     `,
   );
+}
+
+function financeSnap(fx: Fixtures): Promise<string> {
+  return Promise.all([
+    rows(
+      fx.companyA,
+      (tx) => tx.$queryRaw`
+        SELECT
+          (SELECT version::text || ':' || name || ':' || rate_percent::text FROM tax_code WHERE id = ${fx.taxA}::uuid) AS tax,
+          (SELECT version::text || ':' || prefix || ':' || active::text FROM invoice_series WHERE id = ${fx.seriesA}::uuid) AS series,
+          (SELECT version::text || ':' || bank_name FROM company_bank_account WHERE id = ${fx.bankA}::uuid) AS bank
+      `,
+    ),
+    rows(
+      fx.companyB,
+      (tx) => tx.$queryRaw`
+        SELECT version::text, default_invoice_series_id::text AS series
+        FROM company
+        WHERE id = ${fx.companyB}::uuid
+      `,
+    ),
+  ]).then((parts) => JSON.stringify(parts));
 }
 
 function invoiceSnap(fx: Fixtures): Promise<string> {

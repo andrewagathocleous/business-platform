@@ -101,6 +101,14 @@ enum TaxKind {
   @@map("tax_kind")
 }
 
+/// When an invoice must reach the customer (Cyprus VAT reg. 11(5) and 11(6)).
+enum TaxDeadlineRule {
+  days_30
+  next_month_15
+
+  @@map("tax_deadline_rule")
+}
+
 enum ProductKind {
   product
   service
@@ -404,6 +412,13 @@ model Company {
   defaultLocale      Locale   @default(en) @map("default_locale")
   documentLanguage   Locale   @default(en) @map("document_language")
   paymentTermsDays   Int      @default(30) @map("payment_terms_days")
+  invoiceTermsEn     String?  @map("invoice_terms_en")
+  invoiceTermsEl     String?  @map("invoice_terms_el")
+  /// Default series per document type. A trigger (company_default_series_guard) checks that each
+  /// one is this company's series of the right type; Prisma cannot model a key that reuses `id`.
+  defaultInvoiceSeriesId    String? @map("default_invoice_series_id") @db.Uuid
+  defaultCreditNoteSeriesId String? @map("default_credit_note_series_id") @db.Uuid
+  defaultQuoteSeriesId      String? @map("default_quote_series_id") @db.Uuid
   version            Int      @default(1)
   status             String   @default("active")
   isFictional        Boolean  @default(false) @map("is_fictional")
@@ -593,7 +608,10 @@ model CompanyBankAccount {
   iban          String
   bic           String?
   accountHolder String  @map("account_holder")
-  isDefault     Boolean @default(false) @map("is_default")
+  /// At most one per company (partial unique index in SQL), and only while active.
+  shownOnInvoices Boolean @default(false) @map("shown_on_invoices")
+  active        Boolean @default(true)
+  version       Int     @default(0)
 
   @@map("company_bank_account")
 }
@@ -747,6 +765,8 @@ model Client {
   defaultCurrency    String?    @map("default_currency")
   defaultLanguage    String?    @map("default_language")
   paymentTermsDays   Int?       @map("payment_terms_days")
+  /// The client agreed to receive invoices electronically (Cyprus VAT reg. 11A(1)(γ)).
+  acceptsEInvoices   Boolean    @default(false) @map("accepts_e_invoices")
   nameNormalized     String?    @map("name_normalized")
   emailNormalized    String?    @map("email_normalized")
   vatNormalized      String?    @map("vat_normalized")
@@ -811,6 +831,8 @@ model TaxCode {
   noteEl      String?  @map("note_el")
   isExample   Boolean  @default(false) @map("is_example")
   active      Boolean  @default(true)
+  deadlineRule TaxDeadlineRule @default(days_30) @map("deadline_rule")
+  version     Int      @default(0)
 
   products      Product[]
   invoiceLines  InvoiceLine[]
@@ -852,6 +874,7 @@ model InvoiceSeries {
   nextNumber   Int                 @default(1) @map("next_number")
   padding      Int                 @default(4)
   active       Boolean             @default(true)
+  version      Int                 @default(0)
 
   invoices Invoice[]
 

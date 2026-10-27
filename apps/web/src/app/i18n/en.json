@@ -19,6 +19,7 @@
     "audit": "Audit",
     "printers": "Printers",
     "company": "Company",
+    "invoicing": "Invoicing",
     "stores": "Stores",
     "integrations": "Integrations",
     "giftCards": "Gift cards"
@@ -343,6 +344,7 @@
       "currency": "Default currency",
       "language": "Default language",
       "terms": "Payment terms in days",
+      "acceptsEInvoices": "Accepts electronic invoices (the client agreed to receive invoices by email or as files)",
       "contactName": "Contact name",
       "position": "Position",
       "primary": "Primary contact",
@@ -847,5 +849,89 @@
     "error": "The gift card layout could not be loaded or saved.",
     "openPreview": "Open the preview PDF",
     "unsupported": "{{count}} character(s) in the sample cannot be printed with the card font, for example emoji. They will not appear on the card."
+  },
+  "invoicing": {
+    "title": "Invoicing",
+    "intro": "Tax codes, invoice numbering, bank details and invoice terms. Agree these with your accountant before issuing real invoices (docs/finance/invoice-requirements.md).",
+    "loading": "Loading invoicing settings…",
+    "error": "Invoicing settings could not be loaded.",
+    "status": "Status",
+    "active": "Active",
+    "inactive": "Inactive",
+    "edit": "Edit",
+    "save": "Save",
+    "cancel": "Cancel",
+    "conflict": "Someone else changed this while you were editing. The latest values are shown; make your change again.",
+    "forbidden": "You cannot change this. Two-step sign-in may be required: sign out and sign in again.",
+    "errors": {
+      "code_taken": "This code is already used.",
+      "tax_code_in_use": "An invoice line uses this tax code, so its rate, kind and notes cannot change. Create a new code instead.",
+      "series_in_use": "A number was issued from this series, so its prefix, padding and next number cannot change.",
+      "series_is_default": "This series is a company default. Choose another default first.",
+      "next_number_lowered": "The next number can only be raised.",
+      "account_inactive": "An inactive account cannot be shown on invoices.",
+      "series_type_mismatch": "That series is for another document type.",
+      "series_inactive": "That series is not active."
+    },
+    "tax": {
+      "title": "Tax codes",
+      "add": "Add tax code",
+      "code": "Code",
+      "name": "Name",
+      "rate": "Rate %",
+      "kind": "Kind",
+      "deadline": "Invoice deadline",
+      "noteEn": "Legal note on invoices (English)",
+      "noteEl": "Legal note on invoices (Greek)",
+      "example": "Example from setup: check it with your accountant",
+      "inUse": "Used on invoices: rate, kind and notes are locked.",
+      "kinds": {
+        "standard": "Standard",
+        "reduced": "Reduced",
+        "zero": "Zero-rated",
+        "exempt": "Exempt",
+        "reverse_charge": "Reverse charge",
+        "out_of_scope": "Out of scope"
+      },
+      "deadlines": {
+        "days_30": "Within 30 days of supply",
+        "next_month_15": "By the 15th of the next month"
+      }
+    },
+    "series": {
+      "title": "Numbering series",
+      "add": "Add series",
+      "code": "Code",
+      "documentType": "Document type",
+      "prefix": "Prefix",
+      "nextNumber": "Next number",
+      "padding": "Digits",
+      "next": "Next number will be",
+      "hasIssued": "Numbers issued: prefix, digits and next number are locked.",
+      "numbersInvalid": "Next number and digits must be whole numbers (digits from 1 to 12).",
+      "types": {
+        "invoice": "Invoice",
+        "credit_note": "Credit note",
+        "quote": "Quote"
+      }
+    },
+    "bank": {
+      "title": "Bank accounts",
+      "add": "Add bank account",
+      "bankName": "Bank",
+      "accountHolder": "Account holder",
+      "iban": "IBAN",
+      "bic": "BIC (optional)",
+      "shown": "Shown on invoices"
+    },
+    "terms": {
+      "title": "Invoice terms and default series",
+      "defaultInvoice": "Default invoice series",
+      "defaultCreditNote": "Default credit-note series",
+      "defaultQuote": "Default quote series",
+      "none": "None",
+      "en": "Invoice terms (English)",
+      "el": "Invoice terms (Greek)"
+    }
   }
 }

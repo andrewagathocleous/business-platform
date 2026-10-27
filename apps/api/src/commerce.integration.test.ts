@@ -886,7 +886,7 @@ describe('clients, catalogue and invoice drafts', () => {
     );
   });
 
-  it('rejects a currency whose precision is not two digits', async () => {
+  it('rejects a client currency other than the company one, and a company currency without two digits', async () => {
     if (!app) {
       throw new Error('the API was not started');
     }
@@ -901,8 +901,9 @@ describe('clients, catalogue and invoice drafts', () => {
       pricesIncludeTax: false,
       lines: [line(taxA, { quantity: '1', unitPrice: '0.001', tax: 'ZERO' })],
     });
-    expect(rejected.status, text(rejected)).toBe(400);
-    expect(errorMessage(bodyOf(rejected))).toBe('currency precision must be 2 digits');
+    // R2-B: drafts are in the company currency only, so a KWD client is refused before precision.
+    expect(rejected.status, text(rejected)).toBe(422);
+    expect(errorCode(bodyOf(rejected))).toBe('currency_not_supported');
     const stored = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.company_id', ${companyA}, true)`;
       return tx.invoice.count({ where: { companyId: companyA, clientId: kwd.id } });
@@ -945,7 +946,8 @@ describe('clients, catalogue and invoice drafts', () => {
       expectedVersion: 0,
       clientId: kwd.id,
     });
-    expect(patched.status, text(patched)).toBe(400);
+    expect(patched.status, text(patched)).toBe(422);
+    expect(errorCode(bodyOf(patched))).toBe('currency_not_supported');
     const row = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.company_id', ${companyA}, true)`;
       return tx.invoice.findFirstOrThrow({ where: { id: invoiceId, companyId: companyA } });
@@ -1060,9 +1062,10 @@ async function taxCodeIds(session: Session, companyId: string): Promise<Record<s
   const response = await send(session, 'get', `/api/c/${companyId}/tax-codes`);
   expect(response.status, text(response)).toBe(200);
   const ids: Record<string, string> = {};
+  // Only the seeded examples: other suites create their own codes since R2-B.
   for (const item of arrayOf(record(bodyOf(response)).taxCodes)) {
     const row = record(item);
-    if (typeof row.code === 'string' && typeof row.id === 'string') {
+    if (row.isExample === true && typeof row.code === 'string' && typeof row.id === 'string') {
       ids[row.code] = row.id;
     }
   }
