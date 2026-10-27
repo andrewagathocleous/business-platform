@@ -1,0 +1,12 @@
+# Local stack only. tls internal, no HSTS. One Caddy site block cannot switch
+# ACME for production and tls internal for localhost, or omit a header by env.
+{
+	admin 127.0.0.1:2019
+}
+
+import app.caddy
+
+{$APP_DOMAIN} {
+	import app
+	tls internal
+}

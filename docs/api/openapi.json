@@ -1,0 +1,2538 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/api/auth/providers": {
+      "get": {
+        "operationId": "AuthController_providers",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Development login and OIDC availability"
+          }
+        },
+        "summary": "Which sign-in methods are enabled. The response contains no secrets.",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/dev/users": {
+      "get": {
+        "operationId": "AuthController_devUsers",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Seed users with a membership summary"
+          }
+        },
+        "summary": "Fictional users for the development login picker",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/dev/login": {
+      "post": {
+        "operationId": "AuthController_devLoginRoute",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Development login by fictional email",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/oidc/start": {
+      "get": {
+        "operationId": "AuthController_oidcStart",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Start the Entra authorization-code flow",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/oidc/callback": {
+      "get": {
+        "operationId": "AuthController_oidcCallback",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Complete the Entra authorization-code flow",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "operationId": "AuthController_logout",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "Revoke the staff session and clear its cookies",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/me": {
+      "get": {
+        "operationId": "MeController_me",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Active memberships, or every active company for a platform owner"
+          }
+        },
+        "summary": "The signed-in user, authorised companies and session expiry",
+        "tags": [
+          "auth"
+        ]
+      },
+      "patch": {
+        "operationId": "MeController_updateLocale",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The user, authorised companies and session expiry, with the stored locale"
+          }
+        },
+        "summary": "Update the signed-in user locale",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/c/{companyId}/context": {
+      "get": {
+        "operationId": "CompanyController_context",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read-only company context for the signed-in member"
+          }
+        },
+        "summary": "Company summary, caller grants, switches and MFA step-up",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/locations": {
+      "get": {
+        "operationId": "CompanyController_locations",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Locations in this company",
+        "tags": [
+          "company"
+        ]
+      },
+      "post": {
+        "operationId": "CompanySetupController_createLocation",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create a location",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/members": {
+      "get": {
+        "operationId": "CompanyController_members",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List company members and their role assignments",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/members/{membershipId}": {
+      "get": {
+        "operationId": "CompanyController_member",
+        "parameters": [
+          {
+            "name": "membershipId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "One membership in this company",
+        "tags": [
+          "company"
+        ]
+      },
+      "patch": {
+        "operationId": "CompanyController_updateMember",
+        "parameters": [
+          {
+            "name": "membershipId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Change a member role assignment or membership status",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/members/{membershipId}/revoke-sessions": {
+      "post": {
+        "operationId": "CompanyController_revokeSessions",
+        "parameters": [
+          {
+            "name": "membershipId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Revoke another member's sessions",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/invitations": {
+      "post": {
+        "operationId": "CompanyController_invite",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create an invitation and return the accept link once. No email is sent.",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/roles": {
+      "get": {
+        "operationId": "CompanyController_roles",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List role bundles copied into this company",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/audit-events": {
+      "get": {
+        "operationId": "CompanyController_auditEvents",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Paginated audit events for this company",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/service-identities": {
+      "get": {
+        "operationId": "CompanyController_listServiceIdentities",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List automation tokens. Secrets are never returned.",
+        "tags": [
+          "company"
+        ]
+      },
+      "post": {
+        "operationId": "CompanyController_createServiceIdentity",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create an automation token. The token is returned once.",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/service-identities/{id}": {
+      "delete": {
+        "operationId": "CompanyController_revokeServiceIdentity",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "Revoke an automation token",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/company": {
+      "patch": {
+        "operationId": "CompanySetupController_updateCompany",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Update company details. expectedVersion must match.",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/brands": {
+      "get": {
+        "operationId": "CompanySetupController_brands",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Brands in this company, including archived ones",
+        "tags": [
+          "company"
+        ]
+      },
+      "post": {
+        "operationId": "CompanySetupController_createBrand",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create a brand",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/brands/{id}": {
+      "patch": {
+        "operationId": "CompanySetupController_updateBrand",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Rename, archive or restore a brand",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/locations/{id}": {
+      "patch": {
+        "operationId": "CompanySetupController_updateLocation",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Edit, archive or restore a location",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores": {
+      "get": {
+        "operationId": "CompanySetupController_stores",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Stores in this company. A store grant sees only those stores.",
+        "tags": [
+          "company"
+        ]
+      },
+      "post": {
+        "operationId": "CompanySetupController_createStore",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create a store. Platform is fixed after this.",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores/{id}": {
+      "get": {
+        "operationId": "CompanySetupController_store",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "One store, with connection id, mode and status only",
+        "tags": [
+          "company"
+        ]
+      },
+      "patch": {
+        "operationId": "CompanySetupController_updateStore",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Edit, archive or restore a store. Platform cannot change.",
+        "tags": [
+          "company"
+        ]
+      }
+    },
+    "/api/platform/companies": {
+      "get": {
+        "operationId": "PlatformController_companies",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Every company, including ones the owner has no membership in"
+          }
+        },
+        "summary": "List companies. Platform owner only.",
+        "tags": [
+          "platform"
+        ]
+      },
+      "post": {
+        "operationId": "PlatformController_createCompany",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create a company, copy role templates, add example tax codes and set switches off",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/platform/switches/outbound.all": {
+      "put": {
+        "operationId": "PlatformController_outboundAll",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Set the global outbound.all switch. Platform owner only.",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/automation/v1/c/{companyId}/store-sync": {
+      "post": {
+        "operationId": "AutomationController_storeSync",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "How many connections were queued, not yet due, or skipped. A duplicate trigger in the same interval inserts nothing."
+          }
+        },
+        "summary": "Enqueue a PrestaShop poll for each due live connection. Bearer token with store.sync.trigger. Writes no audit row.",
+        "tags": [
+          "automation"
+        ]
+      }
+    },
+    "/api/automation/v1/c/{companyId}/ping": {
+      "get": {
+        "operationId": "AutomationController_ping",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The service identity is accepted for this company"
+          }
+        },
+        "summary": "Automation ping. Bearer service token only; requires store.events.ingest.",
+        "tags": [
+          "automation"
+        ]
+      }
+    },
+    "/api/automation/v1/c/{companyId}/store-connections/{connectionId}/events": {
+      "post": {
+        "operationId": "AutomationController_events",
+        "parameters": [
+          {
+            "name": "connectionId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The event was stored. Duplicate event ids do not create a second inbox row."
+          }
+        },
+        "summary": "Accept a mock store event and enqueue inbox.process in the same transaction",
+        "tags": [
+          "automation"
+        ]
+      }
+    },
+    "/api/c/{companyId}/automation/switches": {
+      "get": {
+        "operationId": "CompanyAutomationController_listSwitches",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Company automation switches. The global outbound.all switch is not included.",
+        "tags": [
+          "automation"
+        ]
+      }
+    },
+    "/api/c/{companyId}/automation/switches/{key}": {
+      "put": {
+        "operationId": "CompanyAutomationController_setSwitch",
+        "parameters": [
+          {
+            "name": "key",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Company switch key, such as printing or email.send. outbound.all is not a company switch."
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Enable or disable a company switch. reason is required and the change is audited.",
+        "tags": [
+          "automation"
+        ]
+      }
+    },
+    "/api/c/{companyId}/automation/jobs": {
+      "get": {
+        "operationId": "CompanyAutomationController_listJobs",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Jobs for this company. Payload is omitted. Filter with status.",
+        "tags": [
+          "automation"
+        ]
+      }
+    },
+    "/api/c/{companyId}/print-requests": {
+      "post": {
+        "operationId": "PrintController_request",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Queue a packing slip or gift message. Renders now. A second first print is 409 already_printed. The provider follows the mapped printer (mock in development and test only, otherwise printnode).",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/print-jobs": {
+      "get": {
+        "operationId": "PrintController_list",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List print jobs. done_reported is not shown as printed.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/print-jobs/{id}": {
+      "get": {
+        "operationId": "PrintController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "One print job. print.submit, print.reprint, print.confirm or automation.view, at the job scope. The status stays the provider value, including done_reported.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/print-jobs/{id}/confirm": {
+      "post": {
+        "operationId": "PrintController_confirm",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Staff confirm printed or not_printed. not_printed allows another first print.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/print-jobs/{id}/release": {
+      "post": {
+        "operationId": "PrintController_release",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Release a held print job back to the queue after printing is enabled.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/print-jobs/{id}/cancel": {
+      "post": {
+        "operationId": "PrintController_cancel",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Cancel a queued, held or uncertain job. 409 once it is submitting or later.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/printers": {
+      "get": {
+        "operationId": "PrintController_printers",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Printers visible to the caller. Mock printers are labelled simulated.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/printers/discover": {
+      "post": {
+        "operationId": "PrintController_discover",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Upsert printers from the selected provider. PrintNode when a key is stored, otherwise the simulated mock catalogue. Simulated — no physical printing.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/printer-mappings": {
+      "get": {
+        "operationId": "PrintController_mappings",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Printer mappings for this company",
+        "tags": [
+          "printing"
+        ]
+      },
+      "put": {
+        "operationId": "PrintController_mapping",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Map a document type at a location to a printer, paper size and copies.",
+        "tags": [
+          "printing"
+        ]
+      }
+    },
+    "/api/c/{companyId}/clients": {
+      "get": {
+        "operationId": "ClientController_list",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Clients with contacts and addresses. Archived clients are omitted unless asked for."
+          }
+        },
+        "summary": "List clients in this company",
+        "tags": [
+          "clients"
+        ]
+      },
+      "post": {
+        "operationId": "ClientController_create",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create a client. There is no delete; archive it instead.",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
+    "/api/c/{companyId}/clients/duplicate-check": {
+      "post": {
+        "operationId": "ClientController_duplicateCheck",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Find clients with the same normalised name, email or VAT in this company",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
+    "/api/c/{companyId}/clients/{id}": {
+      "get": {
+        "operationId": "ClientController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "One client, including an archived client",
+        "tags": [
+          "clients"
+        ]
+      },
+      "patch": {
+        "operationId": "ClientController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Edit a client. expectedVersion must match. A mismatch is 409.",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders/{id}/documents/packing-slip.pdf": {
+      "get": {
+        "operationId": "DocumentController_packingSlip",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Preview a packing slip. The PDF is not stored.",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders/{id}/documents/gift-message.pdf": {
+      "get": {
+        "operationId": "DocumentController_giftMessage",
+        "parameters": [
+          {
+            "name": "templateId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Preview a gift message. The PDF is not stored. Uses the default template when templateId is omitted.",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/c/{companyId}/gift-message-templates": {
+      "get": {
+        "operationId": "DocumentController_listTemplates",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Gift-message card templates for this company",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/c/{companyId}/gift-message-templates/{id}/preview": {
+      "post": {
+        "operationId": "DocumentController_previewTemplate",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Render sample text with a saved template. Returns the PDF; X-Gift-Fits says whether it fit at or above the minimum font size.",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/c/{companyId}/gift-message-templates/{id}": {
+      "patch": {
+        "operationId": "DocumentController_updateTemplate",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Update a gift-message template. Measurements are decimal strings. Setting isDefault clears the previous default.",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/c/{companyId}/files/{id}": {
+      "get": {
+        "operationId": "DocumentController_file",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Download a stored file. The row is read under RLS first. invoice_pdf requires invoice.view. packing_slip and gift_message require document.download on the source order. test_print requires document.download at company scope.",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/c/{companyId}/tax-codes": {
+      "get": {
+        "operationId": "CatalogController_taxCodes",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Tax codes for this company. Editing them is not in this phase.",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/c/{companyId}/products": {
+      "get": {
+        "operationId": "CatalogController_products",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List products and services",
+        "tags": [
+          "catalog"
+        ]
+      },
+      "post": {
+        "operationId": "CatalogController_createProduct",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create a product, service or shipping item",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/c/{companyId}/products/{id}": {
+      "patch": {
+        "operationId": "CatalogController_updateProduct",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Edit a product. Products have no version column.",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores/{storeId}/prestashop-connection": {
+      "get": {
+        "operationId": "PrestashopConnectionController_get",
+        "parameters": [
+          {
+            "name": "storeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "The live PrestaShop connection for this store, or null",
+        "tags": [
+          "integrations"
+        ]
+      },
+      "put": {
+        "operationId": "PrestashopConnectionController_save",
+        "parameters": [
+          {
+            "name": "storeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create or update the live PrestaShop connection",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores/{storeId}/prestashop-connection/test": {
+      "post": {
+        "operationId": "PrestashopConnectionController_test",
+        "parameters": [
+          {
+            "name": "storeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Probe the saved shop with the saved key",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores/{storeId}/prestashop-connection/order-states": {
+      "get": {
+        "operationId": "PrestashopConnectionController_orderStates",
+        "parameters": [
+          {
+            "name": "storeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Order states from the saved shop",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores/{storeId}/prestashop-connection/carriers": {
+      "get": {
+        "operationId": "PrestashopConnectionController_carriers",
+        "parameters": [
+          {
+            "name": "storeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Carriers from the saved shop, one row per id_reference",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores/{storeId}/prestashop-connection/maps": {
+      "put": {
+        "operationId": "PrestashopConnectionController_maps",
+        "parameters": [
+          {
+            "name": "storeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Save the order-state and carrier maps",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores/{storeId}/prestashop-connection/activate": {
+      "post": {
+        "operationId": "PrestashopConnectionController_activate",
+        "parameters": [
+          {
+            "name": "storeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Start sync after a passed test",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/stores/{storeId}/prestashop-connection/pause": {
+      "post": {
+        "operationId": "PrestashopConnectionController_pause",
+        "parameters": [
+          {
+            "name": "storeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Pause sync",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/print-accounts/printnode": {
+      "get": {
+        "operationId": "PrintNodeAccountController_get",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Whether a PrintNode key is stored. Does not call PrintNode.",
+        "tags": [
+          "integrations"
+        ]
+      },
+      "put": {
+        "operationId": "PrintNodeAccountController_save",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Store a PrintNode API key",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/print-accounts/printnode/test": {
+      "post": {
+        "operationId": "PrintNodeAccountController_test",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Call PrintNode whoami with the stored key",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/integrations/health": {
+      "get": {
+        "operationId": "IntegrationHealthController_read",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Store connection and printing health from the database. Makes no provider call.",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/c/{companyId}/invoices/preview-totals": {
+      "post": {
+        "operationId": "InvoiceController_preview",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Calculate totals for lines. Nothing is stored. Client totals are ignored.",
+        "tags": [
+          "invoices"
+        ]
+      }
+    },
+    "/api/c/{companyId}/invoices": {
+      "post": {
+        "operationId": "InvoiceController_create",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Create a draft invoice or quote. Totals are calculated on the server.",
+        "tags": [
+          "invoices"
+        ]
+      },
+      "get": {
+        "operationId": "InvoiceController_list",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List invoices. Filters: status, clientId, from, to, q.",
+        "tags": [
+          "invoices"
+        ]
+      }
+    },
+    "/api/c/{companyId}/invoices/{id}/pdf": {
+      "get": {
+        "operationId": "InvoiceController_pdf",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Render a draft invoice PDF. Drafts are not stored.",
+        "tags": [
+          "invoices"
+        ]
+      }
+    },
+    "/api/c/{companyId}/invoices/{id}": {
+      "get": {
+        "operationId": "InvoiceController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "One invoice, with lines and the tax summary",
+        "tags": [
+          "invoices"
+        ]
+      },
+      "patch": {
+        "operationId": "InvoiceController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Edit a draft. expectedVersion must match. A mismatch is 409. There is no issue endpoint.",
+        "tags": [
+          "invoices"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders": {
+      "get": {
+        "operationId": "OrderController_list",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List orders in scope. Filters: q, fulfilmentStatus, paymentStatus, storeId, assigned, from, to. Sort and page.",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders/{id}/assignees": {
+      "get": {
+        "operationId": "OrderController_assignees",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Active members who can view this order and claim or move it. Suspended members are excluded. order.claim alone is not enough to list them.",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders/{id}": {
+      "get": {
+        "operationId": "OrderController_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Order detail, including the exact gift message, allowed transitions, per-order can flags and firstPrintAvailable",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders/{id}/activity": {
+      "get": {
+        "operationId": "OrderController_activity",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Audit events for this order and its print jobs, newest first",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders/{id}/transitions": {
+      "post": {
+        "operationId": "OrderController_transition",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Move an order. Cancel also requires order.cancel. Version conflicts are 409.",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders/{id}/notes": {
+      "post": {
+        "operationId": "OrderController_note",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Add an order note. The body is stored exactly.",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/c/{companyId}/orders/{id}/assign": {
+      "post": {
+        "operationId": "OrderController_assign",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Assign the order. Someone else, or clearing the assignee, needs order.assign. Assigning yourself needs order.claim or order.assign.",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/c/{companyId}/order-filters": {
+      "get": {
+        "operationId": "OrderFilterController_filters",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Stores the caller can use to filter the order list",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/health/live": {
+      "get": {
+        "operationId": "HealthController_live",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Process is up",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/api/health/ready": {
+      "get": {
+        "operationId": "HealthController_ready",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Database is reachable as bp_app",
+        "tags": [
+          "health"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Business Platform API",
+    "description": "Staff and automation HTTP API.",
+    "version": "0.0.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "schemas": {}
+  }
+}

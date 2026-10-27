@@ -1,0 +1,17 @@
+{
+  "carriers": [
+    {
+      "id": 7,
+      "id_reference": 2,
+      "name": "Demo courier"
+    },
+    {
+      "id": "8",
+      "id_reference": "9",
+      "name": [
+        { "id": 1, "value": "Demo international post" },
+        { "id": "2", "value": "Διεθνές δέμα" }
+      ]
+    }
+  ]
+}

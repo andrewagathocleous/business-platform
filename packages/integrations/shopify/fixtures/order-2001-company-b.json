@@ -1,0 +1,59 @@
+{
+  "_meta": {
+    "shape": "Shopify Admin GraphQL Order",
+    "apiVersion": "unverified; check in Phase 2"
+  },
+  "id": "gid://shopify/Order/2001",
+  "name": "#2001",
+  "createdAt": "2026-03-05T09:00:00.000Z",
+  "updatedAt": "2026-03-05T09:10:00.000Z",
+  "displayFinancialStatus": "PAID",
+  "displayFulfillmentStatus": "UNFULFILLED",
+  "cancelledAt": null,
+  "email": "olive.order@example.test",
+  "phone": "+35799002001",
+  "note": "Leave with the fictional reception.",
+  "currencyCode": "EUR",
+  "customer": {
+    "id": "gid://shopify/Customer/2001",
+    "displayName": "Olive Demo",
+    "email": "olive.order@example.test",
+    "phone": "+35799002001"
+  },
+  "shippingAddress": {
+    "firstName": "Olive",
+    "lastName": "Demo",
+    "address1": "2 Demo Harbour",
+    "city": "Larnaca",
+    "zip": "6000",
+    "countryCodeV2": "CY",
+    "phone": "+35799002001"
+  },
+  "billingAddress": {
+    "firstName": "Olive",
+    "lastName": "Demo",
+    "address1": "2 Demo Harbour",
+    "city": "Larnaca",
+    "zip": "6000",
+    "countryCodeV2": "CY"
+  },
+  "customAttributes": [{ "key": "Gift Message", "value": "Happy nameday." }],
+  "shippingLine": { "code": "local", "title": "Local courier" },
+  "lineItems": {
+    "nodes": [
+      {
+        "id": "gid://shopify/LineItem/2001-1",
+        "sku": "NUTS",
+        "title": "Mixed nuts",
+        "variantTitle": "500 g",
+        "quantity": 1,
+        "originalUnitPriceSet": { "shopMoney": { "amount": "12.5000", "currencyCode": "EUR" } },
+        "originalTotalSet": { "shopMoney": { "amount": "12.50", "currencyCode": "EUR" } }
+      }
+    ]
+  },
+  "subtotalPriceSet": { "shopMoney": { "amount": "12.50", "currencyCode": "EUR" } },
+  "totalShippingPriceSet": { "shopMoney": { "amount": "5.00", "currencyCode": "EUR" } },
+  "totalTaxSet": { "shopMoney": { "amount": "0.00", "currencyCode": "EUR" } },
+  "totalPriceSet": { "shopMoney": { "amount": "17.50", "currencyCode": "EUR" } }
+}

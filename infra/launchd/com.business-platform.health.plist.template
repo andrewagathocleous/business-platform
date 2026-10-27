@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Health check every 5 minutes while the owner is logged in (R0-D). -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.business-platform.health</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__BP_HOME__/current/infra/health/laptop-health.sh</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>300</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>BP_HOME</key>
+    <string>__BP_HOME__</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/business-platform-health.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/business-platform-health.log</string>
+</dict>
+</plist>

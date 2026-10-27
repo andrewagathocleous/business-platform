@@ -1,0 +1,31 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "workflows/*"
+
+# pnpm 12 does not run dependency build scripts unless they are approved here.
+allowBuilds:
+  "@parcel/watcher": true
+  "@prisma/engines": true
+  "@scarf/scarf": false
+  "@swc/core": true
+  esbuild: true
+  # Optional native accelerators. Pure JS fallbacks are enough, and compiling them is not required.
+  lmdb: false
+  msgpackr-extract: false
+  nx: true
+  prisma: true
+  unrs-resolver: true
+
+# @nx/nest 23.3 peers Nest <12. Nest stays on 12.1.x, and the API is built with tsc.
+# PrimeNG 21 is the last MIT release. It peers Angular 21; the app uses Angular 22.
+peerDependencyRules:
+  allowedVersions:
+    "@nestjs/common": "12"
+    "@nestjs/core": "12"
+    "@angular/core": "22"
+    "@angular/common": "22"
+    "@angular/forms": "22"
+    "@angular/cdk": "22"
+    "@angular/platform-browser": "22"
+    "@angular/router": "22"
