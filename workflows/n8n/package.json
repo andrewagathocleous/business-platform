@@ -1,0 +1,11 @@
+{
+  "name": "@bp/n8n-workflows",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "devDependencies": {
+    "acorn": "8.19.0"
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "_meta": {
+    "shape": "Shopify Admin GraphQL Order",
+    "apiVersion": "unverified; check in Phase 2"
+  },
+  "id": "gid://shopify/Order/1002",
+  "name": "#1002",
+  "createdAt": "2026-03-03T15:00:00.000Z",
+  "updatedAt": "2026-03-03T15:20:00.000Z",
+  "displayFinancialStatus": "PENDING",
+  "displayFulfillmentStatus": "UNFULFILLED",
+  "cancelledAt": null,
+  "email": "alex.international.order@example.test",
+  "phone": "+35799001022",
+  "note": "Do not leave the fictional parcel in the sun.",
+  "currencyCode": "EUR",
+  "customer": {
+    "id": "gid://shopify/Customer/1002",
+    "displayName": "Alex International",
+    "email": "alex.international.order@example.test",
+    "phone": "+35799001022"
+  },
+  "shippingAddress": {
+    "firstName": "Alex",
+    "lastName": "International",
+    "address1": "10 Demo Lane",
+    "city": "Athens",
+    "zip": "10557",
+    "countryCodeV2": "GR",
+    "phone": "+302100000000"
+  },
+  "billingAddress": {
+    "firstName": "Alex",
+    "lastName": "International",
+    "address1": "10 Demo Lane",
+    "city": "Athens",
+    "zip": "10557",
+    "countryCodeV2": "GR"
+  },
+  "customAttributes": [
+    {
+      "key": "Gift Message",
+      "value": "Please leave this fictional international parcel with reception at 1 Demo Street, Nicosia, and keep every word. Please leave this fictional international parcel with reception at 1 Demo Street, Nicosia, and keep every word. Please leave this fictional international parcel with reception at 1 Demo Street, Nicosia, and keep every word. Please leave this fictional international parcel with reception at 1 Demo Street, Nicosia, and keep every word. Please leave this fictional international parcel with reception at 1 Demo Street, Nicosia, and keep every word. Please leave this fictional international parcel with reception at 1 Demo Street, Nicosia, and keep every word. "
+    }
+  ],
+  "shippingLine": {
+    "code": "international",
+    "title": "International post"
+  },
+  "lineItems": {
+    "nodes": [
+      {
+        "id": "gid://shopify/LineItem/1002-1",
+        "sku": "NUTS",
+        "title": "Mixed nuts",
+        "variantTitle": "1 kg",
+        "quantity": 1,
+        "originalUnitPriceSet": {
+          "shopMoney": {
+            "amount": "12.5000",
+            "currencyCode": "EUR"
+          }
+        },
+        "originalTotalSet": {
+          "shopMoney": {
+            "amount": "12.50",
+            "currencyCode": "EUR"
+          }
+        }
+      }
+    ]
+  },
+  "subtotalPriceSet": {
+    "shopMoney": {
+      "amount": "12.50",
+      "currencyCode": "EUR"
+    }
+  },
+  "totalShippingPriceSet": {
+    "shopMoney": {
+      "amount": "15.00",
+      "currencyCode": "EUR"
+    }
+  },
+  "totalTaxSet": {
+    "shopMoney": {
+      "amount": "0.00",
+      "currencyCode": "EUR"
+    }
+  },
+  "totalPriceSet": {
+    "shopMoney": {
+      "amount": "27.50",
+      "currencyCode": "EUR"
+    }
+  }
+}

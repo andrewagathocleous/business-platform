@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Nightly encrypted backup at 03:00 (R0-C). If the laptop sleeps then, launchd runs it on wake. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.business-platform.backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__BP_HOME__/current/infra/backup/laptop-backup.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>BP_HOME</key>
+    <string>__BP_HOME__</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/business-platform-backup.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/business-platform-backup.log</string>
+</dict>
+</plist>

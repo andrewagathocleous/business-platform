@@ -1,0 +1,323 @@
+# Provider-neutral VPS stack. Do not run this file on its own on a machine that
+# already uses the dev project name `business-platform`: the volumes would be the
+# same names. The Mac override is compose.local.yml, project `business-platform-local`.
+#
+# Memory and CPU are ceilings, not reservations. The long-running set plus the
+# one-shot migrate fits under 8 GB.
+#
+# | service     | memory | cpus |
+# | caddy       | 128m   | 0.25 |
+# | api         | 768m   | 1.00 |
+# | worker      | 768m   | 1.00 |
+# | migrate     | 512m   | 0.50 |
+# | postgres    | 1536m  | 1.50 |
+# | n8n         | 1536m  | 1.00 |
+# | n8n-runner  | 384m   | 0.50 |
+# | total       | 5632m  | 5.75 |
+#
+# Secrets come from ${BP_ENV_DIR}/*.env. Set BP_ENV_DIR in the shell.
+# There is no default: the interpolation is ${BP_ENV_DIR:?BP_ENV_DIR is required}.
+# The runbook uses /opt/business-platform/env. Secrets are not interpolated into
+# this file. Images are bp-*:${BP_IMAGE_TAG}.
+#
+# n8n has no public route. The editor is published only on 127.0.0.1:5678 so an
+# SSH tunnel can reach it. The dev stack turns secure cookies off for plain HTTP.
+# This file does not. n8n keeps its secure-cookie default.
+
+name: business-platform
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  caddy:
+    image: bp-web:${BP_IMAGE_TAG:?BP_IMAGE_TAG is required}
+    env_file:
+      - ${BP_ENV_DIR:?BP_ENV_DIR is required}/caddy.env
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - bp_caddy_data:/data
+      - bp_caddy_config:/config
+    networks:
+      - edge
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+    logging: *logging
+    restart: unless-stopped
+
+  api:
+    image: bp-api:${BP_IMAGE_TAG:?BP_IMAGE_TAG is required}
+    env_file:
+      - ${BP_ENV_DIR:?BP_ENV_DIR is required}/api.env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      AUTH_DEV_LOGIN_ENABLED: "false"
+      SESSION_COOKIE_SECURE: "true"
+      # Caddy's reverse_proxy ignores a client-supplied X-Forwarded-For unless
+      # trusted_proxies is set. This file does not set it, so Caddy sends the
+      # real client address and one hop is the proxy itself.
+      TRUST_PROXY_HOPS: "1"
+    volumes:
+      - bp_storage:/var/lib/business-platform/storage
+      - bp_mock_print:/var/lib/business-platform/mock-print
+    networks:
+      - edge
+      - internal
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 768M
+    logging: *logging
+    restart: unless-stopped
+
+  worker:
+    image: bp-api:${BP_IMAGE_TAG:?BP_IMAGE_TAG is required}
+    command: ["node", "dist/main.worker.js"]
+    env_file:
+      - ${BP_ENV_DIR:?BP_ENV_DIR is required}/api.env
+    environment:
+      NODE_ENV: production
+      AUTH_DEV_LOGIN_ENABLED: "false"
+      SESSION_COOKIE_SECURE: "true"
+    volumes:
+      - bp_storage:/var/lib/business-platform/storage
+      - bp_mock_print:/var/lib/business-platform/mock-print
+    networks:
+      - internal
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    # shutdownGraceMs is 25s and stop() adds 10s. 45s leaves a margin before SIGKILL.
+    stop_grace_period: 45s
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const fs=require('node:fs');const s=fs.statSync('/tmp/bp-worker-heartbeat');if(Date.now()-s.mtimeMs>60000)process.exit(1);",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 768M
+    logging: *logging
+    restart: unless-stopped
+
+  migrate:
+    image: bp-migrate:${BP_IMAGE_TAG:?BP_IMAGE_TAG is required}
+    env_file:
+      - ${BP_ENV_DIR:?BP_ENV_DIR is required}/migrate.env
+    networks:
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+    logging: *logging
+    # A successful one-shot must not be started again. unless-stopped would loop.
+    restart: "no"
+
+  # Platform-owner commands (R0-A), run by hand only:
+  #   docker compose --profile ops run --rm owner-cli enrol --email … --name … --origin https://…
+  # It gets the owner database URL from migrate.env. The api and worker never do.
+  owner-cli:
+    image: bp-api:${BP_IMAGE_TAG:?BP_IMAGE_TAG is required}
+    profiles: ["ops"]
+    entrypoint: ["node", "dist/cli/owner.js"]
+    env_file:
+      - ${BP_ENV_DIR:?BP_ENV_DIR is required}/migrate.env
+    environment:
+      NODE_ENV: production
+    networks:
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+    # enrol prints a one-time sign-in link. No log driver, so Docker keeps no copy on disk;
+    # `docker compose run` still shows the output in the terminal.
+    logging:
+      driver: none
+    restart: "no"
+
+  # Backup and restore helpers (R0-C), run only by the backup scripts:
+  #   docker compose --profile ops run --rm -T files -C /var/lib/business-platform/storage -cf - .
+  # Each uses the image and mount path its data lives in, so a fresh volume gets the
+  # right owner (node). No log driver and no network: file contents streamed through
+  # them never reach Docker's logs. Both images provide BusyBox tar.
+  files:
+    image: bp-api:${BP_IMAGE_TAG:?BP_IMAGE_TAG is required}
+    profiles: ["ops"]
+    entrypoint: ["tar"]
+    volumes:
+      - bp_storage:/var/lib/business-platform/storage
+    network_mode: none
+    logging:
+      driver: none
+    restart: "no"
+
+  n8n-files:
+    image: n8nio/n8n:2.43.7
+    profiles: ["ops"]
+    entrypoint: ["tar"]
+    volumes:
+      - bp_n8n:/home/node/.n8n
+    network_mode: none
+    logging:
+      driver: none
+    restart: "no"
+
+  postgres:
+    image: postgres:18.6-alpine
+    env_file:
+      - ${BP_ENV_DIR:?BP_ENV_DIR is required}/postgres.env
+    environment:
+      POSTGRES_DB: postgres
+      BP_OWNER_CREATEDB: "off"
+    volumes:
+      - bp_postgres:/var/lib/postgresql
+      - ../postgres/init/01-roles-and-dbs.sh:/docker-entrypoint-initdb.d/01-roles-and-dbs.sh:ro
+      - ../postgres/roles.sql:/opt/business-platform/roles.sql:ro
+      - ../postgres/set-passwords.sh:/opt/business-platform/set-passwords.sh:ro
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          cpus: "1.50"
+          memory: 1536M
+    logging: *logging
+    restart: unless-stopped
+
+  n8n:
+    image: n8nio/n8n:2.43.7
+    env_file:
+      - ${BP_ENV_DIR:?BP_ENV_DIR is required}/n8n.env
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: "5432"
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n
+      N8N_HOST: 127.0.0.1
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http
+      GENERIC_TIMEZONE: Asia/Nicosia
+      TZ: Asia/Nicosia
+      N8N_RUNNERS_MODE: external
+      N8N_RUNNERS_BROKER_LISTEN_ADDRESS: 0.0.0.0
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"
+      N8N_BLOCK_FILE_ACCESS_TO_N8N_FILES: "true"
+      NODES_EXCLUDE: '["n8n-nodes-base.executeCommand","n8n-nodes-base.localFileTrigger","n8n-nodes-base.readWriteFile","n8n-nodes-base.ssh","n8n-nodes-base.git"]'
+      N8N_COMMUNITY_PACKAGES_ENABLED: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: "168"
+      EXECUTIONS_DATA_SAVE_ON_SUCCESS: none
+    ports:
+      - "127.0.0.1:5678:5678"
+    volumes:
+      - bp_n8n:/home/node/.n8n
+    networks:
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:5678/healthz').then((response)=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1536M
+    logging: *logging
+    restart: unless-stopped
+
+  n8n-runner:
+    image: n8nio/runners:2.43.7
+    # Code nodes run here. Only the auth token. The database password and
+    # N8N_ENCRYPTION_KEY stay with the n8n service, which this service does not load.
+    env_file:
+      - ${BP_ENV_DIR:?BP_ENV_DIR is required}/n8n-runner.env
+    environment:
+      N8N_RUNNERS_TASK_BROKER_URI: http://n8n:5679
+    networks:
+      - internal
+    depends_on:
+      n8n:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 384M
+    logging: *logging
+    restart: unless-stopped
+
+networks:
+  edge:
+  internal:
+
+volumes:
+  bp_postgres:
+  bp_storage:
+  bp_mock_print:
+  bp_n8n:
+  bp_caddy_data:
+  bp_caddy_config:

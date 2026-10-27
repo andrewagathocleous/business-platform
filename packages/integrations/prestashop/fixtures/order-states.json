@@ -1,0 +1,15 @@
+{
+  "order_states": [
+    {
+      "id": 2,
+      "name": [
+        { "id": 1, "value": "Paid demo" },
+        { "id": "2", "value": "Πληρωμένο" }
+      ]
+    },
+    {
+      "id": "10",
+      "name": "Awaiting payment demo"
+    }
+  ]
+}

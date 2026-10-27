@@ -1,0 +1,8 @@
+{
+  "currencies": [
+    {
+      "id": 1,
+      "iso_code": "EUR"
+    }
+  ]
+}

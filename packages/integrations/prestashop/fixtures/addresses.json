@@ -1,0 +1,46 @@
+{
+  "addresses": [
+    {
+      "id": 401,
+      "firstname": "Eleni",
+      "lastname": "Charalambous",
+      "company": "",
+      "address1": "12 Demo Street",
+      "address2": "",
+      "postcode": "9990",
+      "city": "Nicosia",
+      "id_country": 101,
+      "id_state": 0,
+      "phone": "+35799000500",
+      "phone_mobile": "+35799000501"
+    },
+    {
+      "id": "402",
+      "firstname": "Eleni",
+      "lastname": "Charalambous",
+      "company": "Demo Gifts",
+      "address1": "4 Warehouse Lane",
+      "address2": "Unit B",
+      "postcode": "9991",
+      "city": "Nicosia",
+      "id_country": "101",
+      "id_state": "0",
+      "phone": "+35799000502",
+      "phone_mobile": ""
+    },
+    {
+      "id": "403",
+      "firstname": "Jonas",
+      "lastname": "Meier",
+      "company": "",
+      "address1": "8 Example Lane",
+      "address2": "Floor 2",
+      "postcode": "99958",
+      "city": "Athens",
+      "id_country": "102",
+      "id_state": "0",
+      "phone": "+30199000502",
+      "phone_mobile": ""
+    }
+  ]
+}

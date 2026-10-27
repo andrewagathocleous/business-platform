@@ -1,0 +1,41 @@
+# Overlay for the live laptop (R0-E): compose.prod.yml plus this file.
+#
+#   docker compose -f compose.prod.yml -f compose.laptop.yml …
+#   (tools/release/laptop-compose.sh runs exactly that)
+#
+# Project business-platform-live, so its volumes never meet `business-platform`
+# (development) or `business-platform-local` (demo). Images come by tag; nothing is
+# built here. APP_ENV is production and dev login is off, so the API refuses to start
+# with dev login on. Published ports are 127.0.0.1 only: the browser on this laptop is
+# the only client. Caddy serves https://localhost:8443 with its own local CA.
+#
+# Memory ceilings are those of compose.prod.yml (about 5.6 GB). The runbook sizes the
+# Colima VM at 4 CPU, 12 GB and a 60 GB disk, which also leaves room for the restore
+# drill's scratch project.
+
+name: business-platform-live
+
+services:
+  caddy:
+    env_file: !reset []
+    environment:
+      APP_DOMAIN: localhost
+    ports: !override
+      - "127.0.0.1:8443:443"
+    volumes:
+      - bp_caddy_data:/data
+      - bp_caddy_config:/config
+      - ../caddy/Caddyfile.local:/etc/caddy/Caddyfile:ro
+      - ../caddy/app.caddy:/etc/caddy/app.caddy:ro
+
+  api:
+    environment:
+      APP_ENV: production
+
+  worker:
+    environment:
+      APP_ENV: production
+
+  n8n:
+    ports: !override
+      - "127.0.0.1:15678:5678"
