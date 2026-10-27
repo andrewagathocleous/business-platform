@@ -34,7 +34,7 @@ Ask the accountant these before R2-C goes live. The code is built and tested wit
 | A5 | Credit notes: partial credits allowed? Any wording required on them? | R2-D |
 | A6 | Invoice language: Greek, English or both on one document? | R2-C |
 | A7 | Which bank account(s) appear on invoices; default payment terms | R2-B |
-| A8 | How long invoices must be kept, and in what form | R2-A |
+| A8 | How long invoices must be kept (the regulation says 6 years), in what form, and whether the encrypted backups in a cloud folder, possibly on servers outside Cyprus, need prior notification to the Tax Department (regs. 11Γ–11Ε) | R2-A |
 | A9 | Which accounting software the accountant uses, and the export format it can import | R2-G |
 | A10 | Sign-off: the accountant checks the sample documents (R2-I) and the checklist in `docs/finance/invoice-requirements.md` | R2-I |
 
@@ -50,7 +50,7 @@ Ask the accountant these before R2-C goes live. The code is built and tested wit
 
 **MFA.** `invoice.issue`, `invoice.credit`, `invoice.series.manage`, `tax.manage`, `payment.record`, `invoice.export`, `client.import` and `client.export` join `PRIVILEGED_PERMISSIONS` (`apps/api/src/identity/mfa-policy.ts`) in R2-B. A test proves a session without MFA is refused each one.
 
-**One currency.** In R2 a document is issued only in the company currency (422 `currency_not_supported`), checked under the company row lock.
+**EUR only.** Cyprus reg. 12(4) needs the VAT due stated in euro, so in R2 a document is issued only in **EUR**, and only by a company whose currency is EUR (422 `currency_not_supported`). This is checked under the company row lock.
 - Once any document is issued, the company currency cannot change (409 `currency_locked`).
 - The "nothing issued" check runs under the company's `FOR UPDATE`, so it serialises with an issue's `FOR SHARE`.
 - Reports still group by currency.
@@ -78,6 +78,8 @@ Every write is audited, versioned (`expectedVersion`, 409 `version_conflict`) an
   - An edit locks the code `FOR UPDATE` and checks usage under that lock.
   - Saving a draft locks its codes `FOR SHARE`, so the two serialise.
   - A line's rate therefore always equals its code's rate. Issuing still re-checks this, and refuses with 409 `tax_code_changed`.
+  - Each code has a **deadline rule**, `days_30` (the default) or `next_month_15` (Cyprus reg. 11(5) and 11(6)). The accountant sets it.
+- **Clients** get `accepts_e_invoices`, false by default (reg. 11A(1)(γ)). It is versioned and audited like the other client fields.
 - **Series** (`invoice.series.manage`): create, edit and deactivate, one document type each.
   - Every change locks the series row `FOR UPDATE` and re-checks, under that lock, whether anything was issued from it.
   - `prefix` and `padding` are locked once a number is issued.
@@ -110,12 +112,28 @@ Every write is audited, versioned (`expectedVersion`, 409 `version_conflict`) an
    - Store `number` and `number_seq`, then increment `next_number` and `version`.
    - Unique indexes on `(company_id, series_id, number_seq)` and `(company_id, number)`.
    - The number is allocated in the same transaction, so a rollback consumes nothing and leaves no gap.
-6. **Dates.** `issue_date` is today's business date. `due_date` is the issue date plus the client's payment terms, or the company's.
+6. **Dates.**
+   - `issue_date` is today's business date.
+   - `due_date` is the issue date plus the client's payment terms, or the company's.
+   - `supply_date`, the time of supply in Cyprus reg. 12(1)(β), is a new draft field that defaults to the issue date. It may not be after the issue date. The PDF **always** prints it.
+   - The **delivery deadline** is computed from the supply date and the strictest deadline rule among the lines' tax codes. It is stored on the document: 30 days, or the 15th of the following month.
+
+**Delivery.** The deadlines in reg. 11(5) and 11(6) are for delivering the invoice to the customer, so delivery is recorded separately from issuing.
+- `POST …/invoices/:id/deliveries` (`invoice.issue`) records `delivered_on` and a method: `handed_over`, `posted`, `emailed_outside_platform` or `other`. It records it in a new `invoice_delivery` table, because issued rows are immutable. It is audited.
+- If the client does not accept electronic invoices, an electronic method is refused (409 `e_invoice_not_accepted`), and the document is printed for paper delivery.
+- **Paper delivery.** Printing for paper delivery prints two copies, one for the client and one for the company's file (reg. 11Γ(4)). Recording a `handed_over` or `posted` delivery needs `paper_copy_kept = true`.
+- The receivables screen lists issued documents that are not yet delivered, with their deadline, and warns when it is near or past.
+- Issuing a late invoice is warned about, never refused: refusing would make a late invoice impossible instead of merely late.
+- See `docs/finance/invoice-requirements.md` sections 2 and 5.
 7. **Snapshot everything the document shows.** Later edits never change an issued document.
    - New JSONB columns `seller_snapshot`, `buyer_snapshot` and `bank_snapshot`, plus `terms_snapshot`.
    - Per line and per tax-summary row: the tax code, its name, its kind, and the legal note in both languages.
    - `render_version`, the PDF template version.
-8. **Render the PDF inside the issue.** Render it from the snapshot with the current template, write it through the storage adapter under a new, write-once key, and store its SHA-256 in a `stored_file` row. That file is the legal document.
+8. **Render the PDF inside the issue.** The issued template prints:
+   - every particular in `docs/finance/invoice-requirements.md` section 3, including the supply date and total VAT;
+   - on tax-inclusive documents, the derived VAT-exclusive unit price: unit price × 100 / (100 + rate), half-up to 4 decimals. A unit test checks that €11.90 at 19 % prints €10.00.
+
+   Then: Render it from the snapshot with the current template, write it through the storage adapter under a new, write-once key, and store its SHA-256 in a `stored_file` row. That file is the legal document.
    - If the transaction then rolls back, the written object is an orphan. A cleanup job deletes objects with no `stored_file` row after a day.
    - Rendering under the series lock serialises issues for about 100 ms each, which is fine at this scale.
 9. Set `status = issued`, `issued_at`, `issued_by` and `pdf_file_id`. Audit `invoice.issued` with the number and total.
