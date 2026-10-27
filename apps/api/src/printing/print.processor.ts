@@ -12,7 +12,7 @@ import {
   type StorageAdapter,
 } from '@bp/integrations';
 import { AuditService } from '../audit/audit.service';
-import { grantsForMembership } from '../authz/load-grants';
+import { grantsForMembership, platformOwnerGrants } from '../authz/load-grants';
 import {
   LeaseLost,
   type ClaimedJob,
@@ -336,10 +336,11 @@ export class PrintProcessor {
     payload: SubmitPayload,
   ): Promise<SubmitStep> {
     const locked = await tx.$queryRaw<
-      { id: string; status: string; sourceId: string; documentType: string }[]
+      { id: string; status: string; sourceType: string; sourceId: string; documentType: string }[]
     >`
       SELECT id,
              status::text AS status,
+             source_type::text AS "sourceType",
              source_id AS "sourceId",
              document_type AS "documentType"
       FROM print_job
@@ -384,40 +385,15 @@ export class PrintProcessor {
       await finishOrLose(external, tx, 'held', 'printing_disabled');
       return { kind: 'stop' };
     }
-    const order = await tx.salesOrder.findFirst({
-      where: { id: print.sourceId, companyId },
-      select: { id: true, externalNumber: true, storeId: true },
-    });
-    const store = order
-      ? await tx.store.findFirst({
-          where: { id: order.storeId, companyId },
-          select: { locationId: true },
-        })
-      : null;
+    const source = await printSource(tx, companyId, print.sourceType, print.sourceId);
     const permission = payload.isReprint ? 'print.reprint' : 'print.submit';
     const requesterOk =
-      order !== null &&
-      store !== null &&
-      (await stillAuthorised(
-        tx,
-        companyId,
-        payload.requestedById,
-        permission,
-        order.storeId,
-        store.locationId,
-      ));
+      source !== null &&
+      (await stillAuthorised(tx, companyId, payload.requestedById, permission, source));
     const releaserOk =
       payload.releasedById === null ||
-      (order !== null &&
-        store !== null &&
-        (await stillAuthorised(
-          tx,
-          companyId,
-          payload.releasedById,
-          'automation.replay',
-          order.storeId,
-          store.locationId,
-        )));
+      (source !== null &&
+        (await stillAuthorised(tx, companyId, payload.releasedById, 'automation.replay', source)));
     if (!requesterOk || !releaserOk) {
       const failed = await tx.$queryRaw<{ id: string }[]>`
         UPDATE print_job
@@ -440,7 +416,7 @@ export class PrintProcessor {
           outcome: 'failure',
           details: {
             reason: 'requester_no_longer_authorised',
-            check: !order || !store ? 'order' : requesterOk ? 'releaser' : 'requester',
+            check: !source ? print.sourceType : requesterOk ? 'releaser' : 'requester',
           },
         });
       }
@@ -528,7 +504,7 @@ export class PrintProcessor {
         paperSize: row.paperSize,
         idempotencyKey: row.idempotencyKey,
         documentType: row.documentType,
-        title: `${row.documentType} ${order.externalNumber}`,
+        title: `${row.documentType} ${source.label}`,
       },
     };
   }
@@ -868,33 +844,94 @@ async function switchesOn(tx: TenantTransaction, companyId: string): Promise<boo
   return outbound?.enabled === true && printing?.enabled === true;
 }
 
+/**
+ * What a print job prints, checked again when it is claimed. An order is judged at its
+ * store and location. An invoice must still be issued, is judged company-wide, and its
+ * requester must still be able to view invoices.
+ */
+type PrintSource = {
+  label: string;
+  storeId: string | null;
+  locationId: string | null;
+  alsoRequires: readonly string[];
+};
+
+async function printSource(
+  tx: TenantTransaction,
+  companyId: string,
+  sourceType: string,
+  sourceId: string,
+): Promise<PrintSource | null> {
+  if (sourceType === 'order') {
+    const order = await tx.salesOrder.findFirst({
+      where: { id: sourceId, companyId },
+      select: { externalNumber: true, storeId: true },
+    });
+    const store = order
+      ? await tx.store.findFirst({
+          where: { id: order.storeId, companyId },
+          select: { locationId: true },
+        })
+      : null;
+    if (!order || !store) {
+      return null;
+    }
+    return {
+      label: order.externalNumber,
+      storeId: order.storeId,
+      locationId: store.locationId,
+      alsoRequires: [],
+    };
+  }
+  if (sourceType === 'invoice') {
+    const invoice = await tx.invoice.findFirst({
+      where: { id: sourceId, companyId, status: 'issued' },
+      select: { number: true },
+    });
+    if (!invoice?.number) {
+      return null;
+    }
+    return { label: invoice.number, storeId: null, locationId: null, alsoRequires: ['invoice.view'] };
+  }
+  return null;
+}
+
 async function stillAuthorised(
   tx: TenantTransaction,
   companyId: string,
   userId: string,
   permission: string,
-  storeId: string,
-  locationId: string,
+  source: PrintSource,
 ): Promise<boolean> {
   const user = await tx.userAccount.findFirst({
     where: { id: userId },
-    select: { status: true },
+    select: { status: true, isPlatformOwner: true },
   });
   if (!user || user.status !== 'active') {
     return false;
   }
-  const membership = await tx.membership.findFirst({
-    where: { userId, companyId, status: 'active' },
-    select: { id: true },
-  });
-  if (!membership) {
-    return false;
+  // The request was authorised the same way: an active platform owner holds every
+  // company permission without a membership. MFA belonged to that request's session.
+  let grants = user.isPlatformOwner ? platformOwnerGrants() : null;
+  if (!grants) {
+    const membership = await tx.membership.findFirst({
+      where: { userId, companyId, status: 'active' },
+      select: { id: true },
+    });
+    if (!membership) {
+      return false;
+    }
+    grants = await grantsForMembership(tx, membership.id);
   }
-  const grants = await grantsForMembership(tx, membership.id);
   if (permission === 'automation.replay') {
     return can(grants, permission);
   }
-  return can(grants, permission, orderScopes(storeId, locationId));
+  const scopes =
+    source.storeId && source.locationId ? orderScopes(source.storeId, source.locationId) : undefined;
+  return (
+    can(grants, permission, scopes) &&
+    source.alsoRequires.every((required) => can(grants, required))
+  );
 }
 
 async function enqueueRefresh(

@@ -176,6 +176,12 @@ Every write is audited, versioned (`expectedVersion`, 409 `version_conflict`) an
 - The e-invoice consent is the client's current flag, read `FOR SHARE` so it cannot change while the delivery is recorded.
 - The receivables list is `GET …/invoices?delivery=pending`; the screen comes with R2-C3c. Printing is R2-C3b; the orphan cleanup is R2-C3d.
 
+**As built, R2-C3b (2026-10-28).** Printing goes through the existing `POST /print-requests` with `sourceType: 'invoice'`.
+- An invoice belongs to the company, not a store, so printing it needs a company-wide `print.submit` (or `print.reprint` for a reprint) and `invoice.view`. The processor checks both again at claim time.
+- The claim-time check re-reads what can be revoked: the user is active and either still a platform owner (who holds every company permission without a membership, as at request time) or still a member with the grant. This also lets an owner's order print through, which used to fail at claim.
+- The printer is the `invoice` mapping of the one location that has one; with several, the request names `locationId`.
+- Copies default to two when the client has not accepted e-invoices (paper delivery), otherwise to the mapping's copies. `copies` in the request overrides.
+
 **Tests (integration, real Postgres).**
 - 20 concurrent issues in one series give numbers 1 to 20, each exactly once.
 - Two concurrent issues of the same draft: exactly one succeeds.

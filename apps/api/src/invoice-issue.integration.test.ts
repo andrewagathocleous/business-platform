@@ -18,12 +18,15 @@ import {
   assertEnvConnectionsTargetTestDatabase,
   assertTestDatabaseUrls,
 } from '../../../tools/test-db-guard.mjs';
+import type { MockPrintProvider } from '@bp/integrations';
 import { AppModule } from './app.module';
+import { JobRunner } from './automation/jobs/job-runner';
 import { PrismaService } from './database/prisma.service';
 import { configureHttp } from './http/configure-http';
 import { caseSensitiveAdapter } from './http/express-adapter';
 import { InvoiceService } from './invoices/invoice.service';
 import { LOG_STREAM } from './logging/logging.module';
+import { MOCK_PRINT_PROVIDER } from './printing/print.tokens';
 
 const runId = randomUUID().slice(0, 8);
 /** Fictional: all zeros, not a registered number. */
@@ -37,6 +40,7 @@ type Session = { agent: Agent; xsrf: string };
 
 let app: INestApplication | undefined;
 let storageRoot = '';
+let mockRoot = '';
 
 /**
  * Issued documents are never deleted and they lock the company currency, so every run
@@ -45,6 +49,7 @@ let storageRoot = '';
 describe('issuing invoices', () => {
   let company = '';
   let admin: Session;
+  let owner: Session;
   let clientId = '';
   let standardTax = '';
   let seriesId = '';
@@ -59,6 +64,8 @@ describe('issuing invoices', () => {
     seedDatabase();
     storageRoot = mkdtempSync(join(tmpdir(), 'bp-r2c2-store-'));
     process.env.STORAGE_ROOT = storageRoot;
+    mockRoot = mkdtempSync(join(tmpdir(), 'bp-r2c3-print-'));
+    process.env.MOCK_PRINT_ROOT = mockRoot;
     process.env.APP_ENV = 'test';
     process.env.AUTH_DEV_LOGIN_ENABLED = 'true';
     process.env.SESSION_COOKIE_SECURE = 'false';
@@ -72,7 +79,7 @@ describe('issuing invoices', () => {
     `;
     assertDatabaseNameIsTest(databases[0]?.current_database, 'DATABASE_URL');
 
-    const owner = await login(started(), 'owner@example.test');
+    owner = await login(started(), 'owner@example.test');
     const created = await send(owner, 'post', '/api/platform/companies', cid('company'), {
       legalName: `Issue test ${runId} Ltd (fictional)`,
       tradingName: `Issue test ${runId}`,
@@ -83,7 +90,7 @@ describe('issuing invoices', () => {
     // A user of this run only, so the seeded users' company lists stay as other tests expect.
     const issuer = `issuer.${runId}@example.test`;
     await createDevUser(issuer);
-    await grantCompanyAdmin(company, issuer, 'owner@example.test');
+    await grantRole(company, issuer, 'CA', 'owner@example.test');
     admin = await login(started(), issuer);
 
     standardTax = (
@@ -106,11 +113,28 @@ describe('issuing invoices', () => {
   }, 120_000);
 
   afterAll(async () => {
-    await app?.close();
-    if (storageRoot) {
-      rmSync(storageRoot, { recursive: true, force: true });
+    try {
+      // Print status refreshes come due later. Cancel (not delete: print_job points at its
+      // submit job) whatever this run left queued, so the files that follow see nothing due
+      // (orders.integration.test.ts counts the jobs one drain runs; BACKLOG H-02).
+      if (app && company) {
+        await inCompany(company, (tx) =>
+          tx.job.updateMany({
+            where: { companyId: company, status: 'queued' },
+            data: { status: 'cancelled' },
+          }),
+        );
+      }
+    } finally {
+      await app?.close();
+      for (const root of [storageRoot, mockRoot]) {
+        if (root) {
+          rmSync(root, { recursive: true, force: true });
+        }
+      }
+      delete process.env.STORAGE_ROOT;
+      delete process.env.MOCK_PRINT_ROOT;
     }
-    delete process.env.STORAGE_ROOT;
   });
 
   it('issues a draft with a number, dates, a frozen snapshot and a sealed PDF', async () => {
@@ -648,6 +672,224 @@ describe('issuing invoices', () => {
     expect(arrayOf(record(late.body).warnings)).toEqual(['delivered_after_deadline']);
   });
 
+  it('prints an issued invoice from its sealed PDF: two copies for paper, once, then only as a reprint', async () => {
+    await invoicePrinter();
+
+    // A client who has not accepted e-invoices gets paper: two copies by default.
+    const paperClient = await createClient(`Paper client ${runId}`, null, 'CY');
+    const draft = await createDraft({ clientId: paperClient });
+    const unissued = await printInvoice(draft.id, 'print-draft');
+    expect(unissued.status).toBe(409);
+    expect(errorCode(unissued.body)).toBe('not_issued');
+    const issued = await issue(draft.id, draft.version, cid('print-issue'));
+    expect(issued.status, text(issued)).toBe(200);
+    const number = stringField(record(record(issued.body).invoice), 'number');
+    const row = await invoiceRow(draft.id);
+
+    const provider = started().get<MockPrintProvider>(MOCK_PRINT_PROVIDER);
+    const before = provider.submitCount;
+    const queued = await printInvoice(draft.id, 'print-first');
+    expect(queued.status, text(queued)).toBe(200);
+    const job = record(record(queued.body).printJob);
+    expect(job).toMatchObject({
+      documentType: 'invoice',
+      sourceType: 'invoice',
+      sourceId: draft.id,
+      copies: 2,
+      fileId: row.pdfFileId,
+      isReprint: false,
+    });
+    const again = await printInvoice(draft.id, 'print-again');
+    expect(again.status).toBe(409);
+    expect(errorCode(again.body)).toBe('already_printed');
+
+    await started().get(JobRunner).drainOnce();
+    expect(provider.submitCount).toBe(before + 1);
+    const jobId = stringField(job, 'id');
+    const printed = await readFile(join(mockRoot, company.toLowerCase(), `${jobId}.pdf`));
+    const stored = (await fetchPdf(draft.id, cid('print-pdf'))).body as Buffer;
+    expect(printed.equals(stored)).toBe(true);
+    const state = record(
+      JSON.parse(
+        (await readFile(join(mockRoot, company.toLowerCase(), `${jobId}.json`))).toString('utf8'),
+      ),
+    );
+    expect(state).toMatchObject({ copies: 2, title: `invoice ${number}` });
+
+    const reprint = await printInvoice(draft.id, 'print-reprint', {
+      copies: 1,
+      reprint: { ofPrintJobId: jobId, reason: 'Client asked for another copy' },
+    });
+    expect(reprint.status, text(reprint)).toBe(200);
+    expect(record(record(reprint.body).printJob)).toMatchObject({ isReprint: true, copies: 1 });
+  });
+
+  it('refuses to print an invoice for someone who cannot view invoices', async () => {
+    const draft = await createDraft();
+    const issued = await issue(draft.id, draft.version, cid('print-denied-issue'));
+    expect(issued.status, text(issued)).toBe(200);
+    const printer = `printer.${runId}@example.test`;
+    await createDevUser(printer);
+    await inCompany(company, async (tx) => {
+      await tx.role.create({
+        data: {
+          companyId: company,
+          key: `PRINT${runId}`,
+          name: 'Print only (test)',
+          permissions: { create: [{ permission: 'print.submit' }] },
+        },
+      });
+    });
+    await grantRole(company, printer, `PRINT${runId}`, 'owner@example.test');
+    const session = await login(started(), printer);
+    const correlationId = cid('print-denied');
+    const denied = await send(session, 'post', `/api/c/${company}/print-requests`, correlationId, {
+      documentType: 'invoice',
+      sourceType: 'invoice',
+      sourceId: draft.id,
+    });
+    expect(denied.status).toBe(403);
+    const audit = await auditEvents(correlationId);
+    expect(audit.map((event) => [event.action, event.outcome])).toEqual([
+      ['authorization.denied', 'denied'],
+    ]);
+  });
+
+  it('fails a queued invoice print, without sending it, when the requester can no longer view invoices', async () => {
+    await invoicePrinter();
+    // Settle anything earlier tests queued, so only this job is due.
+    await started().get(JobRunner).drainOnce();
+    const draft = await createDraft();
+    const issued = await issue(draft.id, draft.version, cid('recheck-issue'));
+    expect(issued.status, text(issued)).toBe(200);
+    const viewer = `viewer.${runId}@example.test`;
+    await createDevUser(viewer);
+    const roleId = await inCompany(company, async (tx) => {
+      const role = await tx.role.create({
+        data: {
+          companyId: company,
+          key: `VIEWPRINT${runId}`,
+          name: 'View and print (test)',
+          permissions: {
+            create: [{ permission: 'print.submit' }, { permission: 'invoice.view' }],
+          },
+        },
+      });
+      return role.id;
+    });
+    await grantRole(company, viewer, `VIEWPRINT${runId}`, 'owner@example.test');
+    const session = await login(started(), viewer);
+    const queued = await send(session, 'post', `/api/c/${company}/print-requests`, cid('recheck'), {
+      documentType: 'invoice',
+      sourceType: 'invoice',
+      sourceId: draft.id,
+    });
+    expect(queued.status, text(queued)).toBe(200);
+    const jobId = stringField(record(record(queued.body).printJob), 'id');
+    await inCompany(company, (tx) =>
+      tx.rolePermission.delete({
+        where: { roleId_permission: { roleId, permission: 'invoice.view' } },
+      }),
+    );
+    const provider = started().get<MockPrintProvider>(MOCK_PRINT_PROVIDER);
+    const before = provider.submitCount;
+    await started().get(JobRunner).drainOnce();
+    expect(provider.submittedIds).not.toContain(jobId);
+    expect(provider.submitCount).toBe(before);
+    const job = await send(
+      admin,
+      'get',
+      `/api/c/${company}/print-jobs/${jobId}`,
+      cid('recheck-get'),
+    );
+    expect(record(record(job.body).printJob)).toMatchObject({
+      status: 'failed',
+      lastError: 'requester_no_longer_authorised',
+    });
+  });
+
+  it('prints an invoice the platform owner queued, without a membership', async () => {
+    await invoicePrinter();
+    await started().get(JobRunner).drainOnce();
+    const draft = await createDraft();
+    const issued = await issue(draft.id, draft.version, cid('owner-print-issue'));
+    expect(issued.status, text(issued)).toBe(200);
+    const queued = await send(
+      owner,
+      'post',
+      `/api/c/${company}/print-requests`,
+      cid('owner-print'),
+      {
+        documentType: 'invoice',
+        sourceType: 'invoice',
+        sourceId: draft.id,
+      },
+    );
+    expect(queued.status, text(queued)).toBe(200);
+    const jobId = stringField(record(record(queued.body).printJob), 'id');
+    const provider = started().get<MockPrintProvider>(MOCK_PRINT_PROVIDER);
+    await started().get(JobRunner).drainOnce();
+    expect(provider.submittedIds).toContain(jobId);
+    const job = await send(
+      admin,
+      'get',
+      `/api/c/${company}/print-jobs/${jobId}`,
+      cid('owner-print-get'),
+    );
+    expect(record(record(job.body).printJob).lastError).toBeNull();
+  });
+
+  let printerReady: Promise<void> | undefined;
+
+  /** A mock printer mapped for invoices at one location of this company, with printing on. Once. */
+  function invoicePrinter(): Promise<void> {
+    printerReady ??= (async () => {
+      await inCompany(company, async (tx) => {
+        const location = await tx.location.create({
+          data: { companyId: company, name: `Issue test office ${runId}`, address: {} },
+        });
+        const printer = await tx.printer.create({
+          data: {
+            companyId: company,
+            locationId: location.id,
+            provider: 'mock',
+            externalPrinterId: 'mock-laserjet-online',
+            name: 'Mock LaserJet (simulated)',
+            paperSizes: ['A4'],
+            status: 'online',
+          },
+        });
+        await tx.printerMapping.create({
+          data: {
+            companyId: company,
+            locationId: location.id,
+            documentType: 'invoice',
+            printerId: printer.id,
+            paperSize: 'A4',
+            // Paper delivery still defaults to exactly two copies.
+            copies: 3,
+          },
+        });
+      });
+      const printing = await admin.agent
+        .put(`/api/c/${company}/automation/switches/printing`)
+        .set('X-XSRF-TOKEN', admin.xsrf)
+        .set('X-Correlation-Id', cid('switch-printing'))
+        .send({ enabled: true, reason: 'issue test printing' });
+      expect(printing.status, text(printing)).toBe(200);
+    })();
+    return printerReady;
+  }
+
+  function printInvoice(id: string, name: string, extra: Record<string, unknown> = {}) {
+    return send(admin, 'post', `/api/c/${company}/print-requests`, cid(name), {
+      documentType: 'invoice',
+      sourceType: 'invoice',
+      sourceId: id,
+      ...extra,
+    });
+  }
+
   async function pendingIds(): Promise<string[]> {
     const response = await send(
       admin,
@@ -666,11 +908,12 @@ describe('issuing invoices', () => {
       supplyDate?: string;
       taxCodeId?: string;
       description?: string;
+      clientId?: string;
       documentType?: 'quote';
     } = {},
   ): Promise<{ id: string; version: number }> {
     const response = await send(admin, 'post', `/api/c/${company}/invoices`, cid('draft'), {
-      clientId,
+      clientId: options.clientId ?? clientId,
       pricesIncludeTax: options.pricesIncludeTax ?? false,
       ...(options.documentType ? { documentType: options.documentType } : {}),
       ...(options.supplyDate ? { supplyDate: options.supplyDate } : {}),
@@ -820,17 +1063,18 @@ async function createDevUser(email: string): Promise<void> {
     });
 }
 
-/** Makes the user an active company admin (CA) of a company created in this run. */
-async function grantCompanyAdmin(
+/** Gives the user an active membership with this role, company-wide, in a company of this run. */
+async function grantRole(
   companyId: string,
   email: string,
+  roleKey: string,
   grantedBy: string,
 ): Promise<void> {
   const prisma = started().get(PrismaService);
   const user = await prisma.client.userAccount.findFirstOrThrow({ where: { email } });
   const granter = await prisma.client.userAccount.findFirstOrThrow({ where: { email: grantedBy } });
   await inCompany(companyId, async (tx) => {
-    const role = await tx.role.findFirstOrThrow({ where: { companyId, key: 'CA' } });
+    const role = await tx.role.findFirstOrThrow({ where: { companyId, key: roleKey } });
     const membership = await tx.membership.create({
       data: { userId: user.id, companyId, status: 'active' },
     });
