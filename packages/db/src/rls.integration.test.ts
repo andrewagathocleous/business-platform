@@ -15,6 +15,7 @@ if (testDatabaseRefusal) {
 }
 
 const RLS_TABLES = [
+  'allocation',
   'audit_event',
   'brand',
   'client',
@@ -24,6 +25,7 @@ const RLS_TABLES = [
   'gift_message_template',
   'integration_credential',
   'integration_inbox',
+  'idempotency_record',
   'invoice',
   'invoice_delivery',
   'invoice_line',
@@ -31,10 +33,12 @@ const RLS_TABLES = [
   'invoice_tax_summary',
   'location',
   'order_note',
+  'payment',
   'print_job',
   'printer',
   'printer_mapping',
   'product',
+  'refund',
   'sales_order',
   'sales_order_line',
   'store',
@@ -109,6 +113,45 @@ describe('row level security', () => {
       },
     });
     return draft;
+  }
+
+  async function creditOf(tx: TenantTransaction, originalId: string) {
+    const original = await tx.invoice.findUniqueOrThrow({ where: { id: originalId } });
+    const line = await tx.invoiceLine.findFirstOrThrow({ where: { invoiceId: originalId } });
+    const summary = await tx.invoiceTaxSummary.findFirstOrThrow({
+      where: { invoiceId: originalId },
+    });
+    const credit = await tx.invoice.create({
+      data: {
+        companyId: companyA,
+        documentType: 'credit_note',
+        clientId: original.clientId,
+        currency: original.currency,
+        language: original.language,
+        pricesIncludeTax: original.pricesIncludeTax,
+        subtotal: original.subtotal,
+        discountTotal: original.discountTotal,
+        netTotal: original.netTotal,
+        taxTotal: original.taxTotal,
+        total: original.total,
+        createdById: userId,
+        creditedInvoiceId: original.id,
+        creditReason: 'Return (fictional)',
+      },
+    });
+    await tx.invoiceLine.create({
+      data: {
+        ...line,
+        id: randomUUID(),
+        invoiceId: credit.id,
+        creditedLineId: line.id,
+        taxSnapshot: undefined,
+      },
+    });
+    await tx.invoiceTaxSummary.create({
+      data: { ...summary, id: randomUUID(), invoiceId: credit.id, taxSnapshot: undefined },
+    });
+    return credit;
   }
 
   let graphB: Graph;
@@ -1044,6 +1087,542 @@ describe('row level security', () => {
     );
   });
 
+  it('guards payments, allocations, refunds and retry records for bp_app and the owner', async () => {
+    const ctx = { companyId: companyA, actor: userId, correlationId: randomUUID() };
+    const on = new Date('2026-10-28');
+    const later = new Date('2026-10-29');
+    const pay = (
+      tx: TenantTransaction,
+      amount = '100.00',
+      fields: {
+        currency?: string;
+        clientId?: string;
+        receivedOn?: Date;
+        voidedOn?: Date;
+        voidReason?: string;
+        voidedById?: string;
+      } = {},
+    ) =>
+      tx.payment.create({
+        data: {
+          companyId: companyA,
+          clientId: graphA.client,
+          receivedOn: on,
+          amount,
+          currency: 'EUR',
+          method: 'bank_transfer',
+          createdById: userId,
+          ...fields,
+        },
+      });
+    const allocate = (
+      tx: TenantTransaction,
+      paymentId: string | null,
+      invoiceId: string,
+      amount = '1.00',
+      fields: { creditNoteId?: string | null; effectiveOn?: Date; reversedById?: string } = {},
+    ) =>
+      tx.allocation.create({
+        data: {
+          companyId: companyA,
+          paymentId,
+          invoiceId,
+          amount,
+          effectiveOn: on,
+          createdById: userId,
+          ...fields,
+        },
+      });
+    const refundOf = (
+      tx: TenantTransaction,
+      paymentId: string | null,
+      amount = '1.00',
+      fields: {
+        creditNoteId?: string | null;
+        refundedOn?: Date;
+        voidedOn?: Date;
+        voidReason?: string;
+        voidedById?: string;
+      } = {},
+    ) =>
+      tx.refund.create({
+        data: {
+          companyId: companyA,
+          paymentId,
+          amount,
+          refundedOn: on,
+          method: 'cash',
+          createdById: userId,
+          ...fields,
+        },
+      });
+    const voidPayment = (tx: TenantTransaction, id: string) =>
+      tx.payment.update({
+        where: { id },
+        data: {
+          status: 'voided',
+          voidedOn: later,
+          voidReason: 'Correction (fictional)',
+          voidedById: userId,
+          version: { increment: 1 },
+        },
+      });
+    const issuedOf = async (tx: TenantTransaction, fields: { clientId?: string } = {}) => {
+      const draft = await draftOf(tx);
+      if (fields.clientId) await tx.invoice.update({ where: { id: draft.id }, data: fields });
+      await markIssued(tx, companyA, draft.id, userId);
+      return draft.id;
+    };
+
+    // Existing document guards allow a NaN header total on a draft to survive issuance.
+    // Keep those guards enabled: settlement must refuse such documents independently.
+    const nanDocuments = await ownerTenant.run(ctx, async (tx) => {
+      const target = await draftOf(tx);
+      await tx.$executeRaw`UPDATE invoice SET total = 'NaN' WHERE id = ${target.id}::uuid`;
+      await markIssued(tx, companyA, target.id, userId);
+      const original = await issuedOf(tx);
+      const credit = await creditOf(tx, original);
+      await tx.$executeRaw`UPDATE invoice SET total = 'NaN' WHERE id = ${credit.id}::uuid`;
+      await markIssued(tx, companyA, credit.id, userId);
+      return { target: target.id, credit: credit.id };
+    });
+
+    for (const tenant of [appTenant, ownerTenant]) {
+      const run = <T>(work: (tx: TenantTransaction) => Promise<T>) => tenant.run(ctx, work);
+      const refuses = async (
+        work: (tx: TenantTransaction) => Promise<unknown>,
+        message: RegExp,
+      ) => {
+        await expect(run(work)).rejects.toThrow(message);
+      };
+      const fixtures = await run(async (tx) => {
+        const target = await issuedOf(tx);
+        const secondTarget = await issuedOf(tx);
+        const draft = await draftOf(tx);
+        const quote = await draftOf(tx, 'quote');
+        const otherClient = await tx.client.create({
+          data: {
+            companyId: companyA,
+            kind: 'individual',
+            displayName: 'Other client (fictional)',
+            email: `settlement-${randomUUID()}@example.test`,
+            createdById: userId,
+          },
+        });
+        const otherTarget = await issuedOf(tx, { clientId: otherClient.id });
+        const credit = await creditOf(tx, target);
+        const draftCredit = await creditOf(tx, secondTarget);
+        await markIssued(tx, companyA, credit.id, userId);
+        const payment = await pay(tx);
+        const voided = await pay(tx);
+        await voidPayment(tx, voided.id);
+        return {
+          target,
+          secondTarget,
+          draft: draft.id,
+          quote: quote.id,
+          otherTarget,
+          credit: credit.id,
+          draftCredit: draftCredit.id,
+          payment: payment.id,
+          voided: voided.id,
+        };
+      });
+      const { target, secondTarget, payment, credit } = fixtures;
+
+      // All three amount CHECKs run after their insert guards, for either role.
+      for (const amount of ['0.00', '-100.00']) {
+        await refuses((tx) => pay(tx, amount), /payment_amount_check/);
+        await refuses((tx) => allocate(tx, payment, target, amount), /allocation_amount_check/);
+        await refuses((tx) => refundOf(tx, payment, amount), /refund_amount_check/);
+      }
+      // Active allocations have null reversal dates/reasons and cannot carry a reversal actor.
+      await refuses(
+        (tx) => allocate(tx, payment, target, '1.00', { reversedById: userId }),
+        /allocation_reversal_check/,
+      );
+      // Raw SQL reaches Postgres with literal NaN, independently of Prisma decimal parsing.
+      await refuses(
+        (tx) => tx.$executeRaw`
+          INSERT INTO payment
+            (id, company_id, client_id, received_on, amount, currency, method, created_by, updated_at)
+          VALUES (${randomUUID()}::uuid, ${companyA}::uuid, ${graphA.client}::uuid,
+                  ${on}::date, 'NaN', 'EUR', 'cash', ${userId}::uuid, now())
+        `,
+        /payment_amount_check/,
+      );
+      await refuses(
+        (tx) => tx.$executeRaw`
+          INSERT INTO allocation
+            (id, company_id, payment_id, invoice_id, amount, effective_on, created_by)
+          VALUES (${randomUUID()}::uuid, ${companyA}::uuid, ${payment}::uuid, ${target}::uuid,
+                  'NaN', ${on}::date, ${userId}::uuid)
+        `,
+        /exceed the source amount/,
+      );
+      await refuses(
+        (tx) => tx.$executeRaw`
+          INSERT INTO refund (id, company_id, payment_id, amount, refunded_on, method, created_by)
+          VALUES (${randomUUID()}::uuid, ${companyA}::uuid, ${payment}::uuid,
+                  'NaN', ${on}::date, 'cash', ${userId}::uuid)
+        `,
+        /exceed the source amount/,
+      );
+      await refuses(
+        (tx) => allocate(tx, payment, nanDocuments.target),
+        /source amount and target total must not be NaN/,
+      );
+      await refuses(
+        (tx) => allocate(tx, null, target, '1.00', { creditNoteId: nanDocuments.credit }),
+        /source amount and target total must not be NaN/,
+      );
+      await refuses(
+        (tx) => refundOf(tx, null, '1.00', { creditNoteId: nanDocuments.credit }),
+        /source amount must not be NaN/,
+      );
+      await refuses((tx) => pay(tx, '1.00', { currency: 'eur' }), /payment_currency_check/);
+      await refuses((tx) => pay(tx, '1.00', { clientId: graphB.client }), /foreign key/i);
+      await refuses(
+        (tx) => allocate(tx, payment, target, '0.01', { creditNoteId: credit }),
+        /allocation_source_check/,
+      );
+      await refuses((tx) => allocate(tx, null, target), /source must be an issued credit note/);
+      await refuses(
+        (tx) => refundOf(tx, payment, '0.01', { creditNoteId: credit }),
+        /refund_source_check/,
+      );
+      await refuses((tx) => refundOf(tx, null), /source must be an issued credit note/);
+      for (const invalidTarget of [fixtures.draft, fixtures.quote, credit, graphB.invoice]) {
+        await refuses(
+          (tx) => allocate(tx, payment, invalidTarget),
+          /target must be an issued invoice/,
+        );
+      }
+      await refuses((tx) => allocate(tx, payment, fixtures.otherTarget), /same client/);
+      const usd = await run((tx) => pay(tx, '100.00', { currency: 'USD' }));
+      await refuses((tx) => allocate(tx, usd.id, target), /same currency/);
+      await refuses(
+        (tx) => allocate(tx, fixtures.voided, target),
+        /source must be a recorded payment/,
+      );
+      await refuses((tx) => refundOf(tx, fixtures.voided), /source must be a recorded payment/);
+      for (const invalidSource of [target, fixtures.quote, fixtures.draftCredit, graphB.invoice]) {
+        await refuses(
+          (tx) => allocate(tx, null, secondTarget, '0.01', { creditNoteId: invalidSource }),
+          /source must be an issued credit note/,
+        );
+        await refuses(
+          (tx) => refundOf(tx, null, '0.01', { creditNoteId: invalidSource }),
+          /source must be an issued credit note/,
+        );
+      }
+      const latePayment = await run((tx) => pay(tx, '100.00', { receivedOn: later }));
+      await refuses((tx) => allocate(tx, latePayment.id, target), /effective date cannot precede/);
+      await refuses(
+        (tx) => allocate(tx, payment, target, '1.00', { effectiveOn: new Date('2026-10-27') }),
+        /effective date cannot precede/,
+      );
+      await refuses((tx) => refundOf(tx, latePayment.id), /refund date cannot precede/);
+      await refuses(
+        (tx) =>
+          refundOf(tx, null, '0.01', { creditNoteId: credit, refundedOn: new Date('2026-10-27') }),
+        /refund date cannot precede/,
+      );
+
+      // Source limit and invoice limit are independent; exact equality is accepted.
+      const small = await run((tx) => pay(tx, '1.00'));
+      await refuses((tx) => allocate(tx, small.id, target, '1.01'), /exceed the source amount/);
+      const allocation = await run((tx) => allocate(tx, small.id, target, '1.00'));
+      await refuses(
+        (tx) => allocate(tx, small.id, secondTarget, '0.01'),
+        /exceed the source amount/,
+      );
+      await refuses((tx) => refundOf(tx, small.id, '0.01'), /exceed the source amount/);
+      await run((tx) => allocate(tx, payment, target, '0.19'));
+      await refuses((tx) => allocate(tx, payment, target, '0.01'), /exceed the invoice total/);
+      const refunded = await run((tx) => pay(tx, '1.00'));
+      const refund = await run((tx) => refundOf(tx, refunded.id, '1.00'));
+      await refuses((tx) => refundOf(tx, refunded.id, '0.01'), /exceed the source amount/);
+      await refuses(
+        (tx) => allocate(tx, refunded.id, secondTarget, '0.01'),
+        /exceed the source amount/,
+      );
+      const creditAllocation = await run((tx) =>
+        allocate(tx, null, secondTarget, '0.19', { creditNoteId: credit }),
+      );
+      const creditRefund = await run((tx) => refundOf(tx, null, '1.00', { creditNoteId: credit }));
+      await refuses(
+        (tx) => refundOf(tx, null, '0.01', { creditNoteId: credit }),
+        /exceed the source amount/,
+      );
+      await refuses(
+        (tx) => allocate(tx, null, secondTarget, '0.01', { creditNoteId: credit }),
+        /exceed the source amount/,
+      );
+
+      // Particulars stay immutable, including for the owner, and reversals happen once.
+      await refuses(
+        (tx) => tx.payment.update({ where: { id: payment }, data: { amount: '99.00' } }),
+        /keeps its financial particulars/,
+      );
+      await refuses(
+        (tx) =>
+          tx.payment.update({
+            where: { id: fixtures.voided },
+            data: { status: 'recorded', voidedOn: null },
+          }),
+        /never recorded again/,
+      );
+      for (const data of [
+        { voidedOn: new Date('2026-10-30') },
+        { voidedOn: null },
+        { voidReason: 'Changed correction (fictional)' },
+        { voidReason: null },
+        { voidedById: null },
+      ])
+        await refuses(
+          (tx) => tx.payment.update({ where: { id: fixtures.voided }, data }),
+          /keeps its void date, reason and actor/,
+        );
+      await refuses(
+        (tx) => tx.allocation.update({ where: { id: allocation.id }, data: { amount: '0.99' } }),
+        /immutable except for its reversal/,
+      );
+      await refuses(
+        (tx) =>
+          tx.allocation.update({ where: { id: allocation.id }, data: { invoiceId: secondTarget } }),
+        /immutable except for its reversal/,
+      );
+      await refuses(
+        (tx) =>
+          tx.allocation.update({
+            where: { id: allocation.id },
+            data: { reversalReason: 'Missing date' },
+          }),
+        /reversed only once/,
+      );
+      for (const data of [
+        { reversedOn: new Date('2026-10-27'), reversalReason: 'Too early' },
+        { reversedOn: later, reversalReason: ' \t\n' },
+        { reversedOn: later },
+      ])
+        await refuses(
+          (tx) => tx.allocation.update({ where: { id: allocation.id }, data }),
+          /allocation_reversal_check/,
+        );
+      await refuses(
+        (tx) => tx.refund.update({ where: { id: refund.id }, data: { amount: '0.99' } }),
+        /immutable except for its void/,
+      );
+      await refuses(
+        (tx) => tx.refund.update({ where: { id: refund.id }, data: { reference: 'Edited' } }),
+        /immutable except for its void/,
+      );
+      for (const data of [
+        { status: 'voided' as const, voidedOn: new Date('2026-10-27'), voidReason: 'Too early' },
+        { status: 'voided' as const, voidedOn: later, voidReason: '\t\n' },
+        { status: 'voided' as const, voidedOn: later },
+      ]) {
+        await refuses(
+          (tx) => tx.payment.update({ where: { id: refunded.id }, data }),
+          /active refund/,
+        );
+        await refuses(
+          (tx) => tx.refund.update({ where: { id: refund.id }, data }),
+          /refund_void_check/,
+        );
+      }
+      const unused = await run((tx) => pay(tx));
+      for (const fields of [
+        { voidedOn: later },
+        { voidReason: 'Premature correction (fictional)' },
+        { voidedById: userId },
+      ]) {
+        await refuses((tx) => pay(tx, '1.00', fields), /payment_void_check/);
+        await refuses((tx) => refundOf(tx, unused.id, '1.00', fields), /refund_void_check/);
+        await refuses(
+          (tx) => tx.payment.update({ where: { id: unused.id }, data: fields }),
+          /payment_void_check/,
+        );
+      }
+      for (const data of [
+        { status: 'voided' as const, voidedOn: new Date('2026-10-27'), voidReason: 'Too early' },
+        { status: 'voided' as const, voidedOn: later, voidReason: '\t\n' },
+        { status: 'voided' as const, voidedOn: later },
+        { voidedOn: later },
+      ])
+        await refuses(
+          (tx) => tx.payment.update({ where: { id: unused.id }, data }),
+          /payment_void_check/,
+        );
+
+      // Voiding fails with either active kind of usage, then succeeds in the same transaction
+      // that reverses its allocation and voids its refund.
+      const used = await run(async (tx) => {
+        const p = await pay(tx, '1.00');
+        const a = await allocate(tx, p.id, secondTarget, '0.40');
+        const r = await refundOf(tx, p.id, '0.60');
+        return { p, a, r };
+      });
+      await refuses((tx) => voidPayment(tx, used.p.id), /active allocation/);
+      await refuses((tx) => voidPayment(tx, refunded.id), /active refund/);
+      await run(async (tx) => {
+        await tx.allocation.update({
+          where: { id: used.a.id },
+          data: {
+            reversedOn: later,
+            reversalReason: 'Correction (fictional)',
+            reversedById: userId,
+          },
+        });
+        await tx.refund.update({
+          where: { id: used.r.id },
+          data: {
+            status: 'voided',
+            voidedOn: later,
+            voidReason: 'Correction (fictional)',
+            voidedById: userId,
+            version: { increment: 1 },
+          },
+        });
+        expect((await voidPayment(tx, used.p.id)).status).toBe('voided');
+      });
+      await refuses(
+        (tx) =>
+          tx.allocation.update({
+            where: { id: used.a.id },
+            data: {
+              reversedOn: null,
+              reversalReason: null,
+              reversedById: null,
+            },
+          }),
+        /never un-reversed/,
+      );
+      await refuses(
+        (tx) =>
+          tx.allocation.update({
+            where: { id: used.a.id },
+            data: {
+              reversedOn: new Date('2026-10-30'),
+              reversalReason: 'Again',
+            },
+          }),
+        /reversed only once/,
+      );
+      await refuses(
+        (tx) =>
+          tx.refund.update({
+            where: { id: used.r.id },
+            data: {
+              status: 'recorded',
+              voidedOn: null,
+              voidReason: null,
+            },
+          }),
+        /never recorded again/,
+      );
+      await refuses(
+        (tx) =>
+          tx.refund.update({
+            where: { id: used.r.id },
+            data: {
+              status: 'voided',
+              voidedOn: new Date('2026-10-30'),
+              voidReason: 'Again',
+            },
+          }),
+        /only voided once/,
+      );
+      // A complete reversal may omit its actor.
+      await run((tx) =>
+        tx.allocation.update({
+          where: { id: allocation.id },
+          data: {
+            reversedOn: later,
+            reversalReason: 'Correction (fictional)',
+            reversedById: null,
+          },
+        }),
+      );
+      expect((await run((tx) => voidPayment(tx, small.id))).status).toBe('voided');
+
+      for (const [table, id] of [
+        ['payment', payment],
+        ['allocation', creditAllocation.id],
+        ['refund', creditRefund.id],
+      ] as const) {
+        await refuses(
+          (tx) => tx.$executeRawUnsafe(`DELETE FROM ${table} WHERE id = $1::uuid`, id),
+          tenant === appTenant ? /permission denied/ : /never deleted/,
+        );
+        await refuses(
+          (tx) => tx.$executeRawUnsafe(`TRUNCATE TABLE ${table} CASCADE`),
+          /permission denied|is never truncated/,
+        );
+      }
+
+      // Real concurrent transactions must serialize their usage checks after the row lock.
+      const race = await run(async (tx) => ({
+        payment: (await pay(tx, '1.00')).id,
+        targetA: await issuedOf(tx),
+        targetB: await issuedOf(tx),
+      }));
+      const allocations = await Promise.allSettled([
+        run((tx) => allocate(tx, race.payment, race.targetA, '0.80')),
+        run((tx) => allocate(tx, race.payment, race.targetB, '0.80')),
+      ]);
+      expect(allocations.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      expect(allocations.filter((result) => result.status === 'rejected')).toHaveLength(1);
+      const raceRefund = await run((tx) => pay(tx, '1.00'));
+      const refunds = await Promise.allSettled([
+        run((tx) => refundOf(tx, raceRefund.id, '0.80')),
+        run((tx) => refundOf(tx, raceRefund.id, '0.80')),
+      ]);
+      expect(refunds.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      expect(refunds.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    }
+
+    // bp_app cannot overwrite a recorded retry result, nor reuse its operation/key.
+    const retry = {
+      companyId: companyA,
+      operation: 'payment.record',
+      key: randomUUID(),
+      requestHash: 'fictional-hash',
+      statusCode: 201,
+      response: {},
+      createdById: userId,
+    };
+    const record = await appTenant.run(ctx, (tx) => tx.idempotencyRecord.create({ data: retry }));
+    await expect(
+      appTenant.run(ctx, (tx) => tx.idempotencyRecord.create({ data: retry })),
+    ).rejects.toThrow(/unique constraint/i);
+    for (const fields of [{ key: '' }, { key: 'x'.repeat(201) }, { operation: '\t\n' }]) {
+      await expect(
+        appTenant.run(ctx, (tx) =>
+          tx.idempotencyRecord.create({
+            data: { ...retry, key: randomUUID(), ...fields },
+          }),
+        ),
+      ).rejects.toThrow(/idempotency_record_(key|operation)_check/);
+    }
+    await expect(
+      appTenant.run(ctx, (tx) =>
+        tx.idempotencyRecord.update({
+          where: { id: record.id },
+          data: { statusCode: 200 },
+        }),
+      ),
+    ).rejects.toThrow(/permission denied/);
+    await expect(
+      appTenant.run(ctx, (tx) =>
+        tx.idempotencyRecord.delete({
+          where: { id: record.id },
+        }),
+      ),
+    ).rejects.toThrow(/permission denied/);
+  });
+
   it('keeps company-scoped parent references inside the same company', async () => {
     const rows = await app.$queryRaw<{ table_name: string; definition: string }[]>`
       SELECT conrelid::regclass::text AS table_name,
@@ -1292,6 +1871,7 @@ const COMPANY_SCOPED_PARENTS = [
   'invoice_series',
   'job',
   'location',
+  'payment',
   'printer',
   'print_job',
   'product',
@@ -1303,6 +1883,12 @@ const COMPANY_SCOPED_PARENTS = [
 ] as const;
 
 const COMPOSITE_FOREIGN_KEYS: ReadonlyArray<readonly [string, string]> = [
+  ['payment', 'FOREIGN KEY (company_id, client_id) REFERENCES client(company_id, id)'],
+  ['allocation', 'FOREIGN KEY (company_id, payment_id) REFERENCES payment(company_id, id)'],
+  ['allocation', 'FOREIGN KEY (company_id, credit_note_id) REFERENCES invoice(company_id, id)'],
+  ['allocation', 'FOREIGN KEY (company_id, invoice_id) REFERENCES invoice(company_id, id)'],
+  ['refund', 'FOREIGN KEY (company_id, payment_id) REFERENCES payment(company_id, id)'],
+  ['refund', 'FOREIGN KEY (company_id, credit_note_id) REFERENCES invoice(company_id, id)'],
   ['client_contact', 'FOREIGN KEY (company_id, client_id) REFERENCES client(company_id, id)'],
   ['client_address', 'FOREIGN KEY (company_id, client_id) REFERENCES client(company_id, id)'],
   ['invoice', 'FOREIGN KEY (company_id, client_id) REFERENCES client(company_id, id)'],
@@ -1529,6 +2115,72 @@ async function insertGraph(
       gross: '1.19',
     },
   });
+  // A separate issued target leaves the graph's invoice as a draft for the mutation tests.
+  const settlementInvoice = await tx.invoice.create({
+    data: {
+      companyId,
+      clientId: client.id,
+      documentType: 'invoice',
+      currency: 'EUR',
+      language: 'en',
+      pricesIncludeTax: false,
+      subtotal: '1.00',
+      discountTotal: '0.00',
+      netTotal: '1.00',
+      taxTotal: '0.19',
+      total: '1.19',
+      createdById: userId,
+    },
+  });
+  await tx.invoiceLine.create({
+    data: { ...line, id: randomUUID(), invoiceId: settlementInvoice.id, taxSnapshot: undefined },
+  });
+  await tx.invoiceTaxSummary.create({
+    data: { ...summary, id: randomUUID(), invoiceId: settlementInvoice.id, taxSnapshot: undefined },
+  });
+  await markIssued(tx, companyId, settlementInvoice.id, userId);
+  const payment = await tx.payment.create({
+    data: {
+      companyId,
+      clientId: client.id,
+      receivedOn: new Date('2026-10-28'),
+      amount: '2.00',
+      currency: 'EUR',
+      method: 'bank_transfer',
+      createdById: userId,
+    },
+  });
+  const allocation = await tx.allocation.create({
+    data: {
+      companyId,
+      paymentId: payment.id,
+      invoiceId: settlementInvoice.id,
+      amount: '0.50',
+      effectiveOn: new Date('2026-10-28'),
+      createdById: userId,
+    },
+  });
+  const refund = await tx.refund.create({
+    data: {
+      companyId,
+      paymentId: payment.id,
+      amount: '0.20',
+      refundedOn: new Date('2026-10-28'),
+      method: 'bank_transfer',
+      createdById: userId,
+    },
+  });
+  const idempotency = await tx.idempotencyRecord.create({
+    data: {
+      companyId,
+      operation: 'payment.record',
+      key: randomUUID(),
+      requestHash: 'fictional-hash',
+      statusCode: 201,
+      response: { id: payment.id },
+      createdById: userId,
+    },
+  });
   const order = await tx.salesOrder.create({
     data: {
       companyId,
@@ -1647,6 +2299,10 @@ async function insertGraph(
   });
 
   return {
+    allocation: allocation.id,
+    payment: payment.id,
+    refund: refund.id,
+    idempotency_record: idempotency.id,
     audit_event: audit.id,
     brand: brand.id,
     client: client.id,

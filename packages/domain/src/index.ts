@@ -95,3 +95,22 @@ export { normalizeForDuplicateCheck } from './text/normalize';
 export { addDaysToBusinessDate, businessDateInZone } from './time/business-date';
 export { isIanaTimeZone } from './time/iana-zone';
 export { instantToWallTimeInZone, wallTimeInZoneToInstant } from './time/wall-time';
+
+export {
+  allocationEffectiveOn,
+  countedOn,
+  currentTotal,
+  openBalance,
+  paymentState,
+  refundAllowed,
+  sourceRemaining,
+} from './payments/settlement';
+export type {
+  AllocationEffectiveOnInput,
+  DatedAmount,
+  DatedSettlementSource,
+  InvoicePaymentState,
+  InvoiceSettlement,
+  RefundAllowedInput,
+  SettlementSource,
+} from './payments/settlement';

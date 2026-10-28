@@ -150,6 +150,23 @@ enum InvoiceLineKind {
   @@map("invoice_line_kind")
 }
 
+enum PaymentMethod {
+  bank_transfer
+  card
+  cash
+  store
+  other
+
+  @@map("payment_method")
+}
+
+enum PaymentRecordStatus {
+  recorded
+  voided
+
+  @@map("payment_record_status")
+}
+
 enum PaymentStatus {
   pending
   authorized
@@ -329,6 +346,13 @@ model UserAccount {
   credentialsCreated     IntegrationCredential[] @relation("CredentialCreatedBy")
   printJobsRequested     PrintJob[]         @relation("PrintRequestedBy")
   printJobsConfirmed     PrintJob[]         @relation("PrintConfirmedBy")
+  paymentsCreated        Payment[]          @relation("PaymentCreatedBy")
+  paymentsVoided         Payment[]          @relation("PaymentVoidedBy")
+  allocationsCreated     Allocation[]       @relation("AllocationCreatedBy")
+  allocationsReversed    Allocation[]       @relation("AllocationReversedBy")
+  refundsCreated         Refund[]           @relation("RefundCreatedBy")
+  refundsVoided          Refund[]           @relation("RefundVoidedBy")
+  idempotencyRecords     IdempotencyRecord[]
   ownerEnrolments        PlatformOwnerEnrolment[]
 
   @@map("user_account")
@@ -459,6 +483,10 @@ model Company {
   invoiceLines       InvoiceLine[]
   invoiceTaxSummaries InvoiceTaxSummary[]
   invoiceDeliveries  InvoiceDelivery[]
+  payments           Payment[]
+  allocations        Allocation[]
+  refunds            Refund[]
+  idempotencyRecords IdempotencyRecord[]
   salesOrders        SalesOrder[]
   salesOrderLines    SalesOrderLine[]
   orderNotes         OrderNote[]
@@ -792,6 +820,7 @@ model Client {
   contacts  ClientContact[]
   addresses ClientAddress[]
   invoices  Invoice[]
+  payments  Payment[]
 
   @@unique([companyId, id])
   @@map("client")
@@ -959,6 +988,9 @@ model Invoice {
   lines      InvoiceLine[]
   taxSummary InvoiceTaxSummary[]
   deliveries InvoiceDelivery[]
+  allocations Allocation[] @relation("AllocationTarget")
+  creditAllocations Allocation[] @relation("AllocationCreditNote")
+  refunds Refund[]
 
   @@unique([companyId, id])
   @@unique([companyId, number])
@@ -1036,6 +1068,114 @@ model InvoiceDelivery {
 
   @@index([companyId, invoiceId])
   @@map("invoice_delivery")
+}
+
+model Payment {
+  id           String              @id @default(uuid(7)) @db.Uuid
+  companyId    String              @map("company_id") @db.Uuid
+  company      Company             @relation(fields: [companyId], references: [id])
+  clientId     String              @map("client_id") @db.Uuid
+  client       Client              @relation(fields: [companyId, clientId], references: [companyId, id])
+  /// Business date in the company's timezone.
+  receivedOn   DateTime            @map("received_on") @db.Date
+  amount       Decimal             @db.Decimal(19, 2)
+  currency     String
+  method       PaymentMethod
+  reference    String?
+  notes        String?
+  status       PaymentRecordStatus @default(recorded)
+  /// Business date in the company's timezone.
+  voidedOn     DateTime?           @map("voided_on") @db.Date
+  voidReason   String?             @map("void_reason")
+  createdById  String              @map("created_by") @db.Uuid
+  createdBy    UserAccount         @relation("PaymentCreatedBy", fields: [createdById], references: [id])
+  voidedById   String?             @map("voided_by") @db.Uuid
+  voidedBy     UserAccount?        @relation("PaymentVoidedBy", fields: [voidedById], references: [id])
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version      Int                 @default(0)
+
+  allocations Allocation[]
+  refunds     Refund[]
+
+  @@unique([companyId, id])
+  @@index([companyId, clientId])
+  @@map("payment")
+}
+
+model Allocation {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  companyId      String       @map("company_id") @db.Uuid
+  company        Company      @relation(fields: [companyId], references: [id])
+  paymentId      String?      @map("payment_id") @db.Uuid
+  payment        Payment?     @relation(fields: [companyId, paymentId], references: [companyId, id])
+  creditNoteId   String?      @map("credit_note_id") @db.Uuid
+  creditNote     Invoice?     @relation("AllocationCreditNote", fields: [companyId, creditNoteId], references: [companyId, id])
+  invoiceId      String       @map("invoice_id") @db.Uuid
+  invoice        Invoice      @relation("AllocationTarget", fields: [companyId, invoiceId], references: [companyId, id])
+  amount         Decimal      @db.Decimal(19, 2)
+  /// Business date in the company's timezone.
+  effectiveOn    DateTime     @map("effective_on") @db.Date
+  /// Business date in the company's timezone.
+  reversedOn     DateTime?    @map("reversed_on") @db.Date
+  reversalReason String?      @map("reversal_reason")
+  createdById    String       @map("created_by") @db.Uuid
+  createdBy      UserAccount  @relation("AllocationCreatedBy", fields: [createdById], references: [id])
+  reversedById   String?      @map("reversed_by") @db.Uuid
+  reversedBy     UserAccount? @relation("AllocationReversedBy", fields: [reversedById], references: [id])
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([companyId, invoiceId])
+  @@index([companyId, paymentId])
+  @@index([companyId, creditNoteId])
+  @@map("allocation")
+}
+
+model Refund {
+  id           String              @id @default(uuid(7)) @db.Uuid
+  companyId    String              @map("company_id") @db.Uuid
+  company      Company             @relation(fields: [companyId], references: [id])
+  paymentId    String?             @map("payment_id") @db.Uuid
+  payment      Payment?            @relation(fields: [companyId, paymentId], references: [companyId, id])
+  creditNoteId String?             @map("credit_note_id") @db.Uuid
+  creditNote   Invoice?            @relation(fields: [companyId, creditNoteId], references: [companyId, id])
+  amount       Decimal             @db.Decimal(19, 2)
+  /// Business date in the company's timezone.
+  refundedOn   DateTime            @map("refunded_on") @db.Date
+  method       PaymentMethod
+  reference    String?
+  notes        String?
+  status       PaymentRecordStatus @default(recorded)
+  /// Business date in the company's timezone.
+  voidedOn     DateTime?           @map("voided_on") @db.Date
+  voidReason   String?             @map("void_reason")
+  createdById  String              @map("created_by") @db.Uuid
+  createdBy    UserAccount         @relation("RefundCreatedBy", fields: [createdById], references: [id])
+  voidedById   String?             @map("voided_by") @db.Uuid
+  voidedBy     UserAccount?        @relation("RefundVoidedBy", fields: [voidedById], references: [id])
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  version      Int                 @default(0)
+
+  @@index([companyId, paymentId])
+  @@index([companyId, creditNoteId])
+  @@map("refund")
+}
+
+model IdempotencyRecord {
+  id          String      @id @default(uuid(7)) @db.Uuid
+  companyId   String      @map("company_id") @db.Uuid
+  company     Company     @relation(fields: [companyId], references: [id])
+  operation   String
+  key         String
+  requestHash String      @map("request_hash")
+  statusCode  Int         @map("status_code")
+  response    Json        @db.JsonB
+  createdById String      @map("created_by") @db.Uuid
+  createdBy   UserAccount @relation(fields: [createdById], references: [id])
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([companyId, operation, key])
+  @@map("idempotency_record")
 }
 
 model SalesOrder {
