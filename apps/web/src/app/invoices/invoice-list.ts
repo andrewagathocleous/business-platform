@@ -210,6 +210,9 @@ export class InvoiceListPage {
   }
 
   typeLabel(documentType: string): string {
+    if (documentType === 'credit_note') {
+      return 'invoices.type.creditNote';
+    }
     return documentType === 'quote' ? 'invoices.type.quote' : 'invoices.type.invoice';
   }
 

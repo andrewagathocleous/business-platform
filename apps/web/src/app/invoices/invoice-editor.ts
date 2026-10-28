@@ -11,12 +11,15 @@ import { CompanyContextStore } from '../core/company-context.store';
 import type { Locale } from '../core/models';
 import { canAttempt } from '../core/nav';
 import { NAVIGATE_ON_DENIED } from '../core/navigate-on-denied';
-import { dropNavigationKey, navigationState } from '../core/navigation-state';
+import { dropNavigationKey, navigationRunning, navigationState } from '../core/navigation-state';
 import { fieldValue } from '../orders/field-value';
+import { type CreditNoteDetail, CreditNoteView } from './credit-note-view';
+import { type CreditNoteLink, type CreditableLine, CreditPanel } from './credit-panel';
 import { type DeadlineState, companyToday, deadlineState } from './delivery-deadline';
 import { calendarDate } from './invoice-query';
 import { type DeliveryView, type InvoicePrintJob, IssuedActions } from './issued-actions';
 import { type LineDraft, type LineKind, emptyLine, lineRequests, moveLine } from './invoice-lines';
+import type { InvoiceView } from './invoice-view';
 
 export const PREVIEW_DEBOUNCE_MS = 400;
 
@@ -56,52 +59,6 @@ type ClientOption = {
   defaultCurrency: string | null;
 };
 
-type InvoiceView = {
-  id: string;
-  documentType: string;
-  status: string;
-  clientId: string;
-  clientDisplayName: string;
-  currency: string;
-  language: string;
-  pricesIncludeTax: boolean;
-  issueDate: string | null;
-  dueDate: string | null;
-  supplyDate?: string | null;
-  deliveryDeadline?: string | null;
-  number?: string | null;
-  lastDeliveredOn?: string | null;
-  deliveries?: DeliveryView[];
-  printJobs?: InvoicePrintJob[];
-  firstPrintJobId?: string | null;
-  reference: string | null;
-  notes: string | null;
-  terms: string | null;
-  version: number;
-  subtotal?: string;
-  discountTotal?: string;
-  netTotal?: string;
-  taxTotal?: string;
-  total?: string;
-  taxSummary?: Totals['taxSummary'];
-  lines: {
-    position: number;
-    kind: LineKind;
-    productId: string | null;
-    description: string;
-    quantity: string;
-    unit: string;
-    unitPrice: string;
-    discountPercent: string;
-    taxCodeId: string;
-    taxCode?: string;
-    lineSubtotal?: string;
-    lineDiscount?: string;
-    lineNet?: string;
-    lineGross?: string;
-  }[];
-};
-
 type PreviewState = 'invalid' | 'pending' | 'ready';
 
 type CarriedInvoice = {
@@ -131,10 +88,18 @@ const ISSUE_ERRORS: Readonly<Record<string, string>> = {
   not_draft: 'invoices.issue.errors.notDraft',
 };
 
+/** API error codes of converting a quote, and the message each shows. */
+const CONVERT_ERRORS: Readonly<Record<string, string>> = {
+  already_converted: 'invoices.convert.errors.already',
+  currency_not_supported: 'invoices.convert.errors.currency',
+  tax_code_inactive: 'invoices.convert.errors.taxCodeInactive',
+  not_draft: 'invoices.convert.errors.notDraft',
+};
+
 @Component({
   selector: 'bp-invoice-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, RouterLink, Button, Tag, IssuedActions],
+  imports: [TranslocoPipe, RouterLink, Button, Tag, IssuedActions, CreditNoteView, CreditPanel],
   template: `
     <section class="screen">
       @if (conflict(); as item) {
@@ -149,7 +114,7 @@ const ISSUE_ERRORS: Readonly<Record<string, string>> = {
       <p>
         <a [routerLink]="['/c', companyId(), 'invoices']">{{ 'invoices.title' | transloco }}</a>
       </p>
-      <h1>{{ (invoiceId() ? 'invoices.editTitle' : 'invoices.newTitle') | transloco }}</h1>
+      <h1>{{ pageTitle() | transloco }}</h1>
       @if (loading()) {
         <p role="status">{{ 'invoices.loading' | transloco }}</p>
       }
@@ -157,12 +122,17 @@ const ISSUE_ERRORS: Readonly<Record<string, string>> = {
         <p role="alert">{{ 'invoices.error' | transloco }}</p>
       }
       @if (!loading() && !loadError()) {
-        @if (readOnly()) {
+        @if (readOnly() && !creditNote()) {
           <p>{{ 'invoices.readOnly' | transloco }}</p>
         }
         @if (status() === 'issued') {
           <section class="card" data-testid="issued-summary">
-            <h2>{{ 'invoices.issued.title' | transloco: { number: number() ?? '' } }}</h2>
+            <h2>
+              {{
+                (creditNote() ? 'invoices.creditNote.title' : 'invoices.issued.title')
+                  | transloco: { number: number() ?? '' }
+              }}
+            </h2>
             <p>
               {{ 'invoices.issued.deadline' | transloco: { date: dateLabel(deliveryDeadline()) } }}
               @switch (deadline()) {
@@ -182,347 +152,16 @@ const ISSUE_ERRORS: Readonly<Record<string, string>> = {
             }
           </section>
         }
-        <form class="form-grid" (submit)="$event.preventDefault()">
-          @if (client(); as chosen) {
-            <div class="client-chip">
-              <span>{{ chosen.displayName }}</span>
-              @if (!readOnly()) {
-                <p-button
-                  type="button"
-                  size="small"
-                  severity="secondary"
-                  [label]="'invoices.changeClient' | transloco"
-                  (onClick)="changeClient()"
-                />
-              }
-            </div>
-          } @else {
-            <label class="span-all">
-              {{ 'invoices.fields.client' | transloco }}
-              <input
-                [disabled]="readOnly()"
-                [value]="clientQuery()"
-                (input)="onClientQuery($event)"
-              />
-            </label>
-            @if (clientMatches().length > 0) {
-              <ul class="client-results">
-                @for (match of clientMatches(); track match.id) {
-                  <li>
-                    <p-button
-                      type="button"
-                      severity="secondary"
-                      [label]="match.displayName"
-                      (onClick)="chooseClient(match)"
-                    />
-                  </li>
-                }
-              </ul>
-            }
-          }
-          @if (errorFor('client'); as key) {
-            <p class="field-error" role="alert">{{ key | transloco }}</p>
-          }
-          <p data-testid="document-language">{{ languageText() }}</p>
-          <label>
-            {{ 'invoices.fields.type' | transloco }}
-            <!-- A saved draft keeps its type (the API refuses a change with 409). -->
-            <select [disabled]="readOnly() || invoiceId() !== null" (change)="setType($event)">
-              <option value="invoice" [selected]="documentType() === 'invoice'">
-                {{ 'invoices.type.invoice' | transloco }}
-              </option>
-              <option value="quote" [selected]="documentType() === 'quote'">
-                {{ 'invoices.type.quote' | transloco }}
-              </option>
-            </select>
-          </label>
-          <label class="check">
-            <input
-              type="checkbox"
-              [disabled]="readOnly()"
-              [checked]="pricesIncludeTax()"
-              (change)="setTaxIncluded($event)"
+        @if (creditNote(); as note) {
+          <div class="form-grid">
+            <bp-credit-note
+              [companyId]="companyId()"
+              [note]="note"
+              [frozen]="refreshing()"
+              (changed)="applySaved($event)"
+              (conflicted)="showConflict($event)"
             />
-            {{ 'invoices.fields.pricesIncludeTax' | transloco }}
-          </label>
-          <label>
-            {{ 'invoices.fields.issueDate' | transloco }}
-            <input
-              type="date"
-              [disabled]="readOnly() || datesSetAtIssue()"
-              [value]="issueDate()"
-              (change)="setIssueDate($event)"
-            />
-          </label>
-          <label>
-            {{ 'invoices.fields.dueDate' | transloco }}
-            <input
-              type="date"
-              [disabled]="readOnly() || datesSetAtIssue()"
-              [value]="dueDate()"
-              (change)="setDueDate($event)"
-            />
-          </label>
-          @if (datesSetAtIssue()) {
-            <p class="span-all">{{ 'invoices.datesAtIssue' | transloco }}</p>
-          }
-          <label>
-            {{ 'invoices.fields.supplyDate' | transloco }}
-            <input
-              type="date"
-              [disabled]="readOnly()"
-              [value]="supplyDate()"
-              (change)="setSupplyDate($event)"
-            />
-          </label>
-          <label class="span-all">
-            {{ 'invoices.fields.reference' | transloco }}
-            <textarea
-              [disabled]="readOnly()"
-              [value]="reference()"
-              (input)="setReference($event)"
-            ></textarea>
-          </label>
-          <label class="span-all">
-            {{ 'invoices.fields.notes' | transloco }}
-            <textarea
-              [disabled]="readOnly()"
-              [value]="notes()"
-              (input)="setNotes($event)"
-            ></textarea>
-          </label>
-          <label class="span-all">
-            {{ 'invoices.fields.terms' | transloco }}
-            <textarea
-              [disabled]="readOnly()"
-              [value]="terms()"
-              (input)="setTerms($event)"
-            ></textarea>
-          </label>
-
-          <h2 class="span-all">{{ 'invoices.lines' | transloco }}</h2>
-          @for (line of lines(); track line.key; let index = $index) {
-            <article class="repeat-item span-all">
-              <header class="repeat-head">
-                <h3>{{ 'invoices.lineNumber' | transloco: { position: index + 1 } }}</h3>
-                @if (!readOnly()) {
-                  <div class="row-actions">
-                    <p-button
-                      type="button"
-                      size="small"
-                      severity="secondary"
-                      [label]="'invoices.moveUp' | transloco"
-                      [disabled]="index === 0"
-                      (onClick)="move(index, -1)"
-                    />
-                    <p-button
-                      type="button"
-                      size="small"
-                      severity="secondary"
-                      [label]="'invoices.moveDown' | transloco"
-                      [disabled]="index === lines().length - 1"
-                      (onClick)="move(index, 1)"
-                    />
-                    <p-button
-                      type="button"
-                      size="small"
-                      severity="danger"
-                      [label]="'invoices.removeLine' | transloco"
-                      (onClick)="removeLine(index)"
-                    />
-                  </div>
-                }
-              </header>
-              <div class="form-grid">
-                <label>
-                  {{ 'invoices.fields.product' | transloco }}
-                  <select [disabled]="readOnly()" (change)="pickProduct(index, $event)">
-                    <option value="" [selected]="line.productId === ''">
-                      {{ 'invoices.chooseProduct' | transloco }}
-                    </option>
-                    @for (product of products(); track product.id) {
-                      <option [value]="product.id" [selected]="product.id === line.productId">
-                        {{ product.name }}
-                      </option>
-                    }
-                  </select>
-                </label>
-                <label class="span-all">
-                  {{ 'invoices.fields.description' | transloco }}
-                  <textarea
-                    [disabled]="readOnly()"
-                    [value]="line.description"
-                    (input)="setLineText(index, 'description', $event)"
-                  ></textarea>
-                </label>
-                <label>
-                  {{ 'invoices.fields.quantity' | transloco }}
-                  <input
-                    [disabled]="readOnly()"
-                    [value]="line.quantity"
-                    (input)="setLineText(index, 'quantity', $event)"
-                  />
-                </label>
-                <label>
-                  {{ 'invoices.fields.unit' | transloco }}
-                  <input
-                    [disabled]="readOnly()"
-                    [value]="line.unit"
-                    (input)="setLineText(index, 'unit', $event)"
-                  />
-                </label>
-                <label>
-                  {{ 'invoices.fields.unitPrice' | transloco }}
-                  <input
-                    [disabled]="readOnly()"
-                    [value]="line.unitPrice"
-                    (input)="setLineText(index, 'unitPrice', $event)"
-                  />
-                </label>
-                <label>
-                  {{ 'invoices.fields.discount' | transloco }}
-                  <input
-                    [disabled]="readOnly()"
-                    [value]="line.discountPercent"
-                    (input)="setLineText(index, 'discountPercent', $event)"
-                  />
-                </label>
-                <label>
-                  {{ 'invoices.fields.tax' | transloco }}
-                  <select
-                    [disabled]="readOnly()"
-                    (change)="setLineText(index, 'taxCodeId', $event)"
-                  >
-                    <option value="" [selected]="line.taxCodeId === ''">
-                      {{ 'invoices.chooseTax' | transloco }}
-                    </option>
-                    @for (tax of taxCodes(); track tax.id) {
-                      <option [value]="tax.id" [selected]="tax.id === line.taxCodeId">
-                        {{ tax.code }}
-                      </option>
-                    }
-                  </select>
-                </label>
-                <label>
-                  {{ 'invoices.fields.kind' | transloco }}
-                  <select [disabled]="readOnly()" (change)="setKind(index, $event)">
-                    <option value="item" [selected]="line.kind === 'item'">
-                      {{ 'invoices.kind.item' | transloco }}
-                    </option>
-                    <option value="shipping" [selected]="line.kind === 'shipping'">
-                      {{ 'invoices.kind.shipping' | transloco }}
-                    </option>
-                  </select>
-                </label>
-                @if (lineTotal(index + 1); as amounts) {
-                  <p class="line-amounts span-all">
-                    @if (pricesIncludeTax()) {
-                      {{
-                        'invoices.totals.lineInclusive'
-                          | transloco
-                            : {
-                                subtotal: amounts.lineSubtotal,
-                                discount: amounts.lineDiscount,
-                                gross: amounts.lineGross,
-                                net: amounts.lineNet,
-                              }
-                      }}
-                    } @else {
-                      {{
-                        'invoices.totals.lineExclusive'
-                          | transloco
-                            : {
-                                subtotal: amounts.lineSubtotal,
-                                discount: amounts.lineDiscount,
-                                net: amounts.lineNet,
-                              }
-                      }}
-                    }
-                  </p>
-                }
-              </div>
-            </article>
-          }
-          @if (!readOnly()) {
-            <div class="form-actions">
-              <p-button
-                type="button"
-                severity="secondary"
-                icon="pi pi-plus"
-                [label]="'invoices.addLine' | transloco"
-                [ariaLabel]="'invoices.addLine' | transloco"
-                (onClick)="addLine()"
-              />
-            </div>
-          }
-          @if (errorFor('lines'); as key) {
-            <p class="field-error" role="alert">{{ key | transloco }}</p>
-          }
-
-          <section class="card invoice-totals" data-testid="invoice-totals">
-            <h2>{{ 'invoices.totalsTitle' | transloco }}</h2>
-            @if (previewState() === 'ready' && preview(); as totals) {
-              <dl class="totals-list">
-                <div>
-                  <dt>{{ 'invoices.totals.subtotal' | transloco }}</dt>
-                  <dd data-testid="subtotal">{{ totals.subtotal }}</dd>
-                </div>
-                <div>
-                  <dt>{{ 'invoices.totals.discount' | transloco }}</dt>
-                  <dd data-testid="discount">{{ totals.discountTotal }}</dd>
-                </div>
-                <div>
-                  <dt>{{ 'invoices.totals.net' | transloco }}</dt>
-                  <dd data-testid="net">{{ totals.netTotal }}</dd>
-                </div>
-                <div>
-                  <dt>{{ 'invoices.totals.tax' | transloco }}</dt>
-                  <dd data-testid="tax">{{ totals.taxTotal }}</dd>
-                </div>
-                <div class="totals-grand">
-                  <dt>{{ 'invoices.totals.total' | transloco }}</dt>
-                  <dd>
-                    <span data-testid="total">{{ totals.total }}</span> {{ moneyCurrency() }}
-                  </dd>
-                </div>
-              </dl>
-              <table class="tax-summary">
-                <thead>
-                  <tr>
-                    <th>{{ 'invoices.totals.taxCode' | transloco }}</th>
-                    <th>{{ 'invoices.totals.net' | transloco }}</th>
-                    <th>{{ 'invoices.totals.tax' | transloco }}</th>
-                    <th>{{ 'invoices.totals.gross' | transloco }}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  @for (group of totals.taxSummary; track group.taxCode) {
-                    <tr>
-                      <td>{{ group.taxCode }}</td>
-                      <td>{{ group.net }}</td>
-                      <td>{{ group.tax }}</td>
-                      <td>{{ group.gross }}</td>
-                    </tr>
-                  }
-                </tbody>
-              </table>
-            } @else {
-              <p data-testid="totals-pending">{{ 'invoices.totalsPending' | transloco }}</p>
-            }
-          </section>
-
-          @if (!readOnly()) {
-            <div class="form-actions">
-              <p-button
-                type="button"
-                [label]="'invoices.save' | transloco"
-                [disabled]="busy()"
-                (onClick)="save()"
-              />
-            </div>
-          }
-          @if (invoiceId()) {
-            <div class="actions">
+            <div class="actions span-all">
               <a class="text-action" [href]="pdfHref()" target="_blank" rel="noopener">{{
                 (status() === 'issued' ? 'invoices.openIssuedPdf' : 'invoices.openPdf') | transloco
               }}</a>
@@ -530,73 +169,483 @@ const ISSUE_ERRORS: Readonly<Record<string, string>> = {
                 <p-tag severity="warn" [value]="'invoices.draftNotice' | transloco" />
               }
             </div>
-          }
-          @if (status() === 'issued' && invoiceId(); as id) {
-            <bp-issued-actions
-              [companyId]="companyId()"
-              [invoiceId]="id"
-              [deliveries]="deliveries()"
-              [printJobs]="printJobs()"
-              [firstPrintJobId]="firstPrintJobId()"
-              (changed)="reload()"
-            />
-          }
-          @if (canIssue()) {
-            <section class="card span-all" data-testid="issue-panel">
-              <h2>{{ 'invoices.issue.title' | transloco }}</h2>
-              @if (dirty()) {
-                <p>{{ 'invoices.issue.saveFirst' | transloco }}</p>
-              }
-              @if (confirmingIssue()) {
-                <p role="alert">{{ 'invoices.issue.confirmText' | transloco }}</p>
-                <div class="form-actions">
+            @if (status() === 'issued' && invoiceId(); as id) {
+              <bp-issued-actions
+                [companyId]="companyId()"
+                [invoiceId]="id"
+                [deliveries]="deliveries()"
+                [printJobs]="printJobs()"
+                [firstPrintJobId]="firstPrintJobId()"
+                (changed)="reload()"
+              />
+            }
+          </div>
+        } @else {
+          <form class="form-grid" (submit)="$event.preventDefault()">
+            @if (sourceQuoteId(); as quoteId) {
+              <p class="span-all" data-testid="source-quote">
+                {{ 'invoices.convert.fromQuote' | transloco }}
+                <a [routerLink]="['/c', companyId(), 'invoices', quoteId]">{{
+                  'invoices.convert.openQuote' | transloco
+                }}</a>
+              </p>
+            }
+            @if (client(); as chosen) {
+              <div class="client-chip">
+                <span>{{ chosen.displayName }}</span>
+                @if (!readOnly()) {
                   <p-button
                     type="button"
-                    [label]="'invoices.issue.confirm' | transloco"
-                    [disabled]="busy() || dirty()"
-                    (onClick)="confirmIssue()"
-                  />
-                  <p-button
-                    type="button"
+                    size="small"
                     severity="secondary"
-                    [label]="'invoices.issue.cancel' | transloco"
-                    [disabled]="busy()"
-                    (onClick)="cancelIssue()"
+                    [label]="'invoices.changeClient' | transloco"
+                    (onClick)="changeClient()"
                   />
+                }
+              </div>
+            } @else {
+              <label class="span-all">
+                {{ 'invoices.fields.client' | transloco }}
+                <input
+                  [disabled]="readOnly()"
+                  [value]="clientQuery()"
+                  (input)="onClientQuery($event)"
+                />
+              </label>
+              @if (clientMatches().length > 0) {
+                <ul class="client-results">
+                  @for (match of clientMatches(); track match.id) {
+                    <li>
+                      <p-button
+                        type="button"
+                        severity="secondary"
+                        [label]="match.displayName"
+                        (onClick)="chooseClient(match)"
+                      />
+                    </li>
+                  }
+                </ul>
+              }
+            }
+            @if (errorFor('client'); as key) {
+              <p class="field-error" role="alert">{{ key | transloco }}</p>
+            }
+            <p data-testid="document-language">{{ languageText() }}</p>
+            <label>
+              {{ 'invoices.fields.type' | transloco }}
+              <!-- A saved draft keeps its type (the API refuses a change with 409). -->
+              <select [disabled]="readOnly() || invoiceId() !== null" (change)="setType($event)">
+                <option value="invoice" [selected]="documentType() === 'invoice'">
+                  {{ 'invoices.type.invoice' | transloco }}
+                </option>
+                <option value="quote" [selected]="documentType() === 'quote'">
+                  {{ 'invoices.type.quote' | transloco }}
+                </option>
+              </select>
+            </label>
+            <label class="check">
+              <input
+                type="checkbox"
+                [disabled]="readOnly()"
+                [checked]="pricesIncludeTax()"
+                (change)="setTaxIncluded($event)"
+              />
+              {{ 'invoices.fields.pricesIncludeTax' | transloco }}
+            </label>
+            <label>
+              {{ 'invoices.fields.issueDate' | transloco }}
+              <input
+                type="date"
+                [disabled]="readOnly() || datesSetAtIssue()"
+                [value]="issueDate()"
+                (change)="setIssueDate($event)"
+              />
+            </label>
+            <label>
+              {{ 'invoices.fields.dueDate' | transloco }}
+              <input
+                type="date"
+                [disabled]="readOnly() || datesSetAtIssue()"
+                [value]="dueDate()"
+                (change)="setDueDate($event)"
+              />
+            </label>
+            @if (datesSetAtIssue()) {
+              <p class="span-all">{{ 'invoices.datesAtIssue' | transloco }}</p>
+            }
+            <label>
+              {{ 'invoices.fields.supplyDate' | transloco }}
+              <input
+                type="date"
+                [disabled]="readOnly()"
+                [value]="supplyDate()"
+                (change)="setSupplyDate($event)"
+              />
+            </label>
+            <label class="span-all">
+              {{ 'invoices.fields.reference' | transloco }}
+              <textarea
+                [disabled]="readOnly()"
+                [value]="reference()"
+                (input)="setReference($event)"
+              ></textarea>
+            </label>
+            <label class="span-all">
+              {{ 'invoices.fields.notes' | transloco }}
+              <textarea
+                [disabled]="readOnly()"
+                [value]="notes()"
+                (input)="setNotes($event)"
+              ></textarea>
+            </label>
+            <label class="span-all">
+              {{ 'invoices.fields.terms' | transloco }}
+              <textarea
+                [disabled]="readOnly()"
+                [value]="terms()"
+                (input)="setTerms($event)"
+              ></textarea>
+            </label>
+
+            <h2 class="span-all">{{ 'invoices.lines' | transloco }}</h2>
+            @for (line of lines(); track line.key; let index = $index) {
+              <article class="repeat-item span-all">
+                <header class="repeat-head">
+                  <h3>{{ 'invoices.lineNumber' | transloco: { position: index + 1 } }}</h3>
+                  @if (!readOnly()) {
+                    <div class="row-actions">
+                      <p-button
+                        type="button"
+                        size="small"
+                        severity="secondary"
+                        [label]="'invoices.moveUp' | transloco"
+                        [disabled]="index === 0"
+                        (onClick)="move(index, -1)"
+                      />
+                      <p-button
+                        type="button"
+                        size="small"
+                        severity="secondary"
+                        [label]="'invoices.moveDown' | transloco"
+                        [disabled]="index === lines().length - 1"
+                        (onClick)="move(index, 1)"
+                      />
+                      <p-button
+                        type="button"
+                        size="small"
+                        severity="danger"
+                        [label]="'invoices.removeLine' | transloco"
+                        (onClick)="removeLine(index)"
+                      />
+                    </div>
+                  }
+                </header>
+                <div class="form-grid">
+                  <label>
+                    {{ 'invoices.fields.product' | transloco }}
+                    <select [disabled]="readOnly()" (change)="pickProduct(index, $event)">
+                      <option value="" [selected]="line.productId === ''">
+                        {{ 'invoices.chooseProduct' | transloco }}
+                      </option>
+                      @for (product of products(); track product.id) {
+                        <option [value]="product.id" [selected]="product.id === line.productId">
+                          {{ product.name }}
+                        </option>
+                      }
+                    </select>
+                  </label>
+                  <label class="span-all">
+                    {{ 'invoices.fields.description' | transloco }}
+                    <textarea
+                      [disabled]="readOnly()"
+                      [value]="line.description"
+                      (input)="setLineText(index, 'description', $event)"
+                    ></textarea>
+                  </label>
+                  <label>
+                    {{ 'invoices.fields.quantity' | transloco }}
+                    <input
+                      [disabled]="readOnly()"
+                      [value]="line.quantity"
+                      (input)="setLineText(index, 'quantity', $event)"
+                    />
+                  </label>
+                  <label>
+                    {{ 'invoices.fields.unit' | transloco }}
+                    <input
+                      [disabled]="readOnly()"
+                      [value]="line.unit"
+                      (input)="setLineText(index, 'unit', $event)"
+                    />
+                  </label>
+                  <label>
+                    {{ 'invoices.fields.unitPrice' | transloco }}
+                    <input
+                      [disabled]="readOnly()"
+                      [value]="line.unitPrice"
+                      (input)="setLineText(index, 'unitPrice', $event)"
+                    />
+                  </label>
+                  <label>
+                    {{ 'invoices.fields.discount' | transloco }}
+                    <input
+                      [disabled]="readOnly()"
+                      [value]="line.discountPercent"
+                      (input)="setLineText(index, 'discountPercent', $event)"
+                    />
+                  </label>
+                  <label>
+                    {{ 'invoices.fields.tax' | transloco }}
+                    <select
+                      [disabled]="readOnly()"
+                      (change)="setLineText(index, 'taxCodeId', $event)"
+                    >
+                      <option value="" [selected]="line.taxCodeId === ''">
+                        {{ 'invoices.chooseTax' | transloco }}
+                      </option>
+                      @for (tax of taxCodes(); track tax.id) {
+                        <option [value]="tax.id" [selected]="tax.id === line.taxCodeId">
+                          {{ tax.code }}
+                        </option>
+                      }
+                    </select>
+                  </label>
+                  <label>
+                    {{ 'invoices.fields.kind' | transloco }}
+                    <select [disabled]="readOnly()" (change)="setKind(index, $event)">
+                      <option value="item" [selected]="line.kind === 'item'">
+                        {{ 'invoices.kind.item' | transloco }}
+                      </option>
+                      <option value="shipping" [selected]="line.kind === 'shipping'">
+                        {{ 'invoices.kind.shipping' | transloco }}
+                      </option>
+                    </select>
+                  </label>
+                  @if (lineTotal(index + 1); as amounts) {
+                    <p class="line-amounts span-all">
+                      @if (pricesIncludeTax()) {
+                        {{
+                          'invoices.totals.lineInclusive'
+                            | transloco
+                              : {
+                                  subtotal: amounts.lineSubtotal,
+                                  discount: amounts.lineDiscount,
+                                  gross: amounts.lineGross,
+                                  net: amounts.lineNet,
+                                }
+                        }}
+                      } @else {
+                        {{
+                          'invoices.totals.lineExclusive'
+                            | transloco
+                              : {
+                                  subtotal: amounts.lineSubtotal,
+                                  discount: amounts.lineDiscount,
+                                  net: amounts.lineNet,
+                                }
+                        }}
+                      }
+                    </p>
+                  }
                 </div>
-              } @else {
+              </article>
+            }
+            @if (!readOnly()) {
+              <div class="form-actions">
                 <p-button
                   type="button"
-                  [label]="'invoices.issue.action' | transloco"
-                  [disabled]="busy() || dirty()"
-                  (onClick)="startIssue()"
+                  severity="secondary"
+                  icon="pi pi-plus"
+                  [label]="'invoices.addLine' | transloco"
+                  [ariaLabel]="'invoices.addLine' | transloco"
+                  (onClick)="addLine()"
                 />
-              }
-              @if (issueProblems().length > 0) {
-                <div role="alert">
-                  <p>{{ 'invoices.issue.incomplete' | transloco }}</p>
-                  <ul>
-                    @for (problem of issueProblems(); track problem) {
-                      <li>{{ problemText(problem) }}</li>
+              </div>
+            }
+            @if (errorFor('lines'); as key) {
+              <p class="field-error" role="alert">{{ key | transloco }}</p>
+            }
+
+            <section class="card invoice-totals" data-testid="invoice-totals">
+              <h2>{{ 'invoices.totalsTitle' | transloco }}</h2>
+              @if (previewState() === 'ready' && preview(); as totals) {
+                <dl class="totals-list">
+                  <div>
+                    <dt>{{ 'invoices.totals.subtotal' | transloco }}</dt>
+                    <dd data-testid="subtotal">{{ totals.subtotal }}</dd>
+                  </div>
+                  <div>
+                    <dt>{{ 'invoices.totals.discount' | transloco }}</dt>
+                    <dd data-testid="discount">{{ totals.discountTotal }}</dd>
+                  </div>
+                  <div>
+                    <dt>{{ 'invoices.totals.net' | transloco }}</dt>
+                    <dd data-testid="net">{{ totals.netTotal }}</dd>
+                  </div>
+                  <div>
+                    <dt>{{ 'invoices.totals.tax' | transloco }}</dt>
+                    <dd data-testid="tax">{{ totals.taxTotal }}</dd>
+                  </div>
+                  <div class="totals-grand">
+                    <dt>{{ 'invoices.totals.total' | transloco }}</dt>
+                    <dd>
+                      <span data-testid="total">{{ totals.total }}</span> {{ moneyCurrency() }}
+                    </dd>
+                  </div>
+                </dl>
+                <table class="tax-summary">
+                  <thead>
+                    <tr>
+                      <th>{{ 'invoices.totals.taxCode' | transloco }}</th>
+                      <th>{{ 'invoices.totals.net' | transloco }}</th>
+                      <th>{{ 'invoices.totals.tax' | transloco }}</th>
+                      <th>{{ 'invoices.totals.gross' | transloco }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (group of totals.taxSummary; track group.taxCode) {
+                      <tr>
+                        <td>{{ group.taxCode }}</td>
+                        <td>{{ group.net }}</td>
+                        <td>{{ group.tax }}</td>
+                        <td>{{ group.gross }}</td>
+                      </tr>
                     }
-                  </ul>
-                </div>
-              }
-              @if (issueError(); as failure) {
-                <p role="alert">{{ failure.key | transloco }}</p>
-                @if (failure.correlationId) {
-                  <p>{{ 'errors.correlation' | transloco }}: {{ failure.correlationId }}</p>
-                }
+                  </tbody>
+                </table>
+              } @else {
+                <p data-testid="totals-pending">{{ 'invoices.totalsPending' | transloco }}</p>
               }
             </section>
-          }
-        </form>
+
+            @if (!readOnly()) {
+              <div class="form-actions">
+                <p-button
+                  type="button"
+                  [label]="'invoices.save' | transloco"
+                  [disabled]="busy()"
+                  (onClick)="save()"
+                />
+              </div>
+            }
+            @if (invoiceId()) {
+              <div class="actions">
+                <a class="text-action" [href]="pdfHref()" target="_blank" rel="noopener">{{
+                  (status() === 'issued' ? 'invoices.openIssuedPdf' : 'invoices.openPdf')
+                    | transloco
+                }}</a>
+                @if (status() !== 'issued') {
+                  <p-tag severity="warn" [value]="'invoices.draftNotice' | transloco" />
+                }
+              </div>
+            }
+            @if (status() === 'issued' && invoiceId(); as id) {
+              <bp-issued-actions
+                [companyId]="companyId()"
+                [invoiceId]="id"
+                [deliveries]="deliveries()"
+                [printJobs]="printJobs()"
+                [firstPrintJobId]="firstPrintJobId()"
+                (changed)="reload()"
+              />
+              @if (documentType() === 'invoice') {
+                <bp-credit-panel
+                  [companyId]="companyId()"
+                  [invoiceId]="id"
+                  [currency]="savedCurrency()"
+                  [lines]="creditableLines()"
+                  [creditNotes]="creditNotes()"
+                />
+              }
+            }
+            @if (documentType() === 'quote' && status() === 'draft' && invoiceId()) {
+              <section class="card span-all" data-testid="convert-panel">
+                <h2>{{ 'invoices.convert.title' | transloco }}</h2>
+                @if (convertedInvoiceId(); as converted) {
+                  <p>
+                    {{ 'invoices.convert.done' | transloco }}
+                    <a [routerLink]="['/c', companyId(), 'invoices', converted]">{{
+                      'invoices.convert.open' | transloco
+                    }}</a>
+                  </p>
+                } @else if (canDraft()) {
+                  <p>{{ 'invoices.convert.explain' | transloco }}</p>
+                  @if (dirty()) {
+                    <p>{{ 'invoices.convert.saveFirst' | transloco }}</p>
+                  }
+                  <p-button
+                    type="button"
+                    [label]="'invoices.convert.action' | transloco"
+                    [disabled]="busy() || dirty() || converting()"
+                    (onClick)="convert()"
+                  />
+                }
+                @if (convertError(); as failure) {
+                  <p role="alert">{{ failure.key | transloco }}</p>
+                  @if (failure.correlationId) {
+                    <p>{{ 'errors.correlation' | transloco }}: {{ failure.correlationId }}</p>
+                  }
+                }
+              </section>
+            }
+            @if (canIssue()) {
+              <section class="card span-all" data-testid="issue-panel">
+                <h2>{{ 'invoices.issue.title' | transloco }}</h2>
+                @if (dirty()) {
+                  <p>{{ 'invoices.issue.saveFirst' | transloco }}</p>
+                }
+                @if (confirmingIssue()) {
+                  <p role="alert">{{ 'invoices.issue.confirmText' | transloco }}</p>
+                  <div class="form-actions">
+                    <p-button
+                      type="button"
+                      [label]="'invoices.issue.confirm' | transloco"
+                      [disabled]="busy() || dirty()"
+                      (onClick)="confirmIssue()"
+                    />
+                    <p-button
+                      type="button"
+                      severity="secondary"
+                      [label]="'invoices.issue.cancel' | transloco"
+                      [disabled]="busy()"
+                      (onClick)="cancelIssue()"
+                    />
+                  </div>
+                } @else {
+                  <p-button
+                    type="button"
+                    [label]="'invoices.issue.action' | transloco"
+                    [disabled]="busy() || dirty()"
+                    (onClick)="startIssue()"
+                  />
+                }
+                @if (issueProblems().length > 0) {
+                  <div role="alert">
+                    <p>{{ 'invoices.issue.incomplete' | transloco }}</p>
+                    <ul>
+                      @for (problem of issueProblems(); track problem) {
+                        <li>{{ problemText(problem) }}</li>
+                      }
+                    </ul>
+                  </div>
+                }
+                @if (issueError(); as failure) {
+                  <p role="alert">{{ failure.key | transloco }}</p>
+                  @if (failure.correlationId) {
+                    <p>{{ 'errors.correlation' | transloco }}: {{ failure.correlationId }}</p>
+                  }
+                }
+              </section>
+            }
+          </form>
+        }
       }
     </section>
   `,
 })
 export class InvoiceEditorPage {
   private readonly http = inject(HttpClient);
+  private readonly destroyRef = inject(DestroyRef);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly transloco = inject(TranslocoService);
@@ -629,12 +678,24 @@ export class InvoiceEditorPage {
   readonly firstPrintJobId = signal<string | null>(null);
   /** An issue request is in flight: the draft cannot change under it. */
   readonly issuing = signal(false);
+  /** A quote is being converted: it cannot change under the request. */
+  readonly converting = signal(false);
+  /** A saved document is being loaded again; a credit note's view waits for it. */
+  readonly refreshing = signal(false);
   /** Edited since the last save or load. Issuing uses the saved draft, so it waits for a save. */
   readonly dirty = signal(false);
   readonly confirmingIssue = signal(false);
   readonly issueProblems = signal<string[]>([]);
   readonly issueError = signal<{ key: string; correlationId: string | null } | null>(null);
   readonly issueWarnings = signal<string[]>([]);
+  /** Set when the document is a credit note: it has its own view instead of the form. */
+  readonly creditNote = signal<CreditNoteDetail | null>(null);
+  /** An issued invoice: its lines with what is credited, and its credit notes. */
+  readonly creditableLines = signal<CreditableLine[]>([]);
+  readonly creditNotes = signal<CreditNoteLink[]>([]);
+  readonly sourceQuoteId = signal<string | null>(null);
+  readonly convertedInvoiceId = signal<string | null>(null);
+  readonly convertError = signal<{ key: string; correlationId: string | null } | null>(null);
   readonly reference = signal('');
   readonly notes = signal('');
   readonly terms = signal('');
@@ -700,7 +761,8 @@ export class InvoiceEditorPage {
   }
 
   readOnly(): boolean {
-    if (!this.canDraft() || this.issuing()) {
+    // A credit note changes only through its own view (reason and quantities).
+    if (!this.canDraft() || this.issuing() || this.converting() || this.creditNote() !== null) {
       return true;
     }
     const status = this.status();
@@ -721,6 +783,7 @@ export class InvoiceEditorPage {
       this.invoiceId() !== null &&
       this.status() === 'draft' &&
       this.documentType() === 'invoice' &&
+      this.creditNote() === null &&
       canAttempt(
         this.context.grants(),
         this.context.withheldPermissions(),
@@ -728,6 +791,80 @@ export class InvoiceEditorPage {
         'invoice.issue',
       )
     );
+  }
+
+  pageTitle(): string {
+    if (this.creditNote()) {
+      return 'invoices.creditNote.pageTitle';
+    }
+    return this.invoiceId() ? 'invoices.editTitle' : 'invoices.newTitle';
+  }
+
+  /** A credit note saved or issued in its view: show what the API returned. */
+  applySaved(saved: InvoiceView): void {
+    if (saved.id === this.invoiceId()) {
+      this.apply(saved);
+    }
+  }
+
+  showConflict(correlationId: string | null): void {
+    this.conflict.set({ correlationId });
+  }
+
+  /** Makes a new draft invoice from this saved quote, then opens it. A quote converts once. */
+  convert(): void {
+    const quoteId = this.invoiceId();
+    if (
+      !quoteId ||
+      this.documentType() !== 'quote' ||
+      this.status() !== 'draft' ||
+      this.dirty() ||
+      this.converting() ||
+      !this.canDraft() ||
+      !this.begin()
+    ) {
+      return;
+    }
+    const generation = this.generation;
+    const companyId = this.companyId();
+    this.convertError.set(null);
+    this.converting.set(true);
+    this.http
+      .post<{ invoice: { id: string } }>(`/api/c/${companyId}/quotes/${quoteId}/convert`, {})
+      // A left editor never navigates on a late answer.
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (response) => {
+          if (generation !== this.generation) {
+            return;
+          }
+          this.busy.set(false);
+          if (navigationRunning(this.router)) {
+            // Another navigation (a company switch) is under way: the quote is loaded again
+            // instead, and links to its new invoice if the user stays.
+            this.fetch();
+            return;
+          }
+          void this.router.navigate(['/c', companyId, 'invoices', response.invoice.id]);
+        },
+        error: (error: unknown) => {
+          if (generation !== this.generation) {
+            return;
+          }
+          this.busy.set(false);
+          const body = error instanceof HttpErrorResponse ? readApiError(error) : null;
+          this.convertError.set({
+            key: CONVERT_ERRORS[body?.code ?? ''] ?? 'invoices.convert.errors.failed',
+            correlationId: body?.correlationId ?? null,
+          });
+          if (body?.code === 'already_converted') {
+            // The quote now shows the invoice it was converted to. It stays frozen until then.
+            this.fetch();
+            return;
+          }
+          this.converting.set(false);
+        },
+      });
   }
 
   /** An invoice draft's issue and due dates are set when it is issued, so they are not edited. */
@@ -1155,11 +1292,19 @@ export class InvoiceEditorPage {
     this.printJobs.set([]);
     this.firstPrintJobId.set(null);
     this.issuing.set(false);
+    this.converting.set(false);
+    this.refreshing.set(false);
     this.dirty.set(false);
     this.confirmingIssue.set(false);
     this.issueProblems.set([]);
     this.issueError.set(null);
     this.issueWarnings.set([]);
+    this.creditNote.set(null);
+    this.creditableLines.set([]);
+    this.creditNotes.set([]);
+    this.sourceQuoteId.set(null);
+    this.convertedInvoiceId.set(null);
+    this.convertError.set(null);
     this.reference.set('');
     this.notes.set('');
     this.terms.set('');
@@ -1267,6 +1412,7 @@ export class InvoiceEditorPage {
     }
     const generation = ++this.generation;
     this.loading.set(this.version === null);
+    this.refreshing.set(true);
     this.http
       .get<{ invoice: InvoiceView }>(`/api/c/${this.companyId()}/invoices/${invoiceId}`, {
         context: new HttpContext().set(NAVIGATE_ON_DENIED, true),
@@ -1278,6 +1424,7 @@ export class InvoiceEditorPage {
           }
           this.apply(body.invoice);
           this.loading.set(false);
+          this.refreshing.set(false);
           this.loadClient(body.invoice.clientId);
         },
         error: () => {
@@ -1285,6 +1432,8 @@ export class InvoiceEditorPage {
             return;
           }
           this.loading.set(false);
+          this.refreshing.set(false);
+          this.converting.set(false);
           if (this.version === null) {
             this.loadError.set(true);
           }
@@ -1305,6 +1454,16 @@ export class InvoiceEditorPage {
     this.deliveries.set(invoice.deliveries ?? []);
     this.printJobs.set(invoice.printJobs ?? []);
     this.firstPrintJobId.set(invoice.firstPrintJobId ?? null);
+    this.creditNote.set(creditNoteOf(invoice));
+    this.creditableLines.set(
+      invoice.documentType === 'invoice' && invoice.status === 'issued'
+        ? creditableLinesOf(invoice)
+        : [],
+    );
+    this.creditNotes.set(invoice.creditNotes ?? []);
+    this.sourceQuoteId.set(invoice.sourceQuoteId ?? null);
+    this.convertedInvoiceId.set(invoice.convertedInvoiceId ?? null);
+    this.converting.set(false);
     this.dirty.set(false);
     this.reference.set(invoice.reference ?? '');
     this.notes.set(invoice.notes ?? '');
@@ -1437,6 +1596,52 @@ function storedTotals(invoice: InvoiceView): Totals | null {
     })),
     taxSummary: invoice.taxSummary ?? [],
   };
+}
+
+/** A credit note's view, or null for any other document. */
+function creditNoteOf(invoice: InvoiceView): CreditNoteDetail | null {
+  if (invoice.documentType !== 'credit_note') {
+    return null;
+  }
+  return {
+    id: invoice.id,
+    status: invoice.status,
+    number: invoice.number ?? null,
+    version: invoice.version,
+    currency: invoice.currency,
+    creditReason: invoice.creditReason ?? '',
+    creditedInvoice: invoice.creditedInvoice ?? null,
+    netTotal: invoice.netTotal ?? '',
+    taxTotal: invoice.taxTotal ?? '',
+    total: invoice.total ?? '',
+    lines: [...invoice.lines]
+      .sort((left, right) => left.position - right.position)
+      .map((line) => ({
+        id: line.id ?? '',
+        position: line.position,
+        description: line.description,
+        quantity: line.quantity,
+        unit: line.unit,
+        unitPrice: line.unitPrice,
+        discountPercent: line.discountPercent,
+        taxCode: line.taxCode ?? '',
+        lineNet: line.lineNet ?? '',
+      })),
+    taxSummary: invoice.taxSummary ?? [],
+  };
+}
+
+function creditableLinesOf(invoice: InvoiceView): CreditableLine[] {
+  return [...invoice.lines]
+    .sort((left, right) => left.position - right.position)
+    .map((line) => ({
+      id: line.id ?? '',
+      position: line.position,
+      description: line.description,
+      quantity: line.quantity,
+      unit: line.unit,
+      creditedQuantity: line.creditedQuantity ?? '0',
+    }));
 }
 
 function emptyParams(): { get: (name: string) => string | null } {

@@ -32,7 +32,12 @@ export function isVersionConflict(error: unknown): boolean {
     return false;
   }
   const body = readApiError(error);
-  return body.message === 'version_conflict' || body.code === 'version_conflict';
+  // Invoices and clients answer "version conflict"; other routes "version_conflict".
+  return (
+    body.message === 'version_conflict' ||
+    body.message === 'version conflict' ||
+    body.code === 'version_conflict'
+  );
 }
 
 export function isAlreadyPrinted(error: unknown): boolean {

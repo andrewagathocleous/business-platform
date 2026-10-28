@@ -973,7 +973,8 @@ tr.review-row,
   font-weight: 700;
 }
 
-.tax-summary {
+.tax-summary,
+.credit-lines {
   width: 100%;
   margin-top: 0.75rem;
   border-collapse: collapse;
@@ -981,15 +982,37 @@ tr.review-row,
 }
 
 .tax-summary th,
-.tax-summary td {
+.tax-summary td,
+.credit-lines th,
+.credit-lines td {
   border-bottom: 1px solid #d9e2ec;
   padding: 0.25rem 0.4rem;
   text-align: left;
   font-weight: 400;
+  /* A long tax code or description wraps instead of widening the page. */
+  overflow-wrap: anywhere;
 }
 
-.tax-summary th {
+.tax-summary th,
+.credit-lines th {
   font-weight: 600;
+}
+
+.credit-lines input {
+  width: 6rem;
+  max-width: 100%;
+}
+
+.credit-list {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+  /* A long credit-note number wraps instead of widening the page. */
+  overflow-wrap: anywhere;
+}
+
+.credit-reason {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .table-fit .items {

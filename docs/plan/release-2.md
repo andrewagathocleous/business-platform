@@ -245,6 +245,12 @@ Every write is audited, versioned (`expectedVersion`, 409 `version_conflict`) an
 - Database: `credit_note_exceeds_original()` compares the issued credit notes plus this one with the original, per line (quantity) and per tax-code group (net, tax and gross). The service asks it before numbering. `invoice_issue_guard` locks the original, then refuses a credit-note issue that exceeds it, credits a zero or negative quantity or amount, or carries a tax snapshot other than the original's. A unique index keeps one summary row per tax code per document. Migration `20261028210000_r2d_credit_issue`.
 - Applying the credit note to the original's balance comes with R2-E.
 
+**As built, R2-D4 (2026-10-28).** Screens.
+- An issued invoice shows its credit notes (number or "Draft", status, total) and, for holders of `invoice.credit`, a form that drafts a new one: a reason, then everything not yet credited or chosen quantities per line, checked against what is left (quantity minus issued credits, worked out exactly). The new draft opens.
+- A credit note has its own view instead of the invoice form: the invoice it credits (a link), the reason, and the lines and amounts. A draft's reason and quantities can be changed and saved; the API works out the amounts. An Issue panel waits for a save, asks for confirmation and explains each refusal (over-credit since the draft was saved, a changed line, the credit-note series, missing particulars). An issued credit note has the issued PDF, deliveries and printing, like an invoice.
+- A saved draft quote offers "Convert to invoice", which opens the new draft invoice; a converted quote links to its invoice, and the invoice links back to the quote.
+- The invoice list names credit notes. English only, like the other invoice screens.
+
 ## R2-E. Payments, allocations, refunds and balances (P3-04)
 
 Recording a payment never moves money, and the UI says so.

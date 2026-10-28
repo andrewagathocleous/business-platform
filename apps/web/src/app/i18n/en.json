@@ -423,7 +423,8 @@
     },
     "type": {
       "invoice": "Invoice",
-      "quote": "Quote"
+      "quote": "Quote",
+      "creditNote": "Credit note"
     },
     "kind": {
       "item": "Item",
@@ -574,7 +575,85 @@
       "discardHelp": "The new attempt was refused, but the first one may still have been queued. Check the history above: discard this request only if the print is not there.",
       "discard": "Discard this request"
     },
-    "datesAtIssue": "An invoice gets its issue date when it is issued, and its due date from the client's or the company's payment terms. The due date shown here is a preview."
+    "datesAtIssue": "An invoice gets its issue date when it is issued, and its due date from the client's or the company's payment terms. The due date shown here is a preview.",
+    "credit": {
+      "title": "Credit notes",
+      "none": "No credit notes yet.",
+      "unnumbered": "Draft",
+      "allCredited": "Everything on this invoice has been credited.",
+      "start": "Create a credit note",
+      "reason": "Reason (printed on the credit note)",
+      "what": "What to credit",
+      "full": "Everything not yet credited",
+      "someLines": "Chosen quantities",
+      "columns": {
+        "line": "Line",
+        "invoiced": "Invoiced",
+        "credited": "Credited so far",
+        "toCredit": "To credit"
+      },
+      "quantityFor": "Quantity to credit on line {{position}}",
+      "draftNote": "This makes a draft. Nothing is credited until the credit note is issued.",
+      "create": "Create draft",
+      "created": "The draft credit note was created.",
+      "openCreated": "Open it",
+      "rules": {
+        "reason": "Give a reason.",
+        "quantity": "Quantities must be numbers above zero with at most 4 decimals.",
+        "tooMuch": "A quantity is more than is left to credit on its line.",
+        "noLines": "Enter a quantity on at least one line."
+      },
+      "errors": {
+        "overCredit": "That credits more than the invoice shows, counting issued credit notes. Reload the invoice to see what is left.",
+        "nothingLeft": "Everything on this invoice has been credited.",
+        "invalidLine": "A line is not on this invoice. Reload the invoice.",
+        "notCreditable": "Only an issued invoice can be credited.",
+        "quantity": "Quantities must be numbers above zero with at most 4 decimals.",
+        "failed": "The credit note was not created."
+      }
+    },
+    "creditNote": {
+      "pageTitle": "Credit note",
+      "title": "Credit note {{number}}",
+      "draftTitle": "Credit note (draft)",
+      "credits": "Credits invoice",
+      "reason": "Reason",
+      "total": "Total credited",
+      "unsaved": "Save to see the amounts for the new quantities.",
+      "issueTitle": "Issue",
+      "issueAction": "Issue credit note",
+      "saveFirst": "Save the draft first. Issuing uses the saved draft.",
+      "confirmText": "Issuing gives this credit note its number in the credit-note series, works out its amounts again, freezes it and stores the PDF. An issued credit note cannot be edited or deleted.",
+      "incomplete": "The credit note is missing details it must show:",
+      "fields": {
+        "series_missing": "Choose a default credit-note series (Admin → Invoicing)."
+      },
+      "errors": {
+        "overCredit": "These quantities credit more than is left on the invoice, counting issued credit notes.",
+        "overCreditAtIssue": "Other credit notes of this invoice were issued after this draft was saved, and this one would now credit too much. Lower its quantities and save.",
+        "changed": "A line no longer matches the invoice line it credits. Create a new credit note instead.",
+        "series": "The default credit-note series is not active (Admin → Invoicing).",
+        "saveFailed": "The credit note was not saved.",
+        "issueFailed": "The credit note was not issued."
+      }
+    },
+    "convert": {
+      "title": "Convert to invoice",
+      "explain": "This makes a new draft invoice with the quote's lines. The quote stays as it is and converts only once.",
+      "action": "Convert to invoice",
+      "saveFirst": "Save the quote first. Converting uses the saved quote.",
+      "done": "This quote was converted to an invoice.",
+      "open": "Open the invoice",
+      "fromQuote": "Made from a quote.",
+      "openQuote": "Open the quote",
+      "errors": {
+        "already": "This quote was already converted to an invoice.",
+        "currency": "Invoices are in the company currency only, and this client uses another currency.",
+        "taxCodeInactive": "A line's tax code is no longer active. Change it on the quote and save.",
+        "notDraft": "Only a draft quote can be converted.",
+        "failed": "The quote was not converted."
+      }
+    }
   },
   "members": {
     "title": "Members",
