@@ -141,7 +141,7 @@ Every write is audited, versioned (`expectedVersion`, 409 `version_conflict`) an
    - on tax-inclusive documents, the derived VAT-exclusive unit price: unit price × 100 / (100 + rate), half-up to 4 decimals. A unit test checks that €11.90 at 19 % prints €10.00.
 
    Then: Render it from the snapshot with the current template, write it through the storage adapter under a new, write-once key, and store its SHA-256 in a `stored_file` row. That file is the legal document.
-   - If the transaction then rolls back, the written object is an orphan. A cleanup job deletes objects with no `stored_file` row after a day.
+   - If the transaction then rolls back, the written object is an orphan. A cleanup job deletes objects with no `stored_file` row after a day. *Deferred to BACKLOG H-05 (2026-10-28): an orphan is never served, and an automatic deleter risks an issued invoice.*
    - Rendering under the series lock serialises issues for about 100 ms each, which is fine at this scale.
 9. Set `status = issued`, `issued_at`, `issued_by` and `pdf_file_id`. Audit `invoice.issued` with the number and total.
 
