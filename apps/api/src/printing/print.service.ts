@@ -67,6 +67,11 @@ export type PrintRequestInput = {
   /** Invoices only: the location whose `invoice` mapping to use, when several have one. */
   locationId?: string;
   reprint?: { ofPrintJobId: string; reason: string };
+  /**
+   * The caller's key for this one request. Sending it again (after a lost answer) returns the
+   * job it already created instead of queuing another print.
+   */
+  requestKey?: string;
 };
 
 type NewPrintJob = {
@@ -80,6 +85,8 @@ type NewPrintJob = {
   paperSize: string;
   reprintOfId: string | null;
   reprintReason: string | null;
+  requestKey: string | null;
+  requestHash: string | null;
 };
 
 export type PrintJobView = {
@@ -185,6 +192,19 @@ export class PrintService {
       );
       return { printJob };
     } catch (error) {
+      if (input.requestKey && (isRequestKeyConflict(error) || isFirstPrintConflict(error))) {
+        // An earlier attempt with this key may have committed while this one ran (either unique
+        // index can report it first): return its job.
+        const replay = await this.tenants.run(this.context(ctx, actor, correlationId), (tx) =>
+          this.byRequestKey(tx, ctx.companyId, input),
+        );
+        if (replay) {
+          return { printJob: replay };
+        }
+        if (replay === null) {
+          return this.fail(ctx, meta, requestKeyReused());
+        }
+      }
       if (isFirstPrintConflict(error)) {
         const existingId = await this.existingFirstPrint(ctx, actor, correlationId, input);
         return this.fail(
@@ -760,6 +780,15 @@ export class PrintService {
     input: PrintRequestInput,
     meta: RequestMeta,
   ): Promise<PrintJobView> {
+    if (input.requestKey) {
+      const replay = await this.byRequestKey(tx, ctx.companyId, input);
+      if (replay === null) {
+        throw requestKeyReused();
+      }
+      if (replay) {
+        return replay;
+      }
+    }
     if (input.sourceType === 'invoice') {
       return this.insertInvoiceRequest(tx, ctx, actor, correlationId, input, meta);
     }
@@ -930,6 +959,8 @@ export class PrintService {
       paperSize: mapping.paperSize,
       reprintOfId,
       reprintReason: input.reprint?.reason ?? null,
+      requestKey: input.requestKey?.toLowerCase() ?? null,
+      requestHash: input.requestKey ? requestHash(input) : null,
     };
     await this.insertPrintJob(tx, ctx.companyId, actor, correlationId, job);
     await this.storage.put(key, rendered.pdf);
@@ -1126,6 +1157,8 @@ export class PrintService {
       paperSize: mapping.paperSize,
       reprintOfId,
       reprintReason: input.reprint?.reason ?? null,
+      requestKey: input.requestKey?.toLowerCase() ?? null,
+      requestHash: input.requestKey ? requestHash(input) : null,
     };
     await this.insertPrintJob(tx, ctx.companyId, actor, correlationId, job);
     await this.attachAndQueue(
@@ -1165,6 +1198,29 @@ export class PrintService {
     return this.mustLoad(tx, ctx.companyId, printJobId);
   }
 
+  /**
+   * The job an earlier request with this key created: `undefined` when there is none yet,
+   * `null` when the key belongs to a request that differs in anything (see requestHash).
+   */
+  private async byRequestKey(
+    tx: TenantTransaction,
+    companyId: string,
+    input: PrintRequestInput,
+  ): Promise<PrintJobView | null | undefined> {
+    const key = input.requestKey?.toLowerCase();
+    if (!key) {
+      return undefined;
+    }
+    const job = await tx.printJob.findFirst({
+      where: { companyId, requestKey: key },
+      select: { id: true, requestHash: true },
+    });
+    if (!job) {
+      return undefined;
+    }
+    return job.requestHash === requestHash(input) ? this.mustLoad(tx, companyId, job.id) : null;
+  }
+
   /** One `print_job` row, queued, with no file yet. Shared by orders and invoices. */
   private async insertPrintJob(
     tx: TenantTransaction,
@@ -1177,7 +1233,7 @@ export class PrintService {
       INSERT INTO print_job (
         id, company_id, printer_id, document_type, source_type, source_id, source_version,
         copies, paper_size, status, is_reprint, reprint_of_id, reprint_reason, idempotency_key,
-        requested_by, correlation_id, created_at, updated_at
+        request_key, request_hash, requested_by, correlation_id, created_at, updated_at
       ) VALUES (
         ${job.printJobId}::uuid,
         ${companyId}::uuid,
@@ -1193,6 +1249,8 @@ export class PrintService {
         ${job.reprintOfId}::uuid,
         ${job.reprintReason},
         ${`pj_${job.printJobId}`},
+        ${job.requestKey}::uuid,
+        ${job.requestHash},
         ${actor}::uuid,
         ${correlationId},
         clock_timestamp(),
@@ -1719,6 +1777,36 @@ function scopeFilter(storeIds: string[], locationIds: string[]): Prisma.Sql {
     return Prisma.sql`FALSE`;
   }
   return Prisma.sql`(${Prisma.join(parts, ' OR ')})`;
+}
+
+function isRequestKeyConflict(error: unknown): boolean {
+  return errorText(error).includes('print_job_company_request_key');
+}
+
+/** Everything the caller asked for. A key sent again must come with exactly this request. */
+function requestHash(input: PrintRequestInput): string {
+  const canonical = JSON.stringify([
+    input.sourceType,
+    input.sourceId.toLowerCase(),
+    input.documentType,
+    input.copies ?? null,
+    input.printerId?.toLowerCase() ?? null,
+    input.locationId?.toLowerCase() ?? null,
+    input.reprint?.ofPrintJobId.toLowerCase() ?? null,
+    input.reprint?.reason ?? null,
+  ]);
+  return createHash('sha256').update(canonical).digest('hex');
+}
+
+function requestKeyReused(): CommerceError {
+  return new CommerceError(
+    409,
+    'request_key_reused',
+    'print_job',
+    null,
+    'This request key belongs to a different print request.',
+    'print_job.requested',
+  );
 }
 
 function isFirstPrintConflict(error: unknown): boolean {

@@ -722,6 +722,87 @@ describe('issuing invoices', () => {
     });
     expect(reprint.status, text(reprint)).toBe(200);
     expect(record(record(reprint.body).printJob)).toMatchObject({ isReprint: true, copies: 1 });
+    // The detail lists the document's print jobs, newest first, for history and reprints.
+    const detail = await send(
+      admin,
+      'get',
+      `/api/c/${company}/invoices/${draft.id}`,
+      cid('print-detail'),
+    );
+    expect(
+      arrayOf(record(record(detail.body).invoice).printJobs).map((entry) => [
+        record(entry).isReprint,
+        record(entry).copies,
+      ]),
+    ).toEqual([
+      [true, 1],
+      [false, 2],
+    ]);
+    expect(record(record(detail.body).invoice).firstPrintJobId).toBe(jobId);
+    expect(
+      arrayOf(record(record(detail.body).invoice).printJobs).every(
+        (entry) => record(entry).simulationLabel === 'Simulated — no physical printing',
+      ),
+    ).toBe(true);
+
+    // Sending a reprint again with its request key returns the same job; nothing is queued twice.
+    const requestKey = randomUUID();
+    const body = {
+      copies: 1,
+      reprint: { ofPrintJobId: jobId, reason: 'Answer lost, sent again' },
+      requestKey,
+    };
+    const once = await printInvoice(draft.id, 'print-key-1', body);
+    expect(once.status, text(once)).toBe(200);
+    const keyed = stringField(record(record(once.body).printJob), 'id');
+    const resent = await printInvoice(draft.id, 'print-key-2', body);
+    expect(resent.status, text(resent)).toBe(200);
+    expect(stringField(record(record(resent.body).printJob), 'id')).toBe(keyed);
+    // Concurrent sends of one new key create one job.
+    const raceKey = randomUUID();
+    const racing = await Promise.all(
+      [1, 2, 3].map((index) =>
+        printInvoice(draft.id, `print-key-race-${String(index)}`, { ...body, requestKey: raceKey }),
+      ),
+    );
+    expect(racing.map((response) => response.status)).toEqual([200, 200, 200]);
+    expect(
+      new Set(racing.map((response) => stringField(record(record(response.body).printJob), 'id')))
+        .size,
+    ).toBe(1);
+    // Concurrent first prints of another invoice with one key also make one job.
+    const second = await createDraft({ clientId: paperClient });
+    const secondIssued = await issue(second.id, second.version, cid('print-key-first-issue'));
+    expect(secondIssued.status, text(secondIssued)).toBe(200);
+    const firstKey = randomUUID();
+    const firsts = await Promise.all(
+      [1, 2, 3].map((index) =>
+        printInvoice(second.id, `print-key-first-${String(index)}`, { requestKey: firstKey }),
+      ),
+    );
+    expect(firsts.map((response) => response.status)).toEqual([200, 200, 200]);
+    expect(
+      new Set(firsts.map((response) => stringField(record(record(response.body).printJob), 'id')))
+        .size,
+    ).toBe(1);
+    // A key sent with anything different (another kind of request, or other copies) is refused.
+    for (const [name, changed] of [
+      ['print-key-misused', { requestKey }],
+      ['print-key-copies', { ...body, copies: 2 }],
+    ] as const) {
+      const misused = await printInvoice(draft.id, name, changed);
+      expect(misused.status).toBe(409);
+      expect(errorCode(misused.body)).toBe('request_key_reused');
+    }
+    const keyedJobs = await inCompany(company, (tx) =>
+      tx.printJob.findMany({
+        where: { companyId: company, requestKey: { in: [requestKey, raceKey] } },
+        select: { id: true, idempotencyKey: true },
+      }),
+    );
+    expect(keyedJobs).toHaveLength(2);
+    // The provider still gets one idempotency key per job, never the caller's key.
+    expect(keyedJobs.every((row) => row.idempotencyKey === `pj_${row.id}`)).toBe(true);
   });
 
   it('refuses to print an invoice for someone who cannot view invoices', async () => {

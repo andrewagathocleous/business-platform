@@ -1,6 +1,6 @@
 import { convertToParamMap } from '@angular/router';
 import { describe, expect, it } from 'vitest';
-import { invoicesHttpParams, parseInvoiceQuery } from './invoice-query';
+import { invalidInvoiceFilters, invoicesHttpParams, parseInvoiceQuery } from './invoice-query';
 
 describe('parseInvoiceQuery', () => {
   it('drops an impossible date and keeps the valid status', () => {
@@ -24,5 +24,14 @@ describe('parseInvoiceQuery', () => {
   it('keeps a real calendar date', () => {
     const params = convertToParamMap({ from: '2026-10-21', to: '2026-10-21' });
     expect(parseInvoiceQuery(params)).toMatchObject({ from: '2026-10-21', to: '2026-10-21' });
+  });
+
+  it('keeps the not-delivered filter and reports any other delivery value', () => {
+    const pending = parseInvoiceQuery(convertToParamMap({ delivery: 'pending' }));
+    expect(pending.delivery).toBe('pending');
+    expect(invoicesHttpParams(pending).get('delivery')).toBe('pending');
+    const other = convertToParamMap({ delivery: 'late' });
+    expect(parseInvoiceQuery(other).delivery).toBe('');
+    expect(invalidInvoiceFilters(other)).toEqual(['delivery']);
   });
 });

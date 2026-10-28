@@ -1209,6 +1209,10 @@ model PrintJob {
   reprints        PrintJob[]        @relation("Reprint")
   reprintReason   String?           @map("reprint_reason")
   idempotencyKey  String            @map("idempotency_key")
+  /// The caller's key for one request (R2-C3c). Unique per company when present (partial index
+  /// print_job_company_request_key in SQL). request_hash fingerprints that request.
+  requestKey      String?           @map("request_key") @db.Uuid
+  requestHash     String?           @map("request_hash")
   providerJobId   String?           @map("provider_job_id")
   providerState   String?           @map("provider_state")
   requestedById   String            @map("requested_by") @db.Uuid

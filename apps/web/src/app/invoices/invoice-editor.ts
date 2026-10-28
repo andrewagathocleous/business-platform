@@ -13,6 +13,9 @@ import { canAttempt } from '../core/nav';
 import { NAVIGATE_ON_DENIED } from '../core/navigate-on-denied';
 import { dropNavigationKey, navigationState } from '../core/navigation-state';
 import { fieldValue } from '../orders/field-value';
+import { type DeadlineState, companyToday, deadlineState } from './delivery-deadline';
+import { calendarDate } from './invoice-query';
+import { type DeliveryView, type InvoicePrintJob, IssuedActions } from './issued-actions';
 import { type LineDraft, type LineKind, emptyLine, lineRequests, moveLine } from './invoice-lines';
 
 export const PREVIEW_DEBOUNCE_MS = 400;
@@ -64,6 +67,13 @@ type InvoiceView = {
   pricesIncludeTax: boolean;
   issueDate: string | null;
   dueDate: string | null;
+  supplyDate?: string | null;
+  deliveryDeadline?: string | null;
+  number?: string | null;
+  lastDeliveredOn?: string | null;
+  deliveries?: DeliveryView[];
+  printJobs?: InvoicePrintJob[];
+  firstPrintJobId?: string | null;
   reference: string | null;
   notes: string | null;
   terms: string | null;
@@ -103,6 +113,7 @@ type CarriedInvoice = {
   pricesIncludeTax: boolean;
   issueDate: string;
   dueDate: string;
+  supplyDate: string;
   reference: string;
   notes: string;
   terms: string;
@@ -110,10 +121,20 @@ type CarriedInvoice = {
   lines: LineDraft[];
 };
 
+/** API error codes of the issue call, and the message each shows. */
+const ISSUE_ERRORS: Readonly<Record<string, string>> = {
+  issuance_disabled: 'invoices.issue.errors.disabled',
+  currency_not_supported: 'invoices.issue.errors.currency',
+  number_taken: 'invoices.issue.errors.numberTaken',
+  series_unavailable: 'invoices.issue.errors.series',
+  tax_code_changed: 'invoices.issue.errors.taxCodeChanged',
+  not_draft: 'invoices.issue.errors.notDraft',
+};
+
 @Component({
   selector: 'bp-invoice-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, RouterLink, Button, Tag],
+  imports: [TranslocoPipe, RouterLink, Button, Tag, IssuedActions],
   template: `
     <section class="screen">
       @if (conflict(); as item) {
@@ -138,6 +159,28 @@ type CarriedInvoice = {
       @if (!loading() && !loadError()) {
         @if (readOnly()) {
           <p>{{ 'invoices.readOnly' | transloco }}</p>
+        }
+        @if (status() === 'issued') {
+          <section class="card" data-testid="issued-summary">
+            <h2>{{ 'invoices.issued.title' | transloco: { number: number() ?? '' } }}</h2>
+            <p>
+              {{ 'invoices.issued.deadline' | transloco: { date: dateLabel(deliveryDeadline()) } }}
+              @switch (deadline()) {
+                @case ('overdue') {
+                  <p-tag severity="danger" [value]="'invoices.deadline.overdue' | transloco" />
+                }
+                @case ('soon') {
+                  <p-tag severity="warn" [value]="'invoices.deadline.soon' | transloco" />
+                }
+              }
+            </p>
+            @if (lastDeliveredOn(); as delivered) {
+              <p>{{ 'invoices.issued.delivered' | transloco: { date: dateLabel(delivered) } }}</p>
+            }
+            @for (warning of issueWarnings(); track warning) {
+              <p role="status">{{ 'invoices.issue.warnings.' + warning | transloco }}</p>
+            }
+          </section>
         }
         <form class="form-grid" (submit)="$event.preventDefault()">
           @if (client(); as chosen) {
@@ -206,7 +249,7 @@ type CarriedInvoice = {
             {{ 'invoices.fields.issueDate' | transloco }}
             <input
               type="date"
-              [disabled]="readOnly()"
+              [disabled]="readOnly() || datesSetAtIssue()"
               [value]="issueDate()"
               (change)="setIssueDate($event)"
             />
@@ -215,9 +258,21 @@ type CarriedInvoice = {
             {{ 'invoices.fields.dueDate' | transloco }}
             <input
               type="date"
-              [disabled]="readOnly()"
+              [disabled]="readOnly() || datesSetAtIssue()"
               [value]="dueDate()"
               (change)="setDueDate($event)"
+            />
+          </label>
+          @if (datesSetAtIssue()) {
+            <p class="span-all">{{ 'invoices.datesAtIssue' | transloco }}</p>
+          }
+          <label>
+            {{ 'invoices.fields.supplyDate' | transloco }}
+            <input
+              type="date"
+              [disabled]="readOnly()"
+              [value]="supplyDate()"
+              (change)="setSupplyDate($event)"
             />
           </label>
           <label class="span-all">
@@ -469,10 +524,71 @@ type CarriedInvoice = {
           @if (invoiceId()) {
             <div class="actions">
               <a class="text-action" [href]="pdfHref()" target="_blank" rel="noopener">{{
-                'invoices.openPdf' | transloco
+                (status() === 'issued' ? 'invoices.openIssuedPdf' : 'invoices.openPdf') | transloco
               }}</a>
-              <p-tag severity="warn" [value]="'invoices.draftNotice' | transloco" />
+              @if (status() !== 'issued') {
+                <p-tag severity="warn" [value]="'invoices.draftNotice' | transloco" />
+              }
             </div>
+          }
+          @if (status() === 'issued' && invoiceId(); as id) {
+            <bp-issued-actions
+              [companyId]="companyId()"
+              [invoiceId]="id"
+              [deliveries]="deliveries()"
+              [printJobs]="printJobs()"
+              [firstPrintJobId]="firstPrintJobId()"
+              (changed)="reload()"
+            />
+          }
+          @if (canIssue()) {
+            <section class="card span-all" data-testid="issue-panel">
+              <h2>{{ 'invoices.issue.title' | transloco }}</h2>
+              @if (dirty()) {
+                <p>{{ 'invoices.issue.saveFirst' | transloco }}</p>
+              }
+              @if (confirmingIssue()) {
+                <p role="alert">{{ 'invoices.issue.confirmText' | transloco }}</p>
+                <div class="form-actions">
+                  <p-button
+                    type="button"
+                    [label]="'invoices.issue.confirm' | transloco"
+                    [disabled]="busy() || dirty()"
+                    (onClick)="confirmIssue()"
+                  />
+                  <p-button
+                    type="button"
+                    severity="secondary"
+                    [label]="'invoices.issue.cancel' | transloco"
+                    [disabled]="busy()"
+                    (onClick)="cancelIssue()"
+                  />
+                </div>
+              } @else {
+                <p-button
+                  type="button"
+                  [label]="'invoices.issue.action' | transloco"
+                  [disabled]="busy() || dirty()"
+                  (onClick)="startIssue()"
+                />
+              }
+              @if (issueProblems().length > 0) {
+                <div role="alert">
+                  <p>{{ 'invoices.issue.incomplete' | transloco }}</p>
+                  <ul>
+                    @for (problem of issueProblems(); track problem) {
+                      <li>{{ problemText(problem) }}</li>
+                    }
+                  </ul>
+                </div>
+              }
+              @if (issueError(); as failure) {
+                <p role="alert">{{ failure.key | transloco }}</p>
+                @if (failure.correlationId) {
+                  <p>{{ 'errors.correlation' | transloco }}: {{ failure.correlationId }}</p>
+                }
+              }
+            </section>
           }
         </form>
       }
@@ -504,6 +620,21 @@ export class InvoiceEditorPage {
   readonly pricesIncludeTax = signal(false);
   readonly issueDate = signal('');
   readonly dueDate = signal('');
+  readonly supplyDate = signal('');
+  readonly number = signal<string | null>(null);
+  readonly deliveryDeadline = signal<string | null>(null);
+  readonly lastDeliveredOn = signal<string | null>(null);
+  readonly deliveries = signal<DeliveryView[]>([]);
+  readonly printJobs = signal<InvoicePrintJob[]>([]);
+  readonly firstPrintJobId = signal<string | null>(null);
+  /** An issue request is in flight: the draft cannot change under it. */
+  readonly issuing = signal(false);
+  /** Edited since the last save or load. Issuing uses the saved draft, so it waits for a save. */
+  readonly dirty = signal(false);
+  readonly confirmingIssue = signal(false);
+  readonly issueProblems = signal<string[]>([]);
+  readonly issueError = signal<{ key: string; correlationId: string | null } | null>(null);
+  readonly issueWarnings = signal<string[]>([]);
   readonly reference = signal('');
   readonly notes = signal('');
   readonly terms = signal('');
@@ -569,7 +700,7 @@ export class InvoiceEditorPage {
   }
 
   readOnly(): boolean {
-    if (!this.canDraft()) {
+    if (!this.canDraft() || this.issuing()) {
       return true;
     }
     const status = this.status();
@@ -583,6 +714,119 @@ export class InvoiceEditorPage {
       this.context.mfaStepUpRequired(),
       'invoice.draft',
     );
+  }
+
+  canIssue(): boolean {
+    return (
+      this.invoiceId() !== null &&
+      this.status() === 'draft' &&
+      this.documentType() === 'invoice' &&
+      canAttempt(
+        this.context.grants(),
+        this.context.withheldPermissions(),
+        this.context.mfaStepUpRequired(),
+        'invoice.issue',
+      )
+    );
+  }
+
+  /** An invoice draft's issue and due dates are set when it is issued, so they are not edited. */
+  datesSetAtIssue(): boolean {
+    return (
+      this.documentType() === 'invoice' && (this.status() === null || this.status() === 'draft')
+    );
+  }
+
+  deadline(): DeadlineState {
+    if (this.status() !== 'issued') {
+      return 'none';
+    }
+    return deadlineState(
+      this.deliveryDeadline(),
+      this.lastDeliveredOn() !== null,
+      companyToday(this.context.timezone()),
+    );
+  }
+
+  dateLabel(value: string | null): string {
+    return calendarDate(value);
+  }
+
+  /** `lines.2.legalNote` reads "Line 2: …"; other codes have a message each. */
+  problemText(code: string): string {
+    const line = /^lines\.(\d+)\.([A-Za-z]+)$/.exec(code);
+    const key = line
+      ? `invoices.issue.fields.line.${line[2] ?? ''}`
+      : `invoices.issue.fields.${code.replace(/\./g, '_')}`;
+    const translated = text(this.transloco.translate(key, line ? { position: line[1] } : {}));
+    if (translated.length > 0 && translated !== key) {
+      return translated;
+    }
+    return text(this.transloco.translate('invoices.issue.fields.unknown', { code }));
+  }
+
+  startIssue(): void {
+    if (!this.canIssue() || this.dirty() || this.busy()) {
+      return;
+    }
+    this.issueProblems.set([]);
+    this.issueError.set(null);
+    this.confirmingIssue.set(true);
+  }
+
+  cancelIssue(): void {
+    if (!this.busy()) {
+      this.confirmingIssue.set(false);
+    }
+  }
+
+  confirmIssue(): void {
+    const invoiceId = this.invoiceId();
+    if (!invoiceId || !this.canIssue() || this.dirty() || !this.begin()) {
+      return;
+    }
+    const generation = this.generation;
+    this.issueProblems.set([]);
+    this.issueError.set(null);
+    this.issuing.set(true);
+    this.http
+      .post<{ invoice: InvoiceView; warnings: string[] }>(
+        `/api/c/${this.companyId()}/invoices/${invoiceId}/issue`,
+        { expectedVersion: this.version ?? 0 },
+      )
+      .subscribe({
+        next: (response) => {
+          if (generation !== this.generation) {
+            return;
+          }
+          this.issuing.set(false);
+          this.busy.set(false);
+          this.confirmingIssue.set(false);
+          this.apply(response.invoice);
+          this.issueWarnings.set(response.warnings);
+        },
+        error: (error: unknown) => {
+          if (generation !== this.generation) {
+            return;
+          }
+          this.issuing.set(false);
+          this.confirmingIssue.set(false);
+          if (isVersionConflict(error)) {
+            this.fail(generation, error);
+            return;
+          }
+          this.busy.set(false);
+          const body = error instanceof HttpErrorResponse ? readApiError(error) : null;
+          if (body?.code === 'invoice_incomplete' && body.fields.length > 0) {
+            this.issueProblems.set(body.fields);
+            return;
+          }
+          this.issueError.set({
+            key: ISSUE_ERRORS[body?.code ?? ''] ?? 'invoices.issue.errors.failed',
+            correlationId: body?.correlationId ?? null,
+          });
+        },
+      });
   }
 
   errorFor(field: string): string | null {
@@ -650,6 +894,11 @@ export class InvoiceEditorPage {
   setDueDate(event: Event): void {
     this.touch();
     this.dueDate.set(fieldValue(event));
+  }
+
+  setSupplyDate(event: Event): void {
+    this.touch();
+    this.supplyDate.set(fieldValue(event));
   }
 
   setReference(event: Event): void {
@@ -782,6 +1031,7 @@ export class InvoiceEditorPage {
       pricesIncludeTax: this.pricesIncludeTax(),
       issueDate: this.issueDate().length > 0 ? this.issueDate() : null,
       dueDate: this.dueDate().length > 0 ? this.dueDate() : null,
+      supplyDate: this.supplyDate().length > 0 ? this.supplyDate() : null,
       reference: this.reference().length > 0 ? this.reference() : null,
       notes: this.notes().length > 0 ? this.notes() : null,
       terms: this.terms().length > 0 ? this.terms() : null,
@@ -848,6 +1098,7 @@ export class InvoiceEditorPage {
           pricesIncludeTax: this.pricesIncludeTax(),
           issueDate: this.issueDate(),
           dueDate: this.dueDate(),
+          supplyDate: this.supplyDate(),
           reference: this.reference(),
           notes: this.notes(),
           terms: this.terms(),
@@ -874,6 +1125,7 @@ export class InvoiceEditorPage {
     this.pricesIncludeTax.set(carried.pricesIncludeTax);
     this.issueDate.set(carried.issueDate);
     this.dueDate.set(carried.dueDate);
+    this.supplyDate.set(carried.supplyDate);
     this.reference.set(carried.reference);
     this.notes.set(carried.notes);
     this.terms.set(carried.terms);
@@ -882,6 +1134,8 @@ export class InvoiceEditorPage {
     this.client.set(carried.client);
     this.clientQuery.set(carried.client?.displayName ?? '');
     this.lines.set(carried.lines.map((line) => ({ ...line })));
+    // The carried draft has edits made while it was being created; they are not saved yet.
+    this.dirty.set(true);
     this.loading.set(false);
     this.loadError.set(false);
     this.schedulePreview();
@@ -893,6 +1147,19 @@ export class InvoiceEditorPage {
     this.pricesIncludeTax.set(false);
     this.issueDate.set('');
     this.dueDate.set('');
+    this.supplyDate.set('');
+    this.number.set(null);
+    this.deliveryDeadline.set(null);
+    this.lastDeliveredOn.set(null);
+    this.deliveries.set([]);
+    this.printJobs.set([]);
+    this.firstPrintJobId.set(null);
+    this.issuing.set(false);
+    this.dirty.set(false);
+    this.confirmingIssue.set(false);
+    this.issueProblems.set([]);
+    this.issueError.set(null);
+    this.issueWarnings.set([]);
     this.reference.set('');
     this.notes.set('');
     this.terms.set('');
@@ -1031,6 +1298,14 @@ export class InvoiceEditorPage {
     this.pricesIncludeTax.set(invoice.pricesIncludeTax);
     this.issueDate.set(invoice.issueDate ?? '');
     this.dueDate.set(invoice.dueDate ?? '');
+    this.supplyDate.set(invoice.supplyDate ?? '');
+    this.number.set(invoice.number ?? null);
+    this.deliveryDeadline.set(invoice.deliveryDeadline ?? null);
+    this.lastDeliveredOn.set(invoice.lastDeliveredOn ?? null);
+    this.deliveries.set(invoice.deliveries ?? []);
+    this.printJobs.set(invoice.printJobs ?? []);
+    this.firstPrintJobId.set(invoice.firstPrintJobId ?? null);
+    this.dirty.set(false);
     this.reference.set(invoice.reference ?? '');
     this.notes.set(invoice.notes ?? '');
     this.terms.set(invoice.terms ?? '');
@@ -1089,6 +1364,7 @@ export class InvoiceEditorPage {
 
   private touch(): void {
     this.draftRevision += 1;
+    this.dirty.set(true);
   }
 
   private loadCatalog(companyId: string): void {
@@ -1187,6 +1463,7 @@ function carriedInvoiceFrom(value: unknown): CarriedInvoice | null {
   if (
     typeof value['issueDate'] !== 'string' ||
     typeof value['dueDate'] !== 'string' ||
+    (value['supplyDate'] !== undefined && typeof value['supplyDate'] !== 'string') ||
     typeof value['reference'] !== 'string' ||
     typeof value['notes'] !== 'string' ||
     typeof value['terms'] !== 'string'
@@ -1214,6 +1491,8 @@ function carriedInvoiceFrom(value: unknown): CarriedInvoice | null {
     pricesIncludeTax: value['pricesIncludeTax'],
     issueDate: value['issueDate'],
     dueDate: value['dueDate'],
+    // History state saved before the supply date existed has none: empty means the issue date.
+    supplyDate: typeof value['supplyDate'] === 'string' ? value['supplyDate'] : '',
     reference: value['reference'],
     notes: value['notes'],
     terms: value['terms'],

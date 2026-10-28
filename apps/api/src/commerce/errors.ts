@@ -29,6 +29,7 @@ const CODED_CONFLICTS = new Set([
   'tax_code_changed',
   'not_issued',
   'e_invoice_not_accepted',
+  'request_key_reused',
 ]);
 
 /** 409 reasons that are refusals by a switch, so they are audited as denials. */

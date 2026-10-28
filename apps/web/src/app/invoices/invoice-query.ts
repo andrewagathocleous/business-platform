@@ -14,22 +14,27 @@ function invoiceStatus(value: string | null): InvoiceStatusFilter {
   return '';
 }
 
+/** `pending`: issued documents with no delivery recorded, earliest deadline first. */
+export type DeliveryFilter = '' | 'pending';
+
 export type InvoiceQuery = {
   q: string;
   status: InvoiceStatusFilter;
+  delivery: DeliveryFilter;
   clientId: string;
   from: string;
   to: string;
 };
 
 export function defaultInvoiceQuery(): InvoiceQuery {
-  return { q: '', status: '', clientId: '', from: '', to: '' };
+  return { q: '', status: '', delivery: '', clientId: '', from: '', to: '' };
 }
 
 export function parseInvoiceQuery(params: ParamMap): InvoiceQuery {
   return {
     q: boundedText(params.get('q'), 200),
     status: invoiceStatus(params.get('status')),
+    delivery: params.get('delivery') === 'pending' ? 'pending' : '',
     clientId: uuidParam(params.get('clientId')),
     from: dateParam(params.get('from')),
     to: dateParam(params.get('to')),
@@ -43,6 +48,9 @@ export function serializeInvoiceQuery(query: InvoiceQuery): Params {
   }
   if (query.status.length > 0) {
     params['status'] = query.status;
+  }
+  if (query.delivery.length > 0) {
+    params['delivery'] = query.delivery;
   }
   if (query.clientId.length > 0) {
     params['clientId'] = query.clientId;
@@ -70,6 +78,10 @@ export function invalidInvoiceFilters(params: ParamMap): string[] {
   if (status !== null && status.length > 0 && invoiceStatus(status) === '') {
     invalid.push('status');
   }
+  const delivery = params.get('delivery');
+  if (delivery !== null && delivery.length > 0 && delivery !== 'pending') {
+    invalid.push('delivery');
+  }
   const clientId = params.get('clientId');
   if (clientId !== null && clientId.length > 0 && uuidParam(clientId) === '') {
     invalid.push('clientId');
@@ -94,6 +106,9 @@ export function invoicesHttpParams(query: InvoiceQuery): HttpParams {
   }
   if (query.status.length > 0) {
     http = http.set('status', query.status);
+  }
+  if (query.delivery.length > 0) {
+    http = http.set('delivery', query.delivery);
   }
   if (query.clientId.length > 0) {
     http = http.set('clientId', query.clientId);

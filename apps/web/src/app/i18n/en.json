@@ -402,7 +402,8 @@
       "issueDate": "Issue date",
       "dueDate": "Due date",
       "status": "Status",
-      "total": "Total"
+      "total": "Total",
+      "deadline": "Deliver by"
     },
     "filters": {
       "status": "Status",
@@ -410,7 +411,10 @@
       "from": "From",
       "to": "To",
       "any": "Any status",
-      "anyClient": "Any client"
+      "anyClient": "Any client",
+      "delivery": "Delivery",
+      "deliveryAny": "Any",
+      "deliveryPending": "Not yet delivered"
     },
     "status": {
       "draft": "Draft",
@@ -449,7 +453,8 @@
       "unitPrice": "Unit price",
       "discount": "Discount %",
       "tax": "Tax code",
-      "kind": "Kind"
+      "kind": "Kind",
+      "supplyDate": "Supply date (empty: the issue date)"
     },
     "totals": {
       "subtotal": "Subtotal",
@@ -466,7 +471,110 @@
     "rules": {
       "client": "Choose a client",
       "lines": "Each line needs a description, quantity, unit, unit price and tax code"
-    }
+    },
+    "openIssuedPdf": "Open the issued PDF",
+    "issued": {
+      "title": "Invoice {{number}}",
+      "deadline": "Deliver to the client by {{date}}.",
+      "delivered": "Delivered on {{date}}."
+    },
+    "deadline": {
+      "soon": "Delivery deadline soon",
+      "overdue": "Delivery deadline passed"
+    },
+    "issue": {
+      "title": "Issue",
+      "action": "Issue invoice",
+      "confirm": "Issue now",
+      "cancel": "Cancel",
+      "confirmText": "Issuing gives this invoice its number, freezes every detail and stores the PDF. An issued invoice cannot be edited or deleted; corrections need a credit note.",
+      "saveFirst": "Save the draft first. Issuing uses the saved draft.",
+      "incomplete": "The invoice is missing details it must show:",
+      "warnings": {
+        "delivery_deadline_passed": "Issued after its delivery deadline. Deliver it to the client as soon as possible."
+      },
+      "errors": {
+        "disabled": "Issuing real invoices is switched off for this company (Admin → Automation).",
+        "currency": "Invoices are issued in EUR only.",
+        "numberTaken": "The next number is already used by another series. Give the series a different prefix (Admin → Invoicing).",
+        "series": "The default invoice series is not active (Admin → Invoicing).",
+        "taxCodeChanged": "A line has a VAT rate its tax code no longer has. Save the draft again.",
+        "notDraft": "This document is no longer a draft. Reload it.",
+        "failed": "The invoice was not issued."
+      },
+      "fields": {
+        "seller_legalName": "The company's legal name is missing (Admin → Company).",
+        "seller_address": "The company address needs a street and a city (Admin → Company).",
+        "seller_vatNumber": "The company's VAT number is missing (Admin → Company).",
+        "seller_vatNumber_prefix": "For a client in another EU country, the company's VAT number must start with CY.",
+        "buyer_address": "The client needs an address with a street and a city.",
+        "buyer_vatNumber": "Reverse charge needs the client's VAT number.",
+        "buyer_vatNumber_prefix": "The client's VAT number must start with its country code (EL for Greece).",
+        "lines": "Add at least one line.",
+        "total_negative": "The total cannot be negative. Use a credit note instead.",
+        "supplyDate_afterIssue": "The supply date cannot be later than today.",
+        "series_missing": "Choose a default invoice series (Admin → Invoicing).",
+        "line": {
+          "description": "Line {{position}}: add a description.",
+          "legalNote": "Line {{position}}: its tax code needs the legal note in English and Greek (Admin → Invoicing).",
+          "taxCodeInactive": "Line {{position}}: its tax code is no longer active."
+        },
+        "unknown": "Missing: {{code}}"
+      }
+    },
+    "delivery": {
+      "title": "Delivery to the client",
+      "none": "No delivery recorded yet.",
+      "method": "How",
+      "date": "Delivered on",
+      "keepCopy": "The company's paper copy is kept in the file",
+      "note": "Note",
+      "record": "Record delivery",
+      "copyKept": "copy kept",
+      "methods": {
+        "handed_over": "Handed over",
+        "posted": "Posted",
+        "emailed_outside_platform": "E-mailed (outside the platform)",
+        "other": "Other"
+      },
+      "warnings": {
+        "delivered_after_deadline": "Recorded after the delivery deadline."
+      },
+      "errors": {
+        "paperCopy": "Keep the company copy of a paper invoice, then record the delivery.",
+        "eInvoice": "This client has not accepted electronic invoices. Print it and deliver it on paper.",
+        "future": "The delivery date is in the future.",
+        "beforeIssue": "The delivery date is before the issue date.",
+        "notIssued": "Only an issued document is delivered.",
+        "failed": "The delivery was not recorded."
+      }
+    },
+    "print": {
+      "title": "Print",
+      "help": "Prints the stored PDF. For a client on paper it prints two copies: one to deliver, one for the file.",
+      "action": "Print invoice",
+      "alreadyPrinted": "This invoice was already printed. The history below is reloaded; a reprint needs a reason.",
+      "reason": "Reason for the reprint",
+      "reprint": "Reprint",
+      "errors": {
+        "notMapped": "No printer is set up for invoices (Admin → Printers).",
+        "location": "Several locations print invoices. Choose where to print, then print again.",
+        "paper": "The invoice printer does not take the mapped paper size (Admin → Printers).",
+        "notIssued": "Only an issued document is printed.",
+        "failed": "The invoice was not sent to the printer.",
+        "storage": "Nothing was sent: this browser would not keep a note of the request, so a lost answer could not be checked. Allow site storage for this page and try again."
+      },
+      "copies": "{{copies}} copies",
+      "reprinted": "reprint",
+      "uncertain": "Not sure whether it reached the print queue. Send the same request again: it cannot print twice.",
+      "location": "Print at",
+      "chooseLocation": "Choose a location",
+      "queued": "Sent to the printer queue: {{copies}} copies.",
+      "retry": "Send the same request again",
+      "discardHelp": "The new attempt was refused, but the first one may still have been queued. Check the history above: discard this request only if the print is not there.",
+      "discard": "Discard this request"
+    },
+    "datesAtIssue": "An invoice gets its issue date when it is issued, and its due date from the client's or the company's payment terms. The due date shown here is a preview."
   },
   "members": {
     "title": "Members",

@@ -20,7 +20,7 @@ import {
   type DocumentLanguage,
   type IssuedInvoicePdfInput,
 } from '@bp/documents';
-import { storageKey, type StorageAdapter } from '@bp/integrations';
+import { SIMULATED_PRINTING_LABEL, storageKey, type StorageAdapter } from '@bp/integrations';
 import { AuditService } from '../audit/audit.service';
 import { isUuid } from '../authz/company-path';
 import type { RequestContext } from '../authz/request-context';
@@ -148,6 +148,20 @@ export type InvoiceDetail = InvoiceSummary & {
   lines: InvoiceLineView[];
   taxSummary: TaxSummaryView[];
   deliveries: DeliveryView[];
+  /** Print jobs of an issued document, newest first (the latest 20): the history. */
+  printJobs: InvoicePrintJob[];
+  /** The first print that still counts, however old: another first print is refused; a reprint refers to it. */
+  firstPrintJobId: string | null;
+};
+
+export type InvoicePrintJob = {
+  id: string;
+  status: string;
+  isReprint: boolean;
+  copies: number;
+  createdAt: string;
+  /** Set for the mock provider: nothing is printed for real. */
+  simulationLabel: string | null;
 };
 
 export type DeliveryMethod = 'handed_over' | 'posted' | 'emailed_outside_platform' | 'other';
@@ -399,7 +413,7 @@ export class InvoiceService {
     const actor = requireActor(ctx);
     try {
       return await this.tenants.run(this.context(ctx, actor), async (tx) =>
-        toDetail(await this.load(tx, ctx.companyId, invoiceId)),
+        this.detail(tx, ctx.companyId, invoiceId),
       );
     } catch (error) {
       return this.fail(ctx, meta, error);
@@ -455,7 +469,7 @@ export class InvoiceService {
           userAgent: meta.userAgent,
           details: { version: created.version, total: totals.total },
         });
-        return toDetail(await this.load(tx, ctx.companyId, created.id));
+        return this.detail(tx, ctx.companyId, created.id);
       });
     } catch (error) {
       return this.fail(ctx, meta, error);
@@ -991,7 +1005,7 @@ export class InvoiceService {
       },
     });
     return {
-      invoice: toDetail(await this.load(tx, companyId, id)),
+      invoice: await this.detail(tx, companyId, id),
       warnings: late ? ['delivery_deadline_passed'] : [],
     };
   }
@@ -1115,7 +1129,7 @@ export class InvoiceService {
             ...(late ? { late: true } : {}),
           },
         });
-        const detail = toDetail(await this.load(tx, companyId, id));
+        const detail = await this.detail(tx, companyId, id);
         const delivery = detail.deliveries.find((entry) => entry.id === created.id);
         if (!delivery) {
           throw new Error('the recorded delivery is missing');
@@ -1293,6 +1307,54 @@ export class InvoiceService {
       );
     }
     return client;
+  }
+
+  private async detail(
+    tx: TenantTransaction,
+    companyId: string,
+    invoiceId: string,
+  ): Promise<InvoiceDetail> {
+    const row = await this.load(tx, companyId, invoiceId);
+    if (row.status !== 'issued') {
+      return toDetail(row);
+    }
+    const jobs = await tx.printJob.findMany({
+      where: { companyId, sourceType: 'invoice', sourceId: row.id },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: 20,
+      select: {
+        id: true,
+        status: true,
+        isReprint: true,
+        copies: true,
+        createdAt: true,
+        printer: { select: { provider: true } },
+      },
+    });
+    // The same rule as print_job_one_first_print_key.
+    const first = await tx.printJob.findFirst({
+      where: {
+        companyId,
+        sourceType: 'invoice',
+        sourceId: row.id,
+        documentType: 'invoice',
+        isReprint: false,
+        status: { notIn: ['failed', 'cancelled', 'not_printed'] },
+      },
+      select: { id: true },
+    });
+    return toDetail(
+      row,
+      jobs.map((job) => ({
+        id: job.id,
+        status: job.status,
+        isReprint: job.isReprint,
+        copies: job.copies,
+        createdAt: job.createdAt.toISOString(),
+        simulationLabel: job.printer.provider === 'mock' ? SIMULATED_PRINTING_LABEL : null,
+      })),
+      first?.id ?? null,
+    );
   }
 
   private async load(tx: TenantTransaction, companyId: string, invoiceId: string) {
@@ -1677,11 +1739,15 @@ function toDetail(
       createdAt: Date;
     }[];
   },
+  printJobs: InvoicePrintJob[] = [],
+  firstPrintJobId: string | null = null,
 ): InvoiceDetail {
   return {
     ...toSummary(row),
     notes: row.notes,
     terms: row.terms,
+    printJobs,
+    firstPrintJobId,
     deliveries: row.deliveries.map((delivery) => ({
       id: delivery.id,
       method: delivery.method,

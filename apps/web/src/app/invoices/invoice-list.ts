@@ -12,6 +12,7 @@ import { NAVIGATE_ON_DENIED } from '../core/navigate-on-denied';
 import { ActiveLang } from '../format/active-lang';
 import { MoneyPipe } from '../format/money.pipe';
 import { fieldValue } from '../orders/field-value';
+import { type DeadlineState, companyToday, deadlineState } from './delivery-deadline';
 import {
   type InvoiceQuery,
   calendarDate,
@@ -27,10 +28,13 @@ type InvoiceRow = {
   id: string;
   documentType: string;
   status: string;
+  number?: string | null;
   clientDisplayName: string;
   currency: string;
   issueDate: string | null;
   dueDate: string | null;
+  deliveryDeadline?: string | null;
+  lastDeliveredOn?: string | null;
   total: string;
 };
 
@@ -63,6 +67,13 @@ type ClientOption = { id: string; displayName: string };
             <option value="draft" [selected]="query().status === 'draft'">{{ 'invoices.status.draft' | transloco }}</option>
             <option value="issued" [selected]="query().status === 'issued'">{{ 'invoices.status.issued' | transloco }}</option>
             <option value="cancelled" [selected]="query().status === 'cancelled'">{{ 'invoices.status.cancelled' | transloco }}</option>
+          </select>
+        </label>
+        <label>
+          {{ 'invoices.filters.delivery' | transloco }}
+          <select (change)="setDelivery($event)">
+            <option value="" [selected]="query().delivery === ''">{{ 'invoices.filters.deliveryAny' | transloco }}</option>
+            <option value="pending" [selected]="query().delivery === 'pending'">{{ 'invoices.filters.deliveryPending' | transloco }}</option>
           </select>
         </label>
         <label>
@@ -101,6 +112,7 @@ type ClientOption = { id: string; displayName: string };
               <th>{{ 'invoices.columns.client' | transloco }}</th>
               <th>{{ 'invoices.columns.issueDate' | transloco }}</th>
               <th>{{ 'invoices.columns.dueDate' | transloco }}</th>
+              <th>{{ 'invoices.columns.deadline' | transloco }}</th>
               <th>{{ 'invoices.columns.status' | transloco }}</th>
               <th>{{ 'invoices.columns.total' | transloco }}</th>
             </tr>
@@ -108,12 +120,23 @@ type ClientOption = { id: string; displayName: string };
           <ng-template pTemplate="body" let-invoice>
             <tr>
               <td>
-                <a [routerLink]="['/c', companyId(), 'invoices', invoice.id]">{{ numberLabel(invoice.status) | transloco }}</a>
+                <a [routerLink]="['/c', companyId(), 'invoices', invoice.id]">{{ invoice.number || (numberLabel(invoice.status) | transloco) }}</a>
               </td>
               <td>{{ typeLabel(invoice.documentType) | transloco }}</td>
               <td>{{ invoice.clientDisplayName }}</td>
               <td>{{ dateLabel(invoice.issueDate) }}</td>
               <td>{{ dateLabel(invoice.dueDate) }}</td>
+              <td>
+                {{ dateLabel(invoice.deliveryDeadline ?? null) }}
+                @switch (deadline(invoice)) {
+                  @case ('overdue') {
+                    <p-tag severity="danger" [value]="'invoices.deadline.overdue' | transloco" />
+                  }
+                  @case ('soon') {
+                    <p-tag severity="warn" [value]="'invoices.deadline.soon' | transloco" />
+                  }
+                }
+              </td>
               <td><p-tag [value]="statusLabel(invoice.status) | transloco" [severity]="statusSeverity(invoice.status)" /></td>
               <td>{{ invoice.total | money: invoice.currency : lang.code() }}</td>
             </tr>
@@ -214,6 +237,21 @@ export class InvoiceListPage {
     return calendarDate(value);
   }
 
+  deadline(row: InvoiceRow): DeadlineState {
+    if (row.status !== 'issued') {
+      return 'none';
+    }
+    return deadlineState(
+      row.deliveryDeadline ?? null,
+      (row.lastDeliveredOn ?? null) !== null,
+      companyToday(this.context.timezone()),
+    );
+  }
+
+  setDelivery(event: Event): void {
+    this.navigate({ ...this.query(), delivery: fieldValue(event) === 'pending' ? 'pending' : '' });
+  }
+
   onSearch(event: Event): void {
     const value = fieldValue(event);
     this.searchDraft.set(value);
@@ -293,6 +331,7 @@ export class InvoiceListPage {
     const labels: Record<string, string> = {
       q: 'invoices.search',
       status: 'invoices.filters.status',
+      delivery: 'invoices.filters.delivery',
       clientId: 'invoices.filters.client',
       from: 'invoices.filters.from',
       to: 'invoices.filters.to',

@@ -625,7 +625,144 @@ describe('InvoiceEditorPage', () => {
     expect(inclusive).not.toContain('excl. tax');
     http.verify();
   });
+
+  it('issues the saved draft after confirmation and shows its number and deadline', async () => {
+    const { fixture, http, component } = await openSaved(ISSUER);
+    expect(component.canIssue()).toBe(true);
+    expect(textOf(fixture)).toContain('Issue invoice');
+    component.startIssue();
+    fixture.detectChanges();
+    expect(textOf(fixture)).toContain('cannot be edited or deleted');
+    component.confirmIssue();
+    const issue = http.expectOne('/api/c/company-1/invoices/invoice-1/issue');
+    expect(issue.request.method).toBe('POST');
+    expect(issue.request.body).toEqual({ expectedVersion: 4 });
+    // While the request is in flight the draft cannot be edited.
+    expect(component.readOnly()).toBe(true);
+    fixture.detectChanges();
+    expect(rootOf(fixture).querySelector('textarea')?.disabled).toBe(true);
+    issue.flush({
+      invoice: {
+        ...invoice('Nuts'),
+        status: 'issued',
+        number: 'INV-0001',
+        issueDate: '2026-10-28',
+        supplyDate: '2026-10-28',
+        dueDate: '2026-11-27',
+        deliveryDeadline: '2099-11-27',
+        lastDeliveredOn: null,
+        version: 5,
+      },
+      warnings: ['delivery_deadline_passed'],
+    });
+    fixture.detectChanges();
+    expect(component.status()).toBe('issued');
+    expect(component.readOnly()).toBe(true);
+    expect(component.canIssue()).toBe(false);
+    const text = textOf(fixture);
+    expect(text).toContain('Invoice INV-0001');
+    expect(text).toContain('Deliver to the client by 27/11/2099');
+    expect(text).toContain('Issued after its delivery deadline');
+    expect(text).toContain('Open the issued PDF');
+    expect(text).not.toContain('DRAFT — not a tax invoice');
+    http.verify();
+  });
+
+  it('waits for a save before issuing', async () => {
+    const { fixture, http, component } = await openSaved(ISSUER);
+    fillLine(component, 0, { description: 'Edited, not saved' });
+    fixture.detectChanges();
+    expect(component.dirty()).toBe(true);
+    expect(textOf(fixture)).toContain('Save the draft first');
+    component.startIssue();
+    component.confirmIssue();
+    expect(component.confirmingIssue()).toBe(false);
+    expect(http.match((request) => request.url.endsWith('/issue'))).toHaveLength(0);
+    vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS);
+    http.expectOne('/api/c/company-1/invoices/preview-totals').flush(totals('10.00'));
+    http.verify();
+  });
+
+  it('lists the missing particulars the API names', async () => {
+    const { fixture, http, component } = await openSaved(ISSUER);
+    component.startIssue();
+    component.confirmIssue();
+    http.expectOne('/api/c/company-1/invoices/invoice-1/issue').flush(
+      {
+        error: {
+          code: 'invoice_incomplete',
+          message: 'The invoice is missing details it must show.',
+          correlationId: 'corr-9',
+          fields: ['seller.vatNumber', 'lines.2.legalNote', 'something.new'],
+        },
+      },
+      { status: 422, statusText: 'Unprocessable Entity' },
+    );
+    fixture.detectChanges();
+    const text = textOf(fixture);
+    expect(text).toContain("The company's VAT number is missing");
+    expect(text).toContain('Line 2: its tax code needs the legal note');
+    expect(text).toContain('Missing: something.new');
+    expect(component.status()).toBe('draft');
+    expect(component.busy()).toBe(false);
+    http.verify();
+  });
+
+  it('says when issuing is switched off', async () => {
+    const { fixture, http, component } = await openSaved(ISSUER);
+    component.startIssue();
+    component.confirmIssue();
+    http.expectOne('/api/c/company-1/invoices/invoice-1/issue').flush(
+      {
+        error: {
+          code: 'issuance_disabled',
+          message: 'Issuing real invoices is switched off.',
+          correlationId: 'corr-10',
+        },
+      },
+      { status: 409, statusText: 'Conflict' },
+    );
+    fixture.detectChanges();
+    expect(textOf(fixture)).toContain('Issuing real invoices is switched off for this company');
+    expect(textOf(fixture)).toContain('corr-10');
+    http.verify();
+  });
+
+  it('offers no issue action without invoice.issue', async () => {
+    const { fixture, http, component } = await openSaved(['invoice.draft', 'invoice.view']);
+    expect(component.canIssue()).toBe(false);
+    expect(textOf(fixture)).not.toContain('Issue invoice');
+    http.verify();
+  });
 });
+
+const ISSUER = ['invoice.draft', 'invoice.view', 'invoice.issue'];
+
+/** Opens the saved draft invoice-1 and settles every load and the first preview. */
+async function openSaved(permissions: string[]): Promise<{
+  fixture: ComponentFixture<InvoiceEditorPage>;
+  http: HttpTestingController;
+  component: InvoiceEditorPage;
+}> {
+  const { fixture, http } = await setup(permissions);
+  vi.useFakeTimers();
+  const component = fixture.componentInstance;
+  component.open('company-1', 'invoice-1');
+  http.expectOne('/api/c/company-1/invoices/invoice-1').flush({ invoice: invoice('Nuts') });
+  flushCatalog(http);
+  http.expectOne('/api/c/company-1/clients/client-1').flush({
+    client: {
+      id: 'client-1',
+      displayName: 'Acme Demo',
+      defaultLanguage: 'en',
+      defaultCurrency: 'EUR',
+    },
+  });
+  vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS);
+  http.expectOne('/api/c/company-1/invoices/preview-totals').flush(totals('10.00'));
+  fixture.detectChanges();
+  return { fixture, http, component };
+}
 
 async function setup(
   permissions: string[] = ['invoice.draft', 'invoice.view'],

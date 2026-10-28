@@ -182,6 +182,16 @@ Every write is audited, versioned (`expectedVersion`, 409 `version_conflict`) an
 - The printer is the `invoice` mapping of the one location that has one; with several, the request names `locationId`.
 - Copies default to two when the client has not accepted e-invoices (paper delivery), otherwise to the mapping's copies. `copies` in the request overrides.
 
+**As built, R2-C3c (2026-10-28).** Screens.
+- The editor locks an invoice draft's issue and due dates (issuing sets them); quotes keep theirs.
+- Issuing waits for unsaved edits to be saved, because the API issues the saved draft.
+- A deadline is "soon" from five days before it.
+- The receivables view is the invoice list filtered to "Not yet delivered".
+- `POST /print-requests` takes an optional `requestKey` (a UUID the screen makes per request), stored in `print_job.request_key` (unique per company) with `request_hash`, a fingerprint of everything the request asked for. The same key with the same request returns the job it created (also when the first attempt was still committing); with anything different it is 409 `request_key_reused`. The provider's idempotency key stays `pj_<job id>`, one per job. The invoice print panel keeps a request without a definite answer in session storage and offers only "Send the same request again". Once an answer was lost, only a success settles it; a refused retry keeps it and offers "Discard" with a warning to check the history first.
+- The invoice detail lists its print jobs (latest 20) and `firstPrintJobId`, the first print that still counts however old: the screen offers a first print only when there is none, and a reprint refers to it.
+- With several invoice printer locations, a 422 `location_required` brings up a location picker.
+- The editor is read-only while an issue request is in flight.
+
 **Tests (integration, real Postgres).**
 - 20 concurrent issues in one series give numbers 1 to 20, each exactly once.
 - Two concurrent issues of the same draft: exactly one succeeds.

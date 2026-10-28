@@ -48,6 +48,7 @@ const requestBody = z
     copies: z.number().int().min(1).max(5).optional(),
     printerId: z.uuid().optional(),
     locationId: z.uuid().optional(),
+    requestKey: z.uuid().optional(),
     reprint: z
       .object({
         ofPrintJobId: z.uuid(),
@@ -117,6 +118,7 @@ export class PrintController {
       ...(parsed.data.copies !== undefined ? { copies: parsed.data.copies } : {}),
       ...(parsed.data.printerId !== undefined ? { printerId: parsed.data.printerId } : {}),
       ...(parsed.data.locationId !== undefined ? { locationId: parsed.data.locationId } : {}),
+      ...(parsed.data.requestKey !== undefined ? { requestKey: parsed.data.requestKey } : {}),
       ...(parsed.data.reprint !== undefined ? { reprint: parsed.data.reprint } : {}),
     };
     return this.printing.request(requireContext(req, companyId), input, requestMeta(req));
