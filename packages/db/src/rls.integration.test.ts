@@ -156,6 +156,32 @@ describe('row level security', () => {
 
   let graphB: Graph;
 
+  async function orderOf(tx: TenantTransaction, storeId = graphA.store) {
+    const connection = await tx.storeConnection.create({
+      data: { companyId: companyA, storeId, mode: 'mock', status: 'active' },
+    });
+    return tx.salesOrder.create({
+      data: {
+        companyId: companyA,
+        storeId,
+        connectionId: connection.id,
+        externalId: randomUUID(),
+        externalNumber: 'Authority order (fictional)',
+        sourcePlatform: 'manual',
+        sourceStatus: {},
+        paymentStatus: 'paid',
+        fulfilmentStatus: 'new',
+        integrationStatus: 'synced',
+        deliveryMethod: 'courier_cy',
+        currency: 'EUR',
+        subtotal: '1.00',
+        shippingTotal: '0.00',
+        taxTotal: '0.00',
+        total: '1.00',
+      },
+    });
+  }
+
   beforeAll(async () => {
     const appUrl = requiredEnv('DATABASE_URL');
     const ownerUrl = requiredEnv('DATABASE_URL_OWNER');
@@ -613,6 +639,185 @@ describe('row level security', () => {
       /invoice_source_quote_check/,
     );
   });
+
+  it.each(['app', 'owner'] as const)(
+    'allows one non-cancelled invoice per order, excluding credit notes and cancelled invoices (%s)',
+    async (role) => {
+      const tenant = role === 'app' ? appTenant : ownerTenant;
+      const ctx = { companyId: companyA, actor: userId, correlationId: randomUUID() };
+      const orderId = await tenant.run(ctx, async (tx) => {
+        const order = await orderOf(tx);
+        const draft = await draftOf(tx);
+        await tx.invoice.update({ where: { id: draft.id }, data: { sourceOrderId: order.id } });
+        return order.id;
+      });
+      const second = await tenant.run(ctx, (tx) => draftOf(tx));
+      const linkSecond = () =>
+        tenant.run(ctx, (tx) =>
+          tx.invoice.update({ where: { id: second.id }, data: { sourceOrderId: orderId } }),
+        );
+      await expect(linkSecond()).rejects.toMatchObject({ code: 'P2002' });
+      await tenant.run(ctx, async (tx) => {
+        const first = await tx.invoice.findFirstOrThrow({ where: { sourceOrderId: orderId } });
+        // A cancelled invoice frees the slot; restoring it would collide with its replacement.
+        await tx.invoice.update({ where: { id: first.id }, data: { status: 'cancelled' } });
+      });
+      await expect(linkSecond()).resolves.toMatchObject({ sourceOrderId: orderId });
+      await tenant.run(ctx, async (tx) => {
+        expect(await markIssued(tx, companyA, second.id, userId)).toBe(1);
+        const credit = await creditOf(tx, second.id);
+        await tx.invoice.update({ where: { id: credit.id }, data: { sourceOrderId: orderId } });
+        const quote = await draftOf(tx, 'quote');
+        await tx.invoice.update({ where: { id: quote.id }, data: { sourceOrderId: orderId } });
+        const cancelled = await draftOf(tx);
+        await tx.invoice.update({
+          where: { id: cancelled.id },
+          data: { sourceOrderId: orderId, status: 'cancelled' },
+        });
+        expect(await tx.invoice.count({ where: { sourceOrderId: orderId } })).toBe(5);
+      });
+      await expect(
+        tenant.run(ctx, async (tx) => {
+          const draft = await draftOf(tx);
+          return tx.invoice.update({ where: { id: draft.id }, data: { sourceOrderId: orderId } });
+        }),
+      ).rejects.toMatchObject({ code: 'P2002' });
+      await expect(
+        tenant.run(ctx, async (tx) => {
+          const cancelled = await tx.invoice.findFirstOrThrow({
+            where: { sourceOrderId: orderId, status: 'cancelled' },
+          });
+          return tx.invoice.update({ where: { id: cancelled.id }, data: { status: 'draft' } });
+        }),
+      ).rejects.toMatchObject({ code: 'P2002' });
+    },
+  );
+
+  it.each(['app', 'owner'] as const)(
+    'locks platform authority only once an invoice for the store has issued (%s)',
+    async (role) => {
+      const tenant = role === 'app' ? appTenant : ownerTenant;
+      const ctx = { companyId: companyA, actor: userId, correlationId: randomUUID() };
+      const { storeId, orderId, draftId } = await tenant.run(ctx, async (tx) => {
+        const sourceStore = await tx.store.findUniqueOrThrow({ where: { id: graphA.store } });
+        const store = await tx.store.create({
+          data: {
+            companyId: companyA,
+            brandId: sourceStore.brandId,
+            locationId: sourceStore.locationId,
+            platform: 'manual',
+            name: 'Authority store (fictional)',
+            invoiceAuthority: 'platform',
+          },
+        });
+        const order = await orderOf(tx, store.id);
+        const draft = await draftOf(tx);
+        await tx.invoice.update({ where: { id: draft.id }, data: { sourceOrderId: order.id } });
+        // A draft does not lock authority, even when another store already has issued invoices.
+        for (const invoiceAuthority of ['store', 'platform', 'undecided', 'platform'] as const) {
+          await tx.store.update({ where: { id: store.id }, data: { invoiceAuthority } });
+        }
+        expect(await markIssued(tx, companyA, draft.id, userId)).toBe(1);
+        return { storeId: store.id, orderId: order.id, draftId: draft.id };
+      });
+      await expect(
+        tenant.run(ctx, (tx) =>
+          tx.salesOrder.update({ where: { id: orderId }, data: { storeId: graphA.store } }),
+        ),
+      ).rejects.toThrow(/order_store_locked/);
+      for (const invoiceAuthority of ['store', 'undecided'] as const) {
+        await expect(
+          tenant.run(ctx, (tx) =>
+            tx.store.update({
+              where: { id: storeId },
+              data: { invoiceAuthority },
+            }),
+          ),
+        ).rejects.toThrow(/authority_locked/);
+      }
+      await tenant.run(ctx, async (tx) => {
+        expect(await tx.salesOrder.findUniqueOrThrow({ where: { id: orderId } })).toMatchObject({
+          storeId,
+        });
+        expect((await tx.invoice.findUniqueOrThrow({ where: { id: draftId } })).status).toBe(
+          'issued',
+        );
+        expect(
+          await tx.store.update({
+            where: { id: storeId },
+            data: { invoiceAuthority: 'platform', name: 'Renamed authority store (fictional)' },
+          }),
+        ).toMatchObject({ invoiceAuthority: 'platform' });
+      });
+    },
+  );
+
+  it.each(['app', 'owner'] as const)(
+    'keeps an order in its store for every linked document type and status (%s)',
+    async (role) => {
+      const tenant = role === 'app' ? appTenant : ownerTenant;
+      const ctx = { companyId: companyA, actor: userId, correlationId: randomUUID() };
+      const storeId = await tenant.run(ctx, async (tx) => {
+        const source = await tx.store.findUniqueOrThrow({ where: { id: graphA.store } });
+        const store = await tx.store.create({
+          data: {
+            companyId: companyA,
+            brandId: source.brandId,
+            locationId: source.locationId,
+            platform: 'manual',
+            name: 'Other order store (fictional)',
+          },
+        });
+        // Moving an order without a linked document remains allowed.
+        const order = await orderOf(tx);
+        expect(
+          await tx.salesOrder.update({ where: { id: order.id }, data: { storeId: store.id } }),
+        ).toMatchObject({ storeId: store.id });
+        return store.id;
+      });
+      for (const documentType of ['invoice', 'quote', 'credit_note'] as const) {
+        for (const status of ['draft', 'cancelled', 'issued'] as const) {
+          // Quotes cannot be issued.
+          if (documentType === 'quote' && status === 'issued') continue;
+          const orderId = await tenant.run(ctx, async (tx) => {
+            const order = await orderOf(tx);
+            let document;
+            if (documentType === 'credit_note') {
+              const original = await draftOf(tx);
+              expect(await markIssued(tx, companyA, original.id, userId)).toBe(1);
+              document = await creditOf(tx, original.id);
+            } else {
+              document = await draftOf(tx, documentType === 'quote' ? 'quote' : undefined);
+            }
+            await tx.invoice.update({
+              where: { id: document.id },
+              data: { sourceOrderId: order.id, status: status === 'issued' ? 'draft' : status },
+            });
+            if (status === 'issued') {
+              expect(await markIssued(tx, companyA, document.id, userId)).toBe(1);
+            }
+            return order.id;
+          });
+          await expect(
+            tenant.run(ctx, (tx) =>
+              tx.salesOrder.update({ where: { id: orderId }, data: { storeId } }),
+            ),
+          ).rejects.toThrow(/order_store_locked/);
+          await tenant.run(ctx, async (tx) => {
+            expect(
+              await tx.salesOrder.update({
+                where: { id: orderId },
+                data: { storeId: graphA.store, externalNumber: 'Still editable (fictional)' },
+              }),
+            ).toMatchObject({
+              storeId: graphA.store,
+              externalNumber: 'Still editable (fictional)',
+            });
+          });
+        }
+      }
+    },
+  );
 
   it('issues credit notes within the invoice they credit, with its frozen tax treatment', async () => {
     const ctx = { companyId: companyA, actor: userId, correlationId: randomUUID() };

@@ -114,6 +114,64 @@ describe('StoresPage', () => {
     http.verify();
   });
 
+  it('explains each invoice authority in the create and edit forms', async () => {
+    const { fixture, http } = await setup(['store.view', 'store.manage']);
+    flushLists(http);
+    fixture.detectChanges();
+    buttonIn(fixture, 'stores', 'Edit').click();
+    const explanations = [
+      [
+        'undecided',
+        "Undecided: not chosen yet. The platform does not invoice this store's orders.",
+      ],
+      [
+        'store',
+        "Store: the shop keeps issuing its own invoices or receipts. The platform does not invoice this store's orders.",
+      ],
+      [
+        'platform',
+        "Platform: the platform will issue invoices for this store's orders once order-to-invoice conversion is available. This choice cannot be undone once one is issued.",
+      ],
+    ] as const;
+    for (const [value, explanation] of explanations) {
+      fixture.componentInstance.storeAuthority.set(value);
+      fixture.componentInstance.editAuthority.set(value);
+      fixture.detectChanges();
+      const help = [...section(fixture, 'stores').querySelectorAll('small')].map((item) =>
+        item.textContent.trim(),
+      );
+      expect(help.filter((item) => item === explanation)).toHaveLength(2);
+    }
+    http.verify();
+  });
+
+  it('explains an authority_locked refusal and keeps the store unchanged', async () => {
+    const { fixture, http } = await setup(['store.view', 'store.manage']);
+    http.expectOne('/api/c/company-1/brands').flush({ brands: [BRAND] });
+    http.expectOne('/api/c/company-1/locations').flush({ locations: [LOCATION] });
+    http.expectOne('/api/c/company-1/stores').flush({
+      stores: [{ ...STORE, invoiceAuthority: 'platform' }],
+    });
+    fixture.detectChanges();
+    buttonIn(fixture, 'stores', 'Edit').click();
+    fixture.componentInstance.editAuthority.set('store');
+    fixture.componentInstance.saveStore();
+    const patch = http.expectOne('/api/c/company-1/stores/store-1');
+    expect(patch.request.body).toEqual({ invoiceAuthority: 'store' });
+    patch.flush(
+      { error: { code: 'authority_locked', message: 'authority_locked' } },
+      { status: 409, statusText: 'Conflict' },
+    );
+    fixture.detectChanges();
+    expect(textOf(fixture)).toContain(
+      "The platform has already issued an invoice for this store's orders. Invoice authority cannot be changed.",
+    );
+    expect(fixture.componentInstance.stores()[0]?.invoiceAuthority).toBe('platform');
+    expect(fixture.componentInstance.busy()).toBe(false);
+    expect(section(fixture, 'stores').querySelector('[data-testid="store-edit"]')).not.toBeNull();
+    http.verify();
+  });
+
   it('shows a store-scoped member their store and no brands section', async () => {
     const { fixture, http } = await setup([
       'company.view',

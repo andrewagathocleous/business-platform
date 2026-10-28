@@ -861,6 +861,7 @@
     "forbidden": "You do not have access to this section.",
     "nameTaken": "That name is already used by an active brand.",
     "locationInUse": "This location still has an active store or a printer mapping.",
+    "authorityLocked": "The platform has already issued an invoice for this store's orders. Invoice authority cannot be changed.",
     "brandArchived": "That brand is archived.",
     "locationArchived": "That location is archived.",
     "fields": {
@@ -890,6 +891,11 @@
       "undecided": "Undecided",
       "store": "Store",
       "platform": "Platform"
+    },
+    "authorityHelp": {
+      "undecided": "Undecided: not chosen yet. The platform does not invoice this store's orders.",
+      "store": "Store: the shop keeps issuing its own invoices or receipts. The platform does not invoice this store's orders.",
+      "platform": "Platform: the platform will issue invoices for this store's orders once order-to-invoice conversion is available. This choice cannot be undone once one is issued."
     }
   },
   "integrations": {

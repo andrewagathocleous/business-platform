@@ -326,6 +326,8 @@ Order-to-invoice conversion is deferred (R2-02), so in R2 this step is a guard o
 - **One invoice per sale.** A partial unique index allows one non-cancelled invoice per `(company_id, source_order_id)`, ready for R2-02.
 - **Authority is stable.** A store's authority cannot change from `platform` once an invoice was issued for one of its orders. The store screen explains the choice (A1).
 
+**As built, R2-F.** R2-02 must lock the order's store FOR SHARE when it issues an order-linked invoice (before the invoice rows in the lock order), while authority edits hold the store FOR UPDATE, and must turn the trigger's authority_locked refusal into an audited 409.
+
 ## R2-G. Reports and accountant export (P3-07)
 
 `report.finance.view`, business dates, grouped by currency, and every figure labelled with its basis:

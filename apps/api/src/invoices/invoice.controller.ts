@@ -122,7 +122,9 @@ export class InvoiceController {
     summary: 'Create a draft invoice or quote. Totals are calculated on the server.',
   })
   async create(@Req() req: Request, @Param('companyId') companyId: string) {
-    const parsed = invoiceCreate.safeParse(unknownBody(req));
+    const body = unknownBody(req);
+    refuseOrderLink(body);
+    const parsed = invoiceCreate.safeParse(body);
     if (!parsed.success) {
       throw new BadRequestException(issueMessage(parsed.error));
     }
@@ -236,7 +238,9 @@ export class InvoiceController {
     @Param('companyId') companyId: string,
     @Param('id') id: string,
   ) {
-    const parsed = invoicePatch.safeParse(unknownBody(req));
+    const body = unknownBody(req);
+    refuseOrderLink(body);
+    const parsed = invoicePatch.safeParse(body);
     if (!parsed.success) {
       throw new BadRequestException(issueMessage(parsed.error));
     }
@@ -247,6 +251,19 @@ export class InvoiceController {
       requestMeta(req),
     );
     return { invoice };
+  }
+}
+
+function refuseOrderLink(body: unknown): void {
+  if (
+    typeof body === 'object' &&
+    body !== null &&
+    (Object.hasOwn(body, 'sourceOrderId') || Object.hasOwn(body, 'source_order_id'))
+  ) {
+    throw new BadRequestException({
+      code: 'order_link_not_supported',
+      message: 'Order-to-invoice conversion is not supported yet.',
+    });
   }
 }
 

@@ -1351,6 +1351,184 @@ describe('issuing invoices', () => {
     expect((await seriesRow(creditSeriesId)).nextNumber).toBe(before.nextNumber + 1);
   });
 
+  it('refuses order-link fields before creating or changing an invoice', async () => {
+    const draft = await createDraft();
+    const before = await invoiceRow(draft.id);
+    const count = await inCompany(company, (tx) =>
+      tx.invoice.count({ where: { companyId: company } }),
+    );
+    for (const key of ['sourceOrderId', 'source_order_id']) {
+      for (const value of [randomUUID(), null, false, {}]) {
+        const created = await send(
+          admin,
+          'post',
+          `/api/c/${company}/invoices`,
+          cid('order-link-create'),
+          {
+            clientId,
+            pricesIncludeTax: false,
+            lines: [
+              {
+                position: 1,
+                description: 'Gift box (fictional)',
+                quantity: '1',
+                unit: 'box',
+                unitPrice: '10.00',
+                taxCodeId: standardTax,
+              },
+            ],
+            [key]: value,
+          },
+        );
+        expect(created.status, text(created)).toBe(400);
+        expect(errorCode(created.body)).toBe('order_link_not_supported');
+        const patched = await send(
+          admin,
+          'patch',
+          `/api/c/${company}/invoices/${draft.id}`,
+          cid('order-link-patch'),
+          {
+            expectedVersion: draft.version,
+            notes: 'Must not be saved',
+            [key]: value,
+          },
+        );
+        expect(patched.status, text(patched)).toBe(400);
+        expect(errorCode(patched.body)).toBe('order_link_not_supported');
+        expect(await invoiceRow(draft.id)).toEqual(before);
+        expect(
+          await inCompany(company, (tx) => tx.invoice.count({ where: { companyId: company } })),
+        ).toBe(count);
+      }
+    }
+    // Other unknown fields retain the existing stripping behaviour.
+    const patched = await send(
+      admin,
+      'patch',
+      `/api/c/${company}/invoices/${draft.id}`,
+      cid('unknown-field-patch'),
+      {
+        expectedVersion: draft.version,
+        notes: 'Allowed edit (fictional)',
+        unrelatedUnknownField: true,
+      },
+    );
+    expect(patched.status, text(patched)).toBe(200);
+    expect((await invoiceRow(draft.id)).sourceOrderId).toBeNull();
+  });
+
+  it('audits a refusal to change platform authority after an invoice for the store has issued', async () => {
+    const order = await inCompany(company, async (tx) => {
+      const brand = await tx.brand.create({
+        data: { companyId: company, name: 'Authority brand (fictional)' },
+      });
+      const location = await tx.location.create({
+        data: {
+          companyId: company,
+          name: 'Authority location (fictional)',
+          address: { city: 'Nicosia' },
+        },
+      });
+      const store = await tx.store.create({
+        data: {
+          companyId: company,
+          brandId: brand.id,
+          locationId: location.id,
+          platform: 'manual',
+          name: 'Authority store (fictional)',
+          invoiceAuthority: 'platform',
+        },
+      });
+      const connection = await tx.storeConnection.create({
+        data: { companyId: company, storeId: store.id, mode: 'mock', status: 'active' },
+      });
+      return tx.salesOrder.create({
+        data: {
+          companyId: company,
+          storeId: store.id,
+          connectionId: connection.id,
+          externalId: randomUUID(),
+          externalNumber: 'Authority order (fictional)',
+          sourcePlatform: 'manual',
+          sourceStatus: {},
+          paymentStatus: 'paid',
+          fulfilmentStatus: 'new',
+          integrationStatus: 'synced',
+          deliveryMethod: 'courier_cy',
+          currency: 'EUR',
+          subtotal: '10.00',
+          shippingTotal: '0.00',
+          taxTotal: '1.90',
+          total: '11.90',
+        },
+      });
+    });
+    const draft = await createDraft();
+    // SQL alone supplies the link: the API cannot set it in R2.
+    await inCompany(
+      company,
+      (tx) => tx.$executeRaw`
+      UPDATE invoice SET source_order_id = ${order.id}::uuid WHERE id = ${draft.id}::uuid
+    `,
+    );
+    for (const invoiceAuthority of ['store', 'platform', 'undecided', 'platform']) {
+      const response = await send(
+        admin,
+        'patch',
+        `/api/c/${company}/stores/${order.storeId}`,
+        cid('authority-before-issue'),
+        { invoiceAuthority },
+      );
+      expect(response.status, text(response)).toBe(200);
+      expect(record(record(response.body).store).invoiceAuthority).toBe(invoiceAuthority);
+    }
+    expect((await issue(draft.id, draft.version, cid('authority-issue'))).status).toBe(200);
+    const before = await inCompany(company, (tx) =>
+      tx.store.findUniqueOrThrow({ where: { id: order.storeId } }),
+    );
+    for (const invoiceAuthority of ['store', 'undecided']) {
+      const correlationId = cid(`authority-locked-${invoiceAuthority}`);
+      const response = await send(
+        admin,
+        'patch',
+        `/api/c/${company}/stores/${order.storeId}`,
+        correlationId,
+        {
+          invoiceAuthority,
+          name: 'Must not be saved (fictional)',
+        },
+      );
+      expect(response.status, text(response)).toBe(409);
+      expect(errorCode(response.body)).toBe('authority_locked');
+      expect(
+        await inCompany(company, (tx) =>
+          tx.store.findUniqueOrThrow({ where: { id: order.storeId } }),
+        ),
+      ).toEqual(before);
+      expect(await auditEvents(correlationId)).toEqual([
+        expect.objectContaining({
+          action: 'store.updated',
+          objectType: 'store',
+          objectId: order.storeId,
+          outcome: 'failure',
+          correlationId,
+          details: { reason: 'authority_locked' },
+        }),
+      ]);
+    }
+    const unchanged = await send(
+      admin,
+      'patch',
+      `/api/c/${company}/stores/${order.storeId}`,
+      cid('authority-same'),
+      {
+        invoiceAuthority: 'platform',
+        name: 'Renamed authority store (fictional)',
+      },
+    );
+    expect(unchanged.status, text(unchanged)).toBe(200);
+  });
+
   it('converts a quote to a draft invoice once', async () => {
     const quote = await createDraft({ documentType: 'quote', unitPrice: '12.34' });
     const converted = await send(
@@ -1368,6 +1546,7 @@ describe('issuing invoices', () => {
       sourceQuoteId: quote.id,
       netTotal: '12.34',
     });
+    expect((await invoiceRow(stringField(invoice, 'id'))).sourceOrderId).toBeNull();
     const source = await send(
       admin,
       'get',

@@ -391,6 +391,29 @@ export class CompanySetupService {
     try {
       return await this.tenant.run(this.context(ctx, actor), async (tx) => {
         const current = await this.lockStore(tx, ctx.companyId, storeId);
+        if (
+          current.invoiceAuthority === 'platform' &&
+          input.invoiceAuthority !== undefined &&
+          input.invoiceAuthority !== 'platform' &&
+          (await tx.invoice.findFirst({
+            where: {
+              companyId: ctx.companyId,
+              documentType: 'invoice',
+              status: 'issued',
+              sourceOrder: { storeId: current.id },
+            },
+            select: { id: true },
+          }))
+        ) {
+          throw new CommerceError(
+            409,
+            'authority_locked',
+            'store',
+            current.id,
+            'authority_locked',
+            'store.updated',
+          );
+        }
         const wasArchived = current.status === 'archived';
         const archiveOn = input.archived === true && !wasArchived;
         const archiveOff = input.archived === false && wasArchived;

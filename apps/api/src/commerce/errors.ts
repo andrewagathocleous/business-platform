@@ -19,6 +19,7 @@ const CODED_CONFLICTS = new Set([
   'series_in_use',
   'series_is_default',
   'currency_locked',
+  'authority_locked',
   'document_type_locked',
   'credit_note_draft',
   'file_integrity_failed',
