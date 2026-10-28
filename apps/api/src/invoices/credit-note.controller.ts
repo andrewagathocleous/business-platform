@@ -15,6 +15,7 @@ import { RequirePermission } from '../authz/require-permission.decorator';
 import { issueMessage, requireContext, unknownBody } from '../commerce/http';
 import { requestMeta } from '../identity/request-meta';
 import { CreditNoteService } from './credit-note.service';
+import { InvoiceService } from './invoice.service';
 
 /** A reason has a character that is not whitespace. Kept as typed. */
 const reason = z
@@ -52,6 +53,8 @@ const patchBody = z
     message: 'a field is required',
   });
 
+const issueBody = z.object({ expectedVersion: z.number().int().nonnegative() }).strict();
+
 const companyIdParam = ApiParam({
   name: 'companyId',
   required: true,
@@ -67,7 +70,10 @@ const idParam = ApiParam({
 @companyIdParam
 @Controller('c/:companyId')
 export class CreditNoteController {
-  constructor(@Inject(CreditNoteService) private readonly creditNotes: CreditNoteService) {}
+  constructor(
+    @Inject(CreditNoteService) private readonly creditNotes: CreditNoteService,
+    @Inject(InvoiceService) private readonly invoices: InvoiceService,
+  ) {}
 
   @Post('invoices/:id/credit-notes')
   @HttpCode(200)
@@ -118,5 +124,27 @@ export class CreditNoteController {
       requestMeta(req),
     );
     return { creditNote };
+  }
+
+  @Post('credit-notes/:id/issue')
+  @HttpCode(200)
+  @idParam
+  @RequirePermission('invoice.credit')
+  @ApiOperation({
+    summary:
+      'Issue a draft credit note: its own series number, frozen snapshot and stored PDF, in one transaction. The amounts are worked out again against issued credit notes (409 over_credit), and each line must still match the line it credits (409 credit_changed). Needs outbound.all and invoice.issue_real on.',
+  })
+  async issue(@Req() req: Request, @Param('companyId') companyId: string, @Param('id') id: string) {
+    const parsed = issueBody.safeParse(unknownBody(req));
+    if (!parsed.success) {
+      throw new BadRequestException(issueMessage(parsed.error));
+    }
+    const result = await this.invoices.issueCreditNote(
+      requireContext(req, companyId),
+      id,
+      parsed.data,
+      requestMeta(req),
+    );
+    return { creditNote: result.invoice, warnings: result.warnings };
   }
 }

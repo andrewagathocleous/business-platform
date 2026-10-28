@@ -1012,6 +1012,8 @@ model InvoiceTaxSummary {
   gross          Decimal  @db.Decimal(19, 2)
   taxSnapshot    Json?    @map("tax_snapshot") @db.JsonB
 
+  /// One row per tax code: credit-note limits compare groups by code.
+  @@unique([companyId, invoiceId, taxCodeId])
   @@map("invoice_tax_summary")
 }
 

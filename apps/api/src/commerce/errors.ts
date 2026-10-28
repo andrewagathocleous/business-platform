@@ -35,6 +35,7 @@ const CODED_CONFLICTS = new Set([
   'nothing_to_credit',
   'not_a_quote',
   'already_converted',
+  'credit_changed',
 ]);
 
 /** 409 reasons that are refusals by a switch, so they are audited as denials. */

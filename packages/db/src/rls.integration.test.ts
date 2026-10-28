@@ -553,6 +553,120 @@ describe('row level security', () => {
     );
   });
 
+  it('issues credit notes within the invoice they credit, with its frozen tax treatment', async () => {
+    const ctx = { companyId: companyA, actor: userId, correlationId: randomUUID() };
+    /** An issued invoice of one line: 1 × 1.00 at 19 %, net 1.00, tax 0.19, gross 1.19. */
+    const issuedOriginal = () =>
+      appTenant.run(ctx, async (tx) => {
+        const draft = await draftOf(tx);
+        expect(await markIssued(tx, companyA, draft.id, userId)).toBe(1);
+        const line = await tx.invoiceLine.findFirstOrThrow({ where: { invoiceId: draft.id } });
+        return { id: draft.id, line };
+      });
+    /** A draft credit note of `quantity` of the line, whose summary claims `net`. */
+    const draftCredit = (
+      original: { id: string; line: { id: string; taxCodeId: string } },
+      quantity: string,
+      net: string,
+    ) =>
+      appTenant.run(ctx, async (tx) => {
+        const source = await tx.invoiceLine.findUniqueOrThrow({ where: { id: original.line.id } });
+        const note = await tx.invoice.create({
+          data: {
+            companyId: companyA,
+            documentType: 'credit_note',
+            clientId: (await tx.invoice.findUniqueOrThrow({ where: { id: original.id } })).clientId,
+            currency: 'EUR',
+            language: 'en',
+            pricesIncludeTax: false,
+            subtotal: net,
+            discountTotal: '0.00',
+            netTotal: net,
+            taxTotal: '0.00',
+            total: net,
+            createdById: userId,
+            creditedInvoiceId: original.id,
+            creditReason: 'Returned (fictional)',
+          },
+        });
+        await tx.invoiceLine.create({
+          data: {
+            companyId: companyA,
+            invoiceId: note.id,
+            position: 1,
+            kind: source.kind,
+            description: source.description,
+            quantity,
+            unit: source.unit,
+            unitPrice: source.unitPrice,
+            discountPercent: source.discountPercent,
+            taxCodeId: source.taxCodeId,
+            taxRatePercent: source.taxRatePercent,
+            lineSubtotal: net,
+            lineDiscount: '0.00',
+            lineNet: net,
+            lineGross: net,
+            creditedLineId: source.id,
+          },
+        });
+        await tx.invoiceTaxSummary.create({
+          data: {
+            companyId: companyA,
+            invoiceId: note.id,
+            taxCodeId: source.taxCodeId,
+            taxRatePercent: source.taxRatePercent,
+            net,
+            tax: '0.00',
+            gross: net,
+          },
+        });
+        return note.id;
+      });
+    const issue = (id: string, options: { taxName?: string } = {}) =>
+      appTenant.run(ctx, (tx) => markIssued(tx, companyA, id, userId, options));
+    const exceeds = async (id: string) => {
+      const [row] = await appTenant.run(ctx, (tx) =>
+        tx.$queryRaw<{ exceeds: boolean }[]>`
+          SELECT credit_note_exceeds_original(${companyA}::uuid, ${id}::uuid) AS exceeds
+        `,
+      );
+      return row?.exceeds;
+    };
+
+    // Quantities: draft credit notes count only once issued, then together.
+    const first = await issuedOriginal();
+    const whole = await draftCredit(first, '1.0000', '1.00');
+    const half = await draftCredit(first, '0.5000', '0.50');
+    expect(await exceeds(half)).toBe(false);
+    expect(await issue(whole)).toBe(1);
+    expect(await exceeds(half)).toBe(true);
+    await expect(issue(half)).rejects.toThrow(/never credit more than the invoice/);
+
+    // A credit of nothing, or a negative one that would give room back, is refused.
+    for (const [quantity, net] of [
+      ['0.0000', '0.00'],
+      ['-1.0000', '-1.00'],
+    ] as const) {
+      const negative = await draftCredit(await issuedOriginal(), quantity, net);
+      await expect(issue(negative)).rejects.toThrow(/positive quantities and amounts/);
+    }
+
+    // Tax groups: two halves of the line that each claim the whole net are refused second.
+    const second = await issuedOriginal();
+    const claimsAll = await draftCredit(second, '0.5000', '1.00');
+    const claimsAllAgain = await draftCredit(second, '0.5000', '1.00');
+    expect(await issue(claimsAll)).toBe(1);
+    await expect(issue(claimsAllAgain)).rejects.toThrow(/never credit more than the invoice/);
+
+    // The tax treatment is the one frozen on the invoice, never another.
+    const third = await issuedOriginal();
+    const renamed = await draftCredit(third, '1.0000', '1.00');
+    await expect(issue(renamed, { taxName: 'Renamed since' })).rejects.toThrow(
+      /tax treatment frozen on the invoice/,
+    );
+    expect(await issue(renamed)).toBe(1);
+  });
+
   it('rejects changes to an issued invoice, its lines and its tax summary', async () => {
     const ctx = { companyId: companyA, actor: userId, correlationId: randomUUID() };
     const other = await appTenant.run(ctx, async (tx) => {
@@ -1101,11 +1215,18 @@ async function markIssued(
     supplyDate?: string | null;
     sellerSnapshot?: string;
     lineSnapshots?: boolean;
+    /** The tax code name frozen on the lines and summary rows. */
+    taxName?: string;
   } = {},
 ): Promise<number> {
   const tag = randomUUID().slice(0, 8);
   if (options.lineSnapshots ?? true) {
-    const snapshot = JSON.stringify({ code: 'STD19', kind: 'standard', ratePercent: '19.0000' });
+    const snapshot = JSON.stringify({
+      code: 'STD19',
+      kind: 'standard',
+      ratePercent: '19.0000',
+      ...(options.taxName ? { name: options.taxName } : {}),
+    });
     await tx.$executeRaw`
       UPDATE invoice_line SET tax_snapshot = ${snapshot}::jsonb WHERE invoice_id = ${invoiceId}::uuid
     `;

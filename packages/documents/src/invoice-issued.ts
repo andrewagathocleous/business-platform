@@ -63,6 +63,8 @@ export type IssuedInvoicePdfInput = {
   taxSummary: readonly IssuedInvoiceTaxRow[];
   /** Legal notes of the exempt, zero-rated and reverse-charge codes, printed as given. */
   vatNotes: readonly string[];
+  /** A credit note: the invoice it credits and why (docs/finance/invoice-requirements.md §4). */
+  credits?: { number: string; issueDate: string; reason: string } | null;
   subtotal: string;
   discountTotal: string;
   netTotal: string;
@@ -92,6 +94,12 @@ export async function renderIssuedInvoice(input: IssuedInvoicePdfInput): Promise
     meta(labels.issueDate, input.issueDate),
     meta(labels.supplyDate, input.supplyDate),
   ];
+  if (input.credits) {
+    content.push(
+      meta(labels.creditsInvoice, `${input.credits.number} (${input.credits.issueDate})`),
+      meta(labels.creditReason, input.credits.reason),
+    );
+  }
   if (input.dueDate) {
     content.push(meta(labels.dueDate, input.dueDate));
   }

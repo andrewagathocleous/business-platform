@@ -559,6 +559,14 @@ function sweepCases(adminB: Session, fx: Fixtures): SweepCase[] {
       { expectedVersion: 0, reason: 'stolen' },
     ),
     onB(
+      'credit-note-issue',
+      'POST /api/c/:companyId/credit-notes/:id/issue',
+      'post',
+      b(`/credit-notes/${fx.invoiceA}/issue`),
+      () => invoiceSnap(fx),
+      { expectedVersion: 0 },
+    ),
+    onB(
       'quote-convert',
       'POST /api/c/:companyId/quotes/:id/convert',
       'post',

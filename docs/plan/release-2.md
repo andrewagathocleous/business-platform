@@ -238,6 +238,13 @@ Every write is audited, versioned (`expectedVersion`, 409 `version_conflict`) an
 - A converted invoice copies the quote's lines through the draft rules (active tax codes, current rates, the company currency) and gets its dates at issue like any draft.
 - Database: `invoice_credit_note_check`, `invoice_source_quote_check`, the partial unique index `invoice_company_source_quote_key`, and the triggers `invoice_credit_guard` (a document's type, credited invoice and source quote never change) and `invoice_line_credit_guard` (a credit line keeps its original line and carries that line's kind, prices, discount, tax code and rate).
 
+**As built, R2-D3 (2026-10-28).**
+- `POST …/credit-notes/:id/issue` with `expectedVersion` (`invoice.credit`, MFA). Locks: the company `FOR SHARE`, the switches, then the credit note and its original in one statement ordered by id, then the company's default credit-note series. No tax-code locks: a credit note uses the original's frozen tax snapshots, not the current codes.
+- Every line must still copy its original line (kind, product, description, unit, price, discount, tax code and rate), otherwise 409 `credit_changed`. The amounts are calculated again against the issued credit notes and stored (409 `over_credit`).
+- Particulars: the seller as it is now; the buyer and every line's and summary row's tax snapshot as frozen on the original; no bank details or terms. The supply, issue and due dates are the issue day, and the delivery deadline runs from it under the original's deadline rules. The PDF is titled "Credit note" and prints the original's number and date and the reason, and no due date.
+- Database: `credit_note_exceeds_original()` compares the issued credit notes plus this one with the original, per line (quantity) and per tax-code group (net, tax and gross). The service asks it before numbering. `invoice_issue_guard` locks the original, then refuses a credit-note issue that exceeds it, credits a zero or negative quantity or amount, or carries a tax snapshot other than the original's. A unique index keeps one summary row per tax code per document. Migration `20261028210000_r2d_credit_issue`.
+- Applying the credit note to the original's balance comes with R2-E.
+
 ## R2-E. Payments, allocations, refunds and balances (P3-04)
 
 Recording a payment never moves money, and the UI says so.

@@ -1,11 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { TenantDb, type TenantTransaction } from '@bp/db';
-import {
-  calculateCreditTotals,
-  DocumentValidationError,
-  type CreditLineRequest,
-  type DocumentTotals,
-} from '@bp/domain';
+import { type CreditLineRequest, type DocumentTotals } from '@bp/domain';
 import { AuditService } from '../audit/audit.service';
 import { isUuid } from '../authz/company-path';
 import type { RequestContext } from '../authz/request-context';
@@ -14,6 +9,7 @@ import { decimalField, fixed } from '../commerce/format';
 import { requireActor } from '../commerce/http';
 import { PrismaService } from '../database/prisma.service';
 import type { RequestMeta } from '../identity/request-meta';
+import { creditTotals, type Original } from './credit-totals';
 import { creditedQuantitiesOf, InvoiceService, type InvoiceDetail } from './invoice.service';
 
 export type CreditNoteCreate = {
@@ -26,29 +22,6 @@ export type CreditNotePatch = {
   expectedVersion: number;
   reason?: string;
   lines?: { id: string; quantity: unknown }[];
-};
-
-type OriginalLine = {
-  id: string;
-  position: number;
-  kind: 'item' | 'shipping';
-  productId: string | null;
-  description: string;
-  quantity: { toFixed(digits: number): string };
-  unit: string;
-  unitPrice: { toFixed(digits: number): string };
-  discountPercent: { toFixed(digits: number): string };
-  taxCodeId: string;
-  taxRatePercent: { toFixed(digits: number): string };
-};
-
-type Original = {
-  id: string;
-  clientId: string;
-  currency: string;
-  language: string;
-  pricesIncludeTax: boolean;
-  lines: OriginalLine[];
 };
 
 /**
@@ -420,52 +393,6 @@ function requested(
       quantity: decimalField(line.quantity, 4, 'quantity'),
     };
   });
-}
-
-function creditTotals(
-  original: Original,
-  before: ReadonlyMap<string, string>,
-  requests: CreditLineRequest[],
-  audit: { action: string; objectId: string },
-): DocumentTotals {
-  try {
-    return calculateCreditTotals({
-      pricesIncludeTax: original.pricesIncludeTax,
-      // Grouped by tax code id: the original's groups, even if a code was renamed since.
-      sources: original.lines.map((line) => ({
-        key: line.id,
-        quantity: fixed(line.quantity, 4),
-        unitPrice: fixed(line.unitPrice, 4),
-        discountPercent: fixed(line.discountPercent, 2),
-        taxCode: line.taxCodeId,
-        taxRatePercent: fixed(line.taxRatePercent, 4),
-        creditedBefore: before.get(line.id) ?? '0',
-      })),
-      lines: requests,
-    });
-  } catch (error) {
-    if (error instanceof DocumentValidationError) {
-      if (error.code === 'over_credit') {
-        throw new CommerceError(
-          409,
-          'over_credit',
-          'invoice',
-          audit.objectId,
-          error.message,
-          audit.action,
-        );
-      }
-      throw new CommerceError(
-        422,
-        error.code,
-        'invoice',
-        audit.objectId,
-        error.message,
-        audit.action,
-      );
-    }
-    throw error;
-  }
 }
 
 /** quantity − credited, or null when nothing is left. Both have at most 4 decimals. */

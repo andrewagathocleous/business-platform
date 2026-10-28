@@ -54,6 +54,8 @@ describe('issuing invoices', () => {
   let standardTax = '';
   let seriesId = '';
   let prefix = '';
+  let creditSeriesId = '';
+  let creditPrefix = '';
 
   beforeAll(async () => {
     const refusal = assertTestDatabaseUrls();
@@ -100,12 +102,15 @@ describe('issuing invoices', () => {
     ).id;
     prefix = `T${runId}-`;
     seriesId = await createSeries(prefix, 'inv');
+    creditPrefix = `C${runId}-`;
+    creditSeriesId = await createSeries(creditPrefix, 'cn', 'credit_note');
     const details = await send(admin, 'patch', `/api/c/${company}/company`, cid('details'), {
       expectedVersion: await companyVersion(company),
       vatNumber: SELLER_VAT,
       address: { line1: '1 Demo Street', city: 'Nicosia', postcode: '1010', countryCode: 'CY' },
       invoiceTermsEn: 'Payment within 30 days (fictional terms).',
       defaultInvoiceSeriesId: seriesId,
+      defaultCreditNoteSeriesId: creditSeriesId,
     });
     expect(details.status, text(details)).toBe(200);
     clientId = await createClient(`Issue client ${runId}`, null, 'CY');
@@ -1160,6 +1165,189 @@ describe('issuing invoices', () => {
     expect(errorCode(quoted.body)).toBe('not_creditable');
   });
 
+  it('issues a credit note in its own series, with the particulars of the invoice it credits', async () => {
+    const original = await issuedInvoice([
+      { description: 'Gift box (demo)', quantity: '2', unitPrice: '10.00' },
+      { description: 'Card (demo)', quantity: '1', unitPrice: '2.50' },
+    ]);
+    const [box] = original.lineIds;
+    // Drafted first; it counts against nothing until it is issued.
+    const whole = await draftCredit(
+      original.id,
+      { reason: 'Order cancelled', full: true },
+      'cn-whole',
+    );
+    const partial = await draftCredit(
+      original.id,
+      { reason: 'One box arrived damaged', lines: [{ invoiceLineId: box, quantity: '1' }] },
+      'cn-partial',
+    );
+
+    const stale = await issueCredit(partial.id, partial.version + 1, cid('cn-stale'));
+    expect(stale.status).toBe(409);
+    expect(errorCode(stale.body)).toBe('conflict');
+    const asInvoice = await issue(partial.id, partial.version, cid('cn-as-invoice'));
+    expect(asInvoice.status).toBe(409);
+    expect(errorCode(asInvoice.body)).toBe('credit_note_draft');
+    const notCredit = await issueCredit(original.id, 0, cid('cn-not-credit'));
+    expect(notCredit.status).toBe(404);
+
+    const before = await seriesRow(creditSeriesId);
+    const correlationId = cid('cn-issue');
+    const issued = await issueCredit(partial.id, partial.version, correlationId);
+    expect(issued.status, text(issued)).toBe(200);
+    const today = businessDateInZone(new Date(), TIMEZONE);
+    const number = `${creditPrefix}${String(before.nextNumber).padStart(4, '0')}`;
+    expect(record(record(issued.body).creditNote)).toMatchObject({
+      documentType: 'credit_note',
+      status: 'issued',
+      number,
+      issueDate: today,
+      supplyDate: today,
+      dueDate: today,
+      creditReason: 'One box arrived damaged',
+      netTotal: '10.00',
+      taxTotal: '1.90',
+      total: '11.90',
+      version: partial.version + 1,
+    });
+    expect(arrayOf(record(issued.body).warnings)).toEqual([]);
+    expect((await seriesRow(creditSeriesId)).nextNumber).toBe(before.nextNumber + 1);
+    expect(
+      (await auditEvents(correlationId)).map((event) => [
+        event.action,
+        event.outcome,
+        event.objectId,
+      ]),
+    ).toEqual([['credit_note.issued', 'success', partial.id]]);
+
+    // The buyer and the tax treatment are the invoice's, as frozen when it was issued.
+    const row = await invoiceRow(partial.id);
+    const source = await invoiceRow(original.id);
+    expect(row.buyerSnapshot).toEqual(source.buyerSnapshot);
+    expect(row.lines.map((line) => line.taxSnapshot)).toEqual([source.lines[0]?.taxSnapshot]);
+    expect(row.taxSummary.map((summary) => summary.taxSnapshot)).toEqual(
+      source.taxSummary.map((summary) => summary.taxSnapshot),
+    );
+    expect(row.bankSnapshot).toBeNull();
+    expect(row.termsSnapshot).toBeNull();
+    const file = await inCompany(company, (tx) =>
+      tx.storedFile.findUniqueOrThrow({ where: { id: row.pdfFileId ?? '' } }),
+    );
+    expect(file).toMatchObject({ kind: 'invoice_pdf', sealed: true, sourceId: partial.id });
+
+    const pdf = await fetchPdf(partial.id, cid('cn-pdf'));
+    expect(pdf.status).toBe(200);
+    const pdfText = flatten(await extractPdfText(pdf.body as Buffer));
+    expect(pdfText).toContain(flatten(`Credit note ${number}`));
+    expect(pdfText).toContain(
+      flatten(`Credits invoice: ${original.number} (${formatDay(source.issueDate)})`),
+    );
+    expect(pdfText).toContain(flatten('Reason: One box arrived damaged'));
+    expect(pdfText).toContain(flatten(`Date of supply: ${today}`));
+    expect(pdfText).not.toContain(flatten('Due date'));
+    expect(pdfText).not.toContain('IBAN');
+
+    const detail = await send(
+      admin,
+      'get',
+      `/api/c/${company}/invoices/${original.id}`,
+      cid('cn-original'),
+    );
+    const invoice = record(record(detail.body).invoice);
+    expect(arrayOf(invoice.lines).map((line) => record(line).creditedQuantity)).toEqual([
+      '1.0000',
+      '0.0000',
+    ]);
+
+    // The whole-invoice draft now credits a box twice over.
+    const overCorrelation = cid('cn-over');
+    const over = await issueCredit(whole.id, whole.version, overCorrelation);
+    expect(over.status).toBe(409);
+    expect(errorCode(over.body)).toBe('over_credit');
+    expect(
+      (await auditEvents(overCorrelation)).map((event) => [
+        event.action,
+        event.outcome,
+        event.objectId,
+      ]),
+    ).toEqual([['credit_note.issued', 'failure', whole.id]]);
+    expect((await invoiceRow(whole.id)).status).toBe('draft');
+    expect((await seriesRow(creditSeriesId)).nextNumber).toBe(before.nextNumber + 1);
+
+    // Trimmed to what is left, it issues, and the two credits add up to the invoice.
+    const trimmed = await send(
+      admin,
+      'patch',
+      `/api/c/${company}/credit-notes/${whole.id}`,
+      cid('cn-trim'),
+      { expectedVersion: whole.version, lines: [{ id: whole.lineIds[0], quantity: '1' }] },
+    );
+    expect(trimmed.status, text(trimmed)).toBe(200);
+    const rest = await issueCredit(whole.id, whole.version + 1, cid('cn-rest'));
+    expect(rest.status, text(rest)).toBe(200);
+    expect(record(record(rest.body).creditNote)).toMatchObject({
+      number: `${creditPrefix}${String(before.nextNumber + 1).padStart(4, '0')}`,
+      netTotal: '12.50',
+      taxTotal: '2.38',
+      total: '14.88',
+    });
+    // 11.90 + 14.88 is the invoice's 26.78, and 1.90 + 2.38 its VAT of 4.28.
+    expect([
+      source.netTotal.toFixed(2),
+      source.taxTotal.toFixed(2),
+      source.total.toFixed(2),
+    ]).toEqual(['22.50', '4.28', '26.78']);
+
+    const nothing = await send(
+      admin,
+      'post',
+      `/api/c/${company}/invoices/${original.id}/credit-notes`,
+      cid('cn-nothing'),
+      { reason: 'Again', full: true },
+    );
+    expect(nothing.status).toBe(409);
+    expect(errorCode(nothing.body)).toBe('nothing_to_credit');
+    const again = await issueCredit(partial.id, partial.version + 1, cid('cn-again'));
+    expect(again.status).toBe(409);
+    expect(errorCode(again.body)).toBe('not_draft');
+  });
+
+  it('lets one of two concurrent credit notes issue when together they credit too much', async () => {
+    const original = await issuedInvoice([
+      { description: 'Hamper (demo)', quantity: '1', unitPrice: '30.00' },
+    ]);
+    const first = await draftCredit(original.id, { reason: 'Returned', full: true }, 'cn-race-a');
+    const second = await draftCredit(original.id, { reason: 'Returned', full: true }, 'cn-race-b');
+    const before = await seriesRow(creditSeriesId);
+    const service = started().get(InvoiceService);
+    let late: Promise<request.Response> | undefined;
+    // The first holds both locks while the second queues on the invoice rows, so the second
+    // reads the quantities only after the first has committed.
+    service.hooks = {
+      afterNumberAllocated: async () => {
+        if (late) {
+          return;
+        }
+        late = issueCredit(second.id, second.version, cid('cn-race-issue-b')).then(
+          (response) => response,
+        );
+        await waitForLockWaiter('FOR UPDATE');
+      },
+    };
+    try {
+      const won = await issueCredit(first.id, first.version, cid('cn-race-issue-a'));
+      expect(won.status, text(won)).toBe(200);
+      const lost = await late;
+      expect(lost?.status).toBe(409);
+      expect(errorCode(lost?.body)).toBe('over_credit');
+    } finally {
+      service.hooks = null;
+    }
+    expect((await invoiceRow(second.id)).status).toBe('draft');
+    expect((await seriesRow(creditSeriesId)).nextNumber).toBe(before.nextNumber + 1);
+  });
+
   it('converts a quote to a draft invoice once', async () => {
     const quote = await createDraft({ documentType: 'quote', unitPrice: '12.34' });
     const converted = await send(
@@ -1387,6 +1575,33 @@ describe('issuing invoices', () => {
     });
   }
 
+  function issueCredit(id: string, version: number, correlationId: string) {
+    return send(admin, 'post', `/api/c/${company}/credit-notes/${id}/issue`, correlationId, {
+      expectedVersion: version,
+    });
+  }
+
+  async function draftCredit(
+    invoiceId: string,
+    body: Record<string, unknown>,
+    name: string,
+  ): Promise<{ id: string; version: number; lineIds: string[] }> {
+    const response = await send(
+      admin,
+      'post',
+      `/api/c/${company}/invoices/${invoiceId}/credit-notes`,
+      cid(name),
+      body,
+    );
+    expect(response.status, text(response)).toBe(200);
+    const note = record(record(response.body).creditNote);
+    return {
+      id: stringField(note, 'id'),
+      version: numberField(note, 'version'),
+      lineIds: arrayOf(note.lines).map((line) => stringField(record(line), 'id')),
+    };
+  }
+
   function fetchPdf(id: string, correlationId: string) {
     return admin.agent
       .get(`/api/c/${company}/invoices/${id}/pdf`)
@@ -1404,7 +1619,11 @@ describe('issuing invoices', () => {
       });
   }
 
-  async function createSeries(seriesPrefix: string, name: string): Promise<string> {
+  async function createSeries(
+    seriesPrefix: string,
+    name: string,
+    documentType: 'invoice' | 'credit_note' = 'invoice',
+  ): Promise<string> {
     const response = await send(
       admin,
       'post',
@@ -1412,7 +1631,7 @@ describe('issuing invoices', () => {
       cid(`series-${name}`),
       {
         code: `${name}-${runId}`.slice(0, 32),
-        documentType: 'invoice',
+        documentType,
         prefix: seriesPrefix,
       },
     );
@@ -1577,6 +1796,10 @@ async function extractPdfText(pdf: Buffer): Promise<string> {
     }
   }
   return parts.join('');
+}
+
+function formatDay(value: Date | null): string {
+  return value ? value.toISOString().slice(0, 10) : '';
 }
 
 function flatten(value: string): string {

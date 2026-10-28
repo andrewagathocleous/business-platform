@@ -44,6 +44,8 @@ export type DocumentLabels = {
   bankDetails: string;
   bank: string;
   accountHolder: string;
+  creditsInvoice: string;
+  creditReason: string;
 };
 
 const EN: DocumentLabels = {
@@ -90,6 +92,8 @@ const EN: DocumentLabels = {
   bankDetails: 'Bank details',
   bank: 'Bank',
   accountHolder: 'Account holder',
+  creditsInvoice: 'Credits invoice',
+  creditReason: 'Reason',
 };
 
 const EL: DocumentLabels = {
@@ -136,6 +140,8 @@ const EL: DocumentLabels = {
   bankDetails: 'Τραπεζικά στοιχεία',
   bank: 'Τράπεζα',
   accountHolder: 'Δικαιούχος',
+  creditsInvoice: 'Πιστώνει το τιμολόγιο',
+  creditReason: 'Αιτία',
 };
 
 export function labelsFor(language: DocumentLanguage): DocumentLabels {
