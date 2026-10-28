@@ -134,6 +134,425 @@ describe('payments, allocations and refunds (real Postgres)', () => {
     delete process.env.MOCK_PRINT_ROOT;
   });
 
+  it('derives invoice balances and payment states through allocation, reversal and payment void', async () => {
+    const invoice = await issuedInvoice();
+    const id = stringField(invoice, 'id');
+    expect(invoice).toMatchObject({
+      openBalance: '100.00',
+      paymentState: 'unpaid',
+      allocations: [],
+      unappliedAmount: null,
+    });
+    const payment = await recordPayment({ amount: '40.00', reference: '  Κατάθεση\nΑ  ' });
+    const first = createdEntity(
+      await post('allocations', {
+        paymentId: payment.id,
+        invoiceId: id,
+        amount: '40.00',
+      }),
+      'allocation',
+    );
+    const read = async () => createdEntity(await get(`invoices/${id}`), 'invoice');
+    expect(await read()).toMatchObject({ openBalance: '60.00', paymentState: 'partially_paid' });
+    const secondPayment = await recordPayment({ amount: '60.00' });
+    const second = createdEntity(
+      await post('allocations', {
+        paymentId: secondPayment.id,
+        invoiceId: id,
+        amount: '60.00',
+      }),
+      'allocation',
+    );
+    expect(await read()).toMatchObject({ openBalance: '0.00', paymentState: 'paid' });
+    createdEntity(
+      await post(`allocations/${stringField(first, 'id')}/reverse`, {
+        reason: 'Fictional correction',
+      }),
+      'allocation',
+    );
+    expect(await read()).toMatchObject({ openBalance: '40.00', paymentState: 'partially_paid' });
+    createdEntity(
+      await post(`payments/${stringField(secondPayment, 'id')}/void`, {
+        expectedVersion: 0,
+        reason: 'Fictional void',
+      }),
+      'payment',
+    );
+    expect(await read()).toMatchObject({
+      openBalance: '100.00',
+      paymentState: 'unpaid',
+      allocations: [
+        {
+          id: first.id,
+          amount: '40.00',
+          effectiveOn: today(),
+          reversedOn: today(),
+          reversalReason: 'Fictional correction',
+          source: {
+            type: 'payment',
+            id: payment.id,
+            receivedOn: today(),
+            reference: '  Κατάθεση\nΑ  ',
+          },
+        },
+        { id: second.id, amount: '60.00', reversedOn: today(), reversalReason: 'Fictional void' },
+      ],
+    });
+  });
+
+  it('shows null settlement fields for drafts, quotes and cancelled documents', async () => {
+    const draft = await createDraft();
+    const quote = await createDraft(clientId, company, { documentType: 'quote' });
+    const cancelled = await createDraft();
+    await inCompany(company, (tx) =>
+      tx.invoice.update({
+        where: { id: stringField(cancelled, 'id') },
+        data: { status: 'cancelled' },
+      }),
+    );
+    for (const document of [draft, quote, cancelled]) {
+      expect(
+        createdEntity(await get(`invoices/${stringField(document, 'id')}`), 'invoice'),
+      ).toMatchObject({
+        openBalance: null,
+        paymentState: null,
+        unappliedAmount: null,
+        allocations: [],
+      });
+    }
+  });
+
+  it('lists only open issued invoices with batched balances, earliest due first', async () => {
+    const client = await createClient(company, 'Open invoice filter client');
+    const now = new Date();
+    let earliest: Record<string, unknown>;
+    let paid: Record<string, unknown>;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(now.getTime() - 2 * 86_400_000));
+      earliest = await issuedInvoice(client);
+      paid = await issuedInvoice(client);
+    } finally {
+      vi.useRealTimers();
+    }
+    const later = await issuedInvoice(client);
+    const payment = await recordPayment({ clientId: client, amount: '125.00' });
+    for (const [invoiceId, amount] of [
+      [paid.id, '100.00'],
+      [earliest.id, '25.00'],
+    ]) {
+      createdEntity(
+        await post('allocations', { paymentId: payment.id, invoiceId, amount }),
+        'allocation',
+      );
+    }
+    await issuedCredit(stringField(paid, 'id'), '0.4');
+    const draft = await createDraft(client);
+    const quote = await createDraft(client, company, { documentType: 'quote' });
+    const cancelled = await createDraft(client);
+    await inCompany(company, (tx) =>
+      tx.invoice.update({
+        where: { id: stringField(cancelled, 'id') },
+        data: { status: 'cancelled' },
+      }),
+    );
+    const listed = await get(`invoices?payment=open&clientId=${client}`);
+    expect(listed.status, text(listed)).toBe(200);
+    expect(arrayOf(record(listed.body).invoices)).toEqual([
+      expect.objectContaining({
+        id: earliest.id,
+        openBalance: '75.00',
+        paymentState: 'partially_paid',
+      }),
+      expect.objectContaining({ id: later.id, openBalance: '100.00', paymentState: 'unpaid' }),
+    ]);
+    const unfiltered = await get(`invoices?clientId=${client}`);
+    expect(unfiltered.status, text(unfiltered)).toBe(200);
+    const summaries = arrayOf(record(unfiltered.body).invoices);
+    expect(summaries).toContainEqual(
+      expect.objectContaining({ id: paid.id, openBalance: '0.00', paymentState: 'paid' }),
+    );
+    for (const document of [draft, quote, cancelled]) {
+      expect(summaries).toContainEqual(
+        expect.objectContaining({ id: document.id, openBalance: null, paymentState: null }),
+      );
+    }
+    expect((await get('invoices?payment=invalid')).status).toBe(400);
+  });
+
+  it('automatically applies issued credits only up to the original open balance and audits exact amounts', async () => {
+    for (const [index, paid, quantity, applied, remaining, balance] of [
+      [0, '0.00', '0.4', '40.00', '0.00', '60.00'],
+      [1, '100.00', '0.4', '0.00', '40.00', '0.00'],
+      [2, '70.00', '0.5', '30.00', '20.00', '0.00'],
+    ] as const) {
+      const invoice = await issuedInvoice();
+      if (paid !== '0.00') {
+        const payment = await recordPayment();
+        createdEntity(
+          await post('allocations', { paymentId: payment.id, invoiceId: invoice.id, amount: paid }),
+          'allocation',
+        );
+      }
+      const name = `automatic-credit-${String(index)}`;
+      const credit = await issuedCredit(stringField(invoice, 'id'), quantity, company, name);
+      expect(credit).toMatchObject({
+        openBalance: null,
+        paymentState: null,
+        unappliedAmount: remaining,
+      });
+      const allocations = arrayOf(credit.allocations);
+      expect(allocations).toEqual(
+        applied === '0.00'
+          ? []
+          : [
+              expect.objectContaining({
+                amount: applied,
+                effectiveOn: today(),
+                reversedOn: null,
+                reversalReason: null,
+                invoice: { id: invoice.id, number: invoice.number },
+              }),
+            ],
+      );
+      const original = createdEntity(
+        await get(`invoices/${stringField(invoice, 'id')}`),
+        'invoice',
+      );
+      expect(original.openBalance).toBe(balance);
+      if (applied !== '0.00')
+        expect(original.allocations).toContainEqual(
+          expect.objectContaining({
+            amount: applied,
+            source: { type: 'credit_note', id: credit.id, number: credit.number },
+          }),
+        );
+      const events = await auditEvents(name);
+      expect(events.map((event) => [event.action, event.outcome, event.objectId]).sort()).toEqual([
+        ...(applied === '0.00'
+          ? []
+          : [['allocation.created', 'success', record(allocations[0]).id]]),
+        ['credit_note.issued', 'success', credit.id],
+      ]);
+      expect(events.find((event) => event.action === 'credit_note.issued')?.details).toMatchObject({
+        applied,
+      });
+      if (applied !== '0.00')
+        expect(events.find((event) => event.action === 'allocation.created')).toMatchObject({
+          objectType: 'allocation',
+          actorType: 'user',
+          companyId: company,
+          correlationId: cid(name),
+          details: { automatic: true, creditNoteId: credit.id },
+        });
+    }
+  });
+
+  it('keeps the account in one snapshot when an allocation commits between its invoice and payment reads', async () => {
+    const client = await createClient(company, 'Concurrent account client');
+    const invoice = await issuedInvoice(client);
+    const payment = await recordPayment({ clientId: client });
+    const path = `clients/${client}/account`;
+    const before = await get(path);
+    expect(before.status, text(before)).toBe(200);
+    expect(before.body).toMatchObject({ openTotal: '100.00', creditTotal: '100.00' });
+
+    const allocationReady = deferred();
+    const commitAllocation = deferred();
+    const writer = inCompany(company, async (tx) => {
+      await tx.allocation.create({
+        data: {
+          companyId: company,
+          paymentId: stringField(payment, 'id'),
+          invoiceId: stringField(invoice, 'id'),
+          amount: '100.00',
+          effectiveOn: new Date(`${today()}T00:00:00Z`),
+          createdById: stringField(payment, 'createdBy'),
+        },
+      });
+      allocationReady.resolve();
+      await commitAllocation.promise;
+    });
+    const prisma = started().get(PrismaService).client;
+    // Gate real queries: read invoice allocations before committing, and payments after.
+    const gated = prisma.$extends({
+      query: {
+        invoice: {
+          async findMany({ args, query }) {
+            const rows = await query(args);
+            if (args.where?.clientId === client && args.where.documentType === 'invoice') {
+              commitAllocation.resolve();
+            }
+            return rows;
+          },
+        },
+        payment: {
+          async findMany({ args, query }) {
+            if (args.where?.clientId === client) await writer;
+            return query(args);
+          },
+        },
+      },
+    });
+    const transact = gated.$transaction.bind(gated) as typeof prisma.$transaction;
+    const transactions = vi
+      .spyOn(prisma, '$transaction')
+      .mockImplementation((fn, options) => transact(fn, options));
+    try {
+      await Promise.race([allocationReady.promise, writer]);
+      const during = await get(path);
+      expect(during.status, text(during)).toBe(200);
+      expect(during.body).toEqual(before.body);
+    } finally {
+      commitAllocation.resolve();
+      transactions.mockRestore();
+      await writer;
+    }
+    const after = await get(path);
+    expect(after.status, text(after)).toBe(200);
+    expect(after.body).toEqual({
+      openInvoices: [],
+      credits: [],
+      openTotal: '0.00',
+      creditTotal: '0.00',
+    });
+  });
+
+  it('reports client credit after a paid invoice, settles another invoice, and sums remaining payments and credits', async () => {
+    const client = await createClient(company, 'Account client');
+    const invoice = await issuedInvoice(client);
+    const payment = await recordPayment({ clientId: client });
+    createdEntity(
+      await post('allocations', { paymentId: payment.id, invoiceId: invoice.id, amount: '100.00' }),
+      'allocation',
+    );
+    const credit = await issuedCredit(stringField(invoice, 'id'), '0.4');
+    const account = async () => {
+      const response = await get(`clients/${client}/account`);
+      expect(response.status, text(response)).toBe(200);
+      return record(response.body);
+    };
+    expect(await account()).toEqual({
+      openInvoices: [],
+      openTotal: '0.00',
+      creditTotal: '40.00',
+      credits: [
+        {
+          type: 'credit_note',
+          id: credit.id,
+          number: credit.number,
+          issueDate: today(),
+          amount: '40.00',
+          remaining: '40.00',
+        },
+      ],
+    });
+    const target = await issuedInvoice(client, company, '40.00');
+    createdEntity(
+      await post('allocations', { creditNoteId: credit.id, invoiceId: target.id, amount: '40.00' }),
+      'allocation',
+    );
+    expect(await account()).toEqual({
+      openInvoices: [],
+      credits: [],
+      openTotal: '0.00',
+      creditTotal: '0.00',
+    });
+    const open = await issuedInvoice(client);
+    const anotherOpen = await issuedInvoice(client, company, '50.00');
+    const partial = await recordPayment({
+      clientId: client,
+      amount: '90.00',
+      receivedOn: addDaysToBusinessDate(today(), -1),
+      reference: '  Account deposit  ',
+    });
+    createdEntity(
+      await post('allocations', { paymentId: partial.id, invoiceId: open.id, amount: '30.00' }),
+      'allocation',
+    );
+    const excess = await issuedCredit(stringField(invoice, 'id'), '0.2');
+    const refund = createdEntity(
+      await post('refunds', {
+        creditNoteId: excess.id,
+        amount: '5.00',
+        refundedOn: today(),
+        method: 'cash',
+      }),
+      'refund',
+    );
+    const voided = await recordPayment({ clientId: client });
+    createdEntity(
+      await post(`payments/${stringField(voided, 'id')}/void`, {
+        expectedVersion: 0,
+        reason: 'Fictional correction',
+      }),
+      'payment',
+    );
+    await createDraft(client);
+    await createDraft(client, company, { documentType: 'quote' });
+    expect(await account()).toEqual({
+      openInvoices: [
+        {
+          id: open.id,
+          number: open.number,
+          issueDate: open.issueDate,
+          dueDate: open.dueDate,
+          total: '100.00',
+          openBalance: '70.00',
+        },
+        {
+          id: anotherOpen.id,
+          number: anotherOpen.number,
+          issueDate: anotherOpen.issueDate,
+          dueDate: anotherOpen.dueDate,
+          total: '50.00',
+          openBalance: '50.00',
+        },
+      ],
+      credits: [
+        {
+          type: 'payment',
+          id: partial.id,
+          receivedOn: addDaysToBusinessDate(today(), -1),
+          reference: '  Account deposit  ',
+          amount: '90.00',
+          remaining: '60.00',
+        },
+        {
+          type: 'credit_note',
+          id: excess.id,
+          number: excess.number,
+          issueDate: today(),
+          amount: '20.00',
+          remaining: '15.00',
+        },
+      ],
+      openTotal: '120.00',
+      creditTotal: '75.00',
+    });
+    expect(
+      createdEntity(await get(`invoices/${stringField(excess, 'id')}`), 'invoice').unappliedAmount,
+    ).toBe('15.00');
+    createdEntity(
+      await post(`refunds/${stringField(refund, 'id')}/void`, {
+        expectedVersion: 0,
+        reason: 'Fictional correction',
+      }),
+      'refund',
+    );
+    expect((await account()).creditTotal).toBe('80.00');
+    expect(
+      createdEntity(await get(`invoices/${stringField(excess, 'id')}`), 'invoice').unappliedAmount,
+    ).toBe('20.00');
+    const empty = await createClient(company, 'Empty account');
+    expect(record((await get(`clients/${empty}/account`)).body)).toEqual({
+      openInvoices: [],
+      credits: [],
+      openTotal: '0.00',
+      creditTotal: '0.00',
+    });
+  });
+
   it('records exact customer text, fully allocates a payment, reads remaining and audits both writes', async () => {
     const invoice = await issuedInvoice();
     const body = {
@@ -786,7 +1205,11 @@ describe('payments, allocations and refunds (real Postgres)', () => {
         expect.objectContaining({ action: 'authorization.denied', outcome: 'denied' }),
       );
     }
-    for (const path of ['payments', `payments/${stringField(payment, 'id')}`]) {
+    for (const path of [
+      'payments',
+      `payments/${stringField(payment, 'id')}`,
+      `clients/${clientId}/account`,
+    ]) {
       const response = await send(viewer, 'get', url(path), cid('viewer-read'));
       expect(response.status, text(response)).toBe(200);
     }
@@ -859,6 +1282,7 @@ describe('payments, allocations and refunds (real Postgres)', () => {
         post(`allocations/${stringField(foreignAllocation, 'id')}/reverse`, { reason: 'Foreign' }),
       () => get(`payments/${stringField(foreignPayment, 'id')}`),
       () => get(`payments?clientId=${foreignClient}`),
+      () => get(`clients/${foreignClient}/account`),
       () =>
         post(`payments/${stringField(foreignPayment, 'id')}/void`, {
           expectedVersion: 0,
@@ -933,9 +1357,14 @@ describe('payments, allocations and refunds (real Postgres)', () => {
     });
     return stringField(createdEntity(response, 'client'), 'id');
   }
-  async function createDraft(client = clientId, companyId = company) {
+  async function createDraft(
+    client = clientId,
+    companyId = company,
+    options: { documentType?: 'quote'; amount?: string } = {},
+  ) {
     const response = await send(admin, 'post', url('invoices', companyId), cid('draft'), {
       clientId: client,
+      documentType: options.documentType,
       pricesIncludeTax: true,
       lines: [
         {
@@ -943,15 +1372,15 @@ describe('payments, allocations and refunds (real Postgres)', () => {
           description: 'Fictional gift box',
           quantity: '1',
           unit: 'box',
-          unitPrice: '100.00',
+          unitPrice: options.amount ?? '100.00',
           taxCodeId: taxes.get(companyId),
         },
       ],
     });
     return createdEntity(response, 'invoice');
   }
-  async function issuedInvoice(client = clientId, companyId = company) {
-    const draft = await createDraft(client, companyId);
+  async function issuedInvoice(client = clientId, companyId = company, amount = '100.00') {
+    const draft = await createDraft(client, companyId, { amount });
     return createdEntity(
       await send(
         admin,
@@ -963,7 +1392,12 @@ describe('payments, allocations and refunds (real Postgres)', () => {
       'invoice',
     );
   }
-  async function issuedCredit(invoiceId: string, quantity: string, companyId = company) {
+  async function issuedCredit(
+    invoiceId: string,
+    quantity: string,
+    companyId = company,
+    issueName = 'credit-issue',
+  ) {
     const detail = createdEntity(
       await send(admin, 'get', url(`invoices/${invoiceId}`, companyId), cid('original')),
       'invoice',
@@ -984,7 +1418,7 @@ describe('payments, allocations and refunds (real Postgres)', () => {
         admin,
         'post',
         url(`credit-notes/${stringField(draft, 'id')}/issue`, companyId),
-        cid('credit-issue'),
+        cid(issueName),
         { expectedVersion: draft.version },
       ),
       'creditNote',
@@ -1020,6 +1454,14 @@ describe('payments, allocations and refunds (real Postgres)', () => {
     );
   }
 });
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 function createdEntity(response: request.Response, field: string): Record<string, unknown> {
   expect(response.status, text(response)).toBe(200);

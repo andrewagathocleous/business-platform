@@ -6,7 +6,6 @@ import {
   parseAmount,
   refundAllowed,
   sourceRemaining,
-  type DatedAmount,
   type DatedSettlementSource,
 } from '@bp/domain';
 import { AuditService } from '../audit/audit.service';
@@ -18,6 +17,7 @@ import { requireActor } from '../commerce/http';
 import { PrismaService } from '../database/prisma.service';
 import type { RequestMeta } from '../identity/request-meta';
 import { idempotencyKey, idempotent } from './idempotency';
+import { datedAllocation, datedRefund, day, invoiceBalance } from './settlement';
 
 type Method = 'bank_transfer' | 'card' | 'cash' | 'store' | 'other';
 type SourceInput = { paymentId?: string; creditNoteId?: string };
@@ -86,6 +86,10 @@ export type PaymentView = MoneyRecordView & {
   refunds: RefundView[];
   remaining: string;
 };
+type ClientCredit = { amount: string; remaining: string; id: string } & (
+  | { type: 'payment'; receivedOn: string; reference: string | null }
+  | { type: 'credit_note'; number: string | null; issueDate: string }
+);
 
 @Injectable()
 export class PaymentService {
@@ -212,27 +216,128 @@ export class PaymentService {
   }
 
   get(ctx: RequestContext, id: string, meta: RequestMeta) {
-    return this.run(ctx, meta, 'payment.view', async (tx) => {
-      id = objectId(id, 'payment');
-      const payment = await tx.payment.findFirst({
-        where: { companyId: ctx.companyId, id },
-        include: paymentInclude,
-      });
-      if (!payment) throw missing('payment', id);
-      return paymentView(payment);
-    });
+    return this.run(
+      ctx,
+      meta,
+      'payment.view',
+      async (tx) => {
+        id = objectId(id, 'payment');
+        const payment = await tx.payment.findFirst({
+          where: { companyId: ctx.companyId, id },
+          include: paymentInclude,
+        });
+        if (!payment) throw missing('payment', id);
+        return paymentView(payment);
+      },
+      { isolation: 'repeatable_read' },
+    );
   }
 
   list(ctx: RequestContext, clientId: string | undefined, meta: RequestMeta) {
-    return this.run(ctx, meta, 'payment.view', async (tx) => {
-      if (clientId !== undefined) clientId = await this.client(tx, ctx, clientId);
-      const payments = await tx.payment.findMany({
-        where: { companyId: ctx.companyId, ...(clientId ? { clientId } : {}) },
-        orderBy: [{ receivedOn: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
-        include: paymentInclude,
-      });
-      return payments.map(paymentView);
-    });
+    return this.run(
+      ctx,
+      meta,
+      'payment.view',
+      async (tx) => {
+        if (clientId !== undefined) clientId = await this.client(tx, ctx, clientId);
+        const payments = await tx.payment.findMany({
+          where: { companyId: ctx.companyId, ...(clientId ? { clientId } : {}) },
+          orderBy: [{ receivedOn: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+          include: paymentInclude,
+        });
+        return payments.map(paymentView);
+      },
+      { isolation: 'repeatable_read' },
+    );
+  }
+
+  account(ctx: RequestContext, id: string, meta: RequestMeta) {
+    return this.run(
+      ctx,
+      meta,
+      'client.account.view',
+      async (tx) => {
+        const clientId = await this.client(tx, ctx, id);
+        const where = { companyId: ctx.companyId, clientId };
+        const [invoices, payments, creditNotes] = await Promise.all([
+          tx.invoice.findMany({
+            where: { ...where, status: 'issued', documentType: 'invoice' },
+            include: { allocations: true },
+            orderBy: [{ dueDate: 'asc' }, { id: 'asc' }],
+          }),
+          tx.payment.findMany({
+            where: { ...where, status: 'recorded' },
+            include: { allocations: true, refunds: true },
+          }),
+          tx.invoice.findMany({
+            where: { ...where, status: 'issued', documentType: 'credit_note' },
+            include: { creditAllocations: true, refunds: true },
+          }),
+        ]);
+        const openInvoices = invoices.flatMap((invoice) => {
+          const balance = invoiceBalance(invoice, invoice.allocations).openBalance;
+          if (balance === null || !parseAmount(balance, 2).gt('0')) return [];
+          return [
+            {
+              id: invoice.id,
+              number: invoice.number,
+              issueDate: day(invoice.issueDate),
+              dueDate: formatDateOnly(invoice.dueDate),
+              total: fixed(invoice.total, 2),
+              openBalance: balance,
+            },
+          ];
+        });
+        const credits: ClientCredit[] = [
+          ...payments.map((payment): ClientCredit => ({
+            type: 'payment',
+            id: payment.id,
+            receivedOn: day(payment.receivedOn),
+            reference: payment.reference,
+            amount: fixed(payment.amount, 2),
+            remaining: sourceRemaining({
+              amount: fixed(payment.amount, 2),
+              allocations: payment.allocations.map(datedAllocation),
+              refunds: payment.refunds.map(datedRefund),
+            }),
+          })),
+          ...creditNotes.map((credit): ClientCredit => ({
+            type: 'credit_note',
+            id: credit.id,
+            number: credit.number,
+            issueDate: day(credit.issueDate),
+            amount: fixed(credit.total, 2),
+            remaining: sourceRemaining({
+              amount: fixed(credit.total, 2),
+              allocations: credit.creditAllocations.map(datedAllocation),
+              refunds: credit.refunds.map(datedRefund),
+            }),
+          })),
+        ].filter((credit) => parseAmount(credit.remaining, 2).gt('0'));
+        const creditDate = (credit: ClientCredit) =>
+          credit.type === 'payment' ? credit.receivedOn : credit.issueDate;
+        credits.sort(
+          (a, b) => creditDate(a).localeCompare(creditDate(b)) || a.id.localeCompare(b.id),
+        );
+        return {
+          openInvoices,
+          credits,
+          openTotal: openInvoices
+            .reduce(
+              (sum, invoice) => sum.plus(parseAmount(invoice.openBalance, 2)),
+              parseAmount('0.00', 2),
+            )
+            .toFixed(2),
+          creditTotal: credits
+            .reduce(
+              (sum, credit) => sum.plus(parseAmount(credit.remaining, 2)),
+              parseAmount('0.00', 2),
+            )
+            .toFixed(2),
+        };
+      },
+      { isolation: 'repeatable_read' },
+    );
   }
 
   voidPayment(ctx: RequestContext, id: string, input: VoidInput, meta: RequestMeta) {
@@ -349,12 +454,14 @@ export class PaymentService {
     meta: RequestMeta,
     action: string,
     fn: (tx: TenantTransaction, actor: string) => Promise<T>,
+    options?: Parameters<TenantDb['run']>[2],
   ): Promise<T> {
     const actor = requireActor(ctx);
     try {
       return await this.tenants.run(
         { companyId: ctx.companyId, actor, correlationId: ctx.correlationId },
         (tx) => fn(tx, actor),
+        options,
       );
     } catch (error) {
       if (error instanceof CommerceError) {
@@ -585,29 +692,10 @@ function validDate(value: string, today: string, field: string, earliest?: strin
     );
   return date;
 }
-function day(date: Date | null): string {
-  const result = formatDateOnly(date);
-  if (!result) throw new Error('Settlement requires a business date');
-  return result;
-}
 function sourceInput(row: { paymentId: string | null; creditNoteId: string | null }): SourceInput {
   return row.paymentId
     ? { paymentId: row.paymentId }
     : { creditNoteId: row.creditNoteId ?? undefined };
-}
-function datedAllocation(row: AllocationRow): DatedAmount {
-  return {
-    amount: fixed(row.amount, 2),
-    from: day(row.effectiveOn),
-    until: formatDateOnly(row.reversedOn),
-  };
-}
-function datedRefund(row: RefundRow): DatedAmount {
-  return {
-    amount: fixed(row.amount, 2),
-    from: day(row.refundedOn),
-    until: row.status === 'voided' ? day(row.voidedOn) : null,
-  };
 }
 function allocationView(row: AllocationRow) {
   return {

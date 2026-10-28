@@ -218,6 +218,18 @@ describe('row level security', () => {
     expect(rows[0]).toMatchObject({ db_user: 'bp_app', rolsuper: false, rolbypassrls: false });
   });
 
+  it.each([
+    { isolation: 'repeatable_read' as const, expected: 'repeatable read' },
+    { isolation: undefined, expected: 'read committed' },
+  ])('uses $expected transaction isolation', async ({ isolation, expected }) => {
+    const rows = await appTenant.run(
+      { companyId: companyA, actor: userId, correlationId: randomUUID() },
+      (tx) => tx.$queryRaw<{ transaction_isolation: string }[]>`SHOW transaction_isolation`,
+      isolation ? { isolation } : undefined,
+    );
+    expect(rows).toEqual([{ transaction_isolation: expected }]);
+  });
+
   it('returns no rows from RLS tables when no company context is set', async () => {
     for (const table of RLS_TABLES) {
       expect(await count(app, table)).toBe(0);
@@ -490,7 +502,11 @@ describe('row level security', () => {
         },
       });
     };
-    const lineOf = async (tx: TenantTransaction, invoiceId: string, creditedLineId: string | null) => {
+    const lineOf = async (
+      tx: TenantTransaction,
+      invoiceId: string,
+      creditedLineId: string | null,
+    ) => {
       const line = await tx.invoiceLine.findUniqueOrThrow({ where: { id: graphA.invoice_line } });
       return tx.invoiceLine.create({
         data: {
@@ -527,7 +543,8 @@ describe('row level security', () => {
       /invoice_credit_note_check/,
     );
     await refuses(
-      async (tx) => headerOf(tx, { creditedInvoiceId: (await draftOf(tx)).id, creditReason: 'Draft' }),
+      async (tx) =>
+        headerOf(tx, { creditedInvoiceId: (await draftOf(tx)).id, creditReason: 'Draft' }),
       /a credit note credits an issued invoice/,
     );
     const credit = await appTenant.run(ctx, async (tx) => {
@@ -582,7 +599,8 @@ describe('row level security', () => {
       /keeps the line it credits/,
     );
     await refuses(
-      (tx) => tx.invoiceLine.update({ where: { id: creditLine.id }, data: { unitPrice: '0.0001' } }),
+      (tx) =>
+        tx.invoiceLine.update({ where: { id: creditLine.id }, data: { unitPrice: '0.0001' } }),
       /at its prices and rates/,
     );
     await refuses(
@@ -668,8 +686,10 @@ describe('row level security', () => {
     const issue = (id: string, options: { taxName?: string } = {}) =>
       appTenant.run(ctx, (tx) => markIssued(tx, companyA, id, userId, options));
     const exceeds = async (id: string) => {
-      const [row] = await appTenant.run(ctx, (tx) =>
-        tx.$queryRaw<{ exceeds: boolean }[]>`
+      const [row] = await appTenant.run(
+        ctx,
+        (tx) =>
+          tx.$queryRaw<{ exceeds: boolean }[]>`
           SELECT credit_note_exceeds_original(${companyA}::uuid, ${id}::uuid) AS exceeds
         `,
       );
@@ -1817,7 +1837,11 @@ async function markIssued(
   const address = { line1: '1 Demo Street', city: 'Nicosia', countryCode: 'CY' };
   const seller =
     options.sellerSnapshot ??
-    JSON.stringify({ legalName: 'Demo Company A Ltd (fictional)', vatNumber: 'CY00000000X', address });
+    JSON.stringify({
+      legalName: 'Demo Company A Ltd (fictional)',
+      vatNumber: 'CY00000000X',
+      address,
+    });
   const buyer = JSON.stringify({ displayName: 'Demo client (fictional)', address });
   const series = await tx.invoiceSeries.create({
     data: {

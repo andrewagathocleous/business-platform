@@ -315,6 +315,8 @@ They are never edited or deleted. They are only reversed, with a date.
 
 **As built, R2-E2a (2026-10-28).** Routes: `POST …/payments`, `…/allocations`, `…/refunds` (with `Idempotency-Key`), `…/allocations/:id/reverse`, `…/payments/:id/void`, `…/refunds/:id/void` (`payment.record`), and `GET …/payments[/:id]` (`invoice.view`). Reversals and voids happen on today's business date. Idempotency takes a transaction advisory lock on (company, operation, key) before any other lock. Malformed requests are refused with 400 before the audited path, as on every other route.
 
+**As built, R2-E2b (2026-10-28).** Balances are derived, never stored: `openBalance`, `paymentState` and `unappliedAmount` on invoice and credit-note views, `GET …/invoices?payment=open`, and `GET …/clients/:id/account`. Issuing a credit note applies min(its total, the original's open balance) to the original in the same transaction. Read-only balance views run at repeatable read so their queries share one snapshot.
+
 ## R2-F. Store invoice authority (P3-06)
 
 Order-to-invoice conversion is deferred (R2-02), so in R2 this step is a guard only:

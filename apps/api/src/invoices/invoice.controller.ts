@@ -138,7 +138,7 @@ export class InvoiceController {
   @RequirePermission('invoice.view')
   @ApiOperation({
     summary:
-      'List invoices. Filters: status, clientId, from, to, q, and delivery=pending (issued, not yet delivered, earliest deadline first).',
+      'List invoices. Filters: status, clientId, from, to, q, delivery=pending (earliest deadline first), payment=open (issued invoices with a balance, earliest due first).',
   })
   async list(@Req() req: Request, @Param('companyId') companyId: string) {
     const invoices = await this.invoices.list(
@@ -259,6 +259,10 @@ function parseInvoiceQuery(query: Record<string, unknown>): InvoiceQuery {
   if (delivery !== undefined && delivery !== 'pending') {
     throw new BadRequestException('delivery is invalid');
   }
+  const payment = query.payment;
+  if (payment !== undefined && payment !== 'open') {
+    throw new BadRequestException('payment is invalid');
+  }
   const clientId = query.clientId;
   if (clientId !== undefined && (typeof clientId !== 'string' || !isUuid(clientId))) {
     throw new BadRequestException('clientId is invalid');
@@ -272,6 +276,7 @@ function parseInvoiceQuery(query: Record<string, unknown>): InvoiceQuery {
   return {
     status,
     delivery,
+    payment,
     clientId: typeof clientId === 'string' ? clientId : undefined,
     from,
     to,

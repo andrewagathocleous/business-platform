@@ -1219,7 +1219,10 @@ describe('issuing invoices', () => {
         event.outcome,
         event.objectId,
       ]),
-    ).toEqual([['credit_note.issued', 'success', partial.id]]);
+    ).toEqual([
+      ['allocation.created', 'success', record(arrayOf(record(record(issued.body).creditNote).allocations)[0]).id],
+      ['credit_note.issued', 'success', partial.id],
+    ]);
 
     // The buyer and the tax treatment are the invoice's, as frozen when it was issued.
     const row = await invoiceRow(partial.id);

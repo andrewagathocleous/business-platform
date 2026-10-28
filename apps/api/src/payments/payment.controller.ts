@@ -153,6 +153,17 @@ export class PaymentController {
     };
   }
 
+  @Get('clients/:id/account')
+  @RequirePermission('invoice.view')
+  @ApiOperation({ summary: 'Client open invoices and remaining payment and credit-note credit.' })
+  async account(
+    @Req() req: Request,
+    @Param('companyId') companyId: string,
+    @Param('id') id: string,
+  ) {
+    return this.payments.account(requireContext(req, companyId), id, requestMeta(req));
+  }
+
   @Post('payments/:id/void')
   @HttpCode(200)
   @RequirePermission('payment.record')

@@ -3,15 +3,20 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma, TenantDb, type TenantTransaction } from '@bp/db';
 import {
   addDaysToBusinessDate,
+  allocationEffectiveOn,
   businessDateInZone,
   calculateDocumentTotals,
   currencyMinorDigits,
   deliveryDeadline,
   DocumentValidationError,
+  openBalance,
+  parseAmount,
   printedUnitAmount,
+  sourceRemaining,
   vatExclusiveUnitPrice,
   type DeliveryDeadlineRule,
   type DocumentTotals,
+  type InvoicePaymentState,
 } from '@bp/domain';
 import {
   ISSUED_RENDER_VERSION,
@@ -30,6 +35,7 @@ import { requireActor } from '../commerce/http';
 import { uuidv7 } from '../correlation/correlation';
 import { PrismaService } from '../database/prisma.service';
 import type { RequestMeta } from '../identity/request-meta';
+import { datedAllocation, datedRefund, day, invoiceBalance } from '../payments/settlement';
 import { integrityFailed, isStorageMiss } from '../storage/file-errors';
 import { STORAGE } from '../storage/storage.module';
 import { FileIntegrityError, readVerifiedFile } from '../storage/verified-file';
@@ -80,6 +86,7 @@ export type InvoiceQuery = {
   status?: 'draft' | 'issued' | 'cancelled';
   /** `pending`: issued documents with no delivery recorded yet, earliest deadline first. */
   delivery?: 'pending';
+  payment?: 'open';
   clientId?: string;
   from?: string;
   to?: string;
@@ -142,12 +149,16 @@ export type InvoiceSummary = {
   netTotal: string;
   taxTotal: string;
   total: string;
+  openBalance: string | null;
+  paymentState: InvoicePaymentState | null;
   version: number;
   createdAt: string;
   updatedAt: string;
 };
 
 export type InvoiceDetail = InvoiceSummary & {
+  unappliedAmount: string | null;
+  allocations: InvoiceAllocation[];
   notes: string | null;
   terms: string | null;
   lines: InvoiceLineView[];
@@ -173,7 +184,25 @@ export type InvoiceDetail = InvoiceSummary & {
   convertedInvoiceId: string | null;
 };
 
+type InvoiceAllocation = {
+  id: string;
+  amount: string;
+  effectiveOn: string;
+  reversedOn: string | null;
+  reversalReason: string | null;
+} & (
+  | {
+      source:
+        | { type: 'payment'; id: string; receivedOn: string; reference: string | null }
+        | { type: 'credit_note'; id: string; number: string | null };
+    }
+  | { invoice: { id: string; number: string | null } }
+);
+
 type DetailExtras = {
+  balance?: ReturnType<typeof invoiceBalance>;
+  unappliedAmount?: string | null;
+  allocations?: InvoiceAllocation[];
   printJobs?: InvoicePrintJob[];
   firstPrintJobId?: string | null;
   /** Per original line id: the quantity issued credit notes credited. */
@@ -416,47 +445,68 @@ export class InvoiceService {
     if (from && to && from.getTime() > to.getTime()) {
       throw new CommerceError(400, 'invalid_date', 'invoice', null, 'from is after to');
     }
-    const rows = await this.tenants.run(this.context(ctx, actor), (tx) =>
-      tx.invoice.findMany({
-        where: {
-          companyId: ctx.companyId,
-          ...(query.status ? { status: query.status } : {}),
-          ...(query.delivery === 'pending'
-            ? { status: 'issued' as const, deliveries: { none: {} } }
-            : {}),
-          ...(query.clientId ? { clientId: query.clientId.toLowerCase() } : {}),
-          ...(from || to
-            ? { issueDate: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } }
-            : {}),
-          ...(query.q
-            ? {
-                OR: [
-                  { reference: { contains: query.q, mode: 'insensitive' } },
-                  { notes: { contains: query.q, mode: 'insensitive' } },
-                  { number: { contains: query.q, mode: 'insensitive' } },
-                  { client: { displayName: { contains: query.q, mode: 'insensitive' } } },
-                ],
-              }
-            : {}),
-        },
-        include: {
-          client: true,
-          deliveries: { select: { deliveredOn: true }, orderBy: { deliveredOn: 'desc' }, take: 1 },
-        },
-        orderBy:
-          query.delivery === 'pending'
-            ? [{ deliveryDeadline: 'asc' }, { id: 'asc' }]
-            : [{ updatedAt: 'desc' }, { id: 'desc' }],
-      }),
+    const rows = await this.tenants.run(
+      this.context(ctx, actor),
+      (tx) =>
+        tx.invoice.findMany({
+          where: {
+            companyId: ctx.companyId,
+            ...(query.status ? { status: query.status } : {}),
+            ...(query.delivery === 'pending'
+              ? { status: 'issued' as const, deliveries: { none: {} } }
+              : {}),
+            ...(query.payment === 'open'
+              ? { status: 'issued' as const, documentType: 'invoice' as const }
+              : {}),
+            ...(query.clientId ? { clientId: query.clientId.toLowerCase() } : {}),
+            ...(from || to
+              ? { issueDate: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } }
+              : {}),
+            ...(query.q
+              ? {
+                  OR: [
+                    { reference: { contains: query.q, mode: 'insensitive' } },
+                    { notes: { contains: query.q, mode: 'insensitive' } },
+                    { number: { contains: query.q, mode: 'insensitive' } },
+                    { client: { displayName: { contains: query.q, mode: 'insensitive' } } },
+                  ],
+                }
+              : {}),
+          },
+          include: {
+            client: true,
+            allocations: { select: { amount: true, effectiveOn: true, reversedOn: true } },
+            deliveries: {
+              select: { deliveredOn: true },
+              orderBy: { deliveredOn: 'desc' },
+              take: 1,
+            },
+          },
+          orderBy:
+            query.payment === 'open'
+              ? [{ dueDate: 'asc' }, { id: 'asc' }]
+              : query.delivery === 'pending'
+                ? [{ deliveryDeadline: 'asc' }, { id: 'asc' }]
+                : [{ updatedAt: 'desc' }, { id: 'desc' }],
+        }),
+      { isolation: 'repeatable_read' },
     );
-    return rows.map((row) => toSummary(row));
+    return rows
+      .map((row) => toSummary(row, invoiceBalance(row, row.allocations)))
+      .filter(
+        (row) =>
+          query.payment !== 'open' ||
+          (row.openBalance !== null && parseAmount(row.openBalance, 2).gt('0')),
+      );
   }
 
   async get(ctx: RequestContext, invoiceId: string, meta: RequestMeta): Promise<InvoiceDetail> {
     const actor = requireActor(ctx);
     try {
-      return await this.tenants.run(this.context(ctx, actor), async (tx) =>
-        this.detail(tx, ctx.companyId, invoiceId),
+      return await this.tenants.run(
+        this.context(ctx, actor),
+        async (tx) => this.detail(tx, ctx.companyId, invoiceId),
+        { isolation: 'repeatable_read' },
       );
     } catch (error) {
       return this.fail(ctx, meta, error);
@@ -1353,6 +1403,52 @@ export class InvoiceService {
         CREDIT_ISSUED,
       );
     }
+    // Both invoice rows are already locked together. Read history now, without new locks.
+    const originalAllocations = await tx.allocation.findMany({
+      where: { companyId, invoiceId: original.id },
+    });
+    const invoiceSettlement = {
+      total: fixed(original.total, 2),
+      issueDate: originalIssueDate,
+      allocations: originalAllocations.map(datedAllocation),
+    };
+    const open = parseAmount(openBalance(invoiceSettlement), 2);
+    const creditTotal = parseAmount(totals.total, 2);
+    const amount = (creditTotal.lte(open) ? creditTotal : open).toFixed(2);
+    let applied = '0.00';
+    if (parseAmount(amount, 2).gt('0')) {
+      const effectiveOn = allocationEffectiveOn({
+        amount,
+        today: issueDate,
+        source: { amount: totals.total, date: issueDate, allocations: [], refunds: [] },
+        invoice: invoiceSettlement,
+      });
+      if (effectiveOn !== null) {
+        const allocation = await tx.allocation.create({
+          data: {
+            companyId,
+            creditNoteId: id,
+            invoiceId: original.id,
+            amount,
+            effectiveOn: parseDateOnly(effectiveOn, 'effectiveOn'),
+            createdById: actor,
+          },
+        });
+        applied = amount;
+        await this.audit.record(tx, {
+          companyId,
+          actorType: 'user',
+          actorId: actor,
+          actorLabel: ctx.actorLabel,
+          action: 'allocation.created',
+          objectType: 'allocation',
+          objectId: allocation.id,
+          outcome: 'success',
+          ...meta,
+          details: { automatic: true, creditNoteId: id },
+        });
+      }
+    }
     await this.audit.record(tx, {
       companyId,
       actorType: 'user',
@@ -1368,6 +1464,7 @@ export class InvoiceService {
         number,
         creditedInvoiceId: original.id,
         total: totals.total,
+        applied,
         version: current.version + 1,
         pdfFileId: fileId,
       },
@@ -1926,6 +2023,27 @@ export class InvoiceService {
     if (row.status !== 'issued') {
       return toDetail(row);
     }
+    const allocations =
+      row.documentType === 'invoice' || row.documentType === 'credit_note'
+        ? await tx.allocation.findMany({
+            where: {
+              companyId,
+              ...(row.documentType === 'invoice'
+                ? { invoiceId: row.id }
+                : { creditNoteId: row.id }),
+            },
+            include: {
+              payment: { select: { id: true, receivedOn: true, reference: true } },
+              creditNote: { select: { id: true, number: true } },
+              invoice: { select: { id: true, number: true } },
+            },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          })
+        : [];
+    const refunds =
+      row.documentType === 'credit_note'
+        ? await tx.refund.findMany({ where: { companyId, creditNoteId: row.id } })
+        : [];
     const creditedQuantities =
       row.documentType === 'invoice'
         ? await creditedQuantitiesOf(tx, companyId, row.id)
@@ -1956,6 +2074,39 @@ export class InvoiceService {
       select: { id: true },
     });
     return toDetail(row, {
+      balance: invoiceBalance(row, allocations),
+      unappliedAmount:
+        row.documentType === 'credit_note'
+          ? sourceRemaining({
+              amount: fixed(row.total, 2),
+              allocations: allocations.map(datedAllocation),
+              refunds: refunds.map(datedRefund),
+            })
+          : null,
+      allocations: allocations.map((allocation): InvoiceAllocation => {
+        const fields = {
+          id: allocation.id,
+          amount: fixed(allocation.amount, 2),
+          effectiveOn: day(allocation.effectiveOn),
+          reversedOn: formatDateOnly(allocation.reversedOn),
+          reversalReason: allocation.reversalReason,
+        };
+        if (row.documentType === 'credit_note') return { ...fields, invoice: allocation.invoice };
+        if (allocation.payment) {
+          return {
+            ...fields,
+            source: {
+              type: 'payment',
+              ...allocation.payment,
+              receivedOn: day(allocation.payment.receivedOn),
+            },
+          };
+        }
+        if (allocation.creditNote) {
+          return { ...fields, source: { type: 'credit_note', ...allocation.creditNote } };
+        }
+        throw new Error('Allocation requires a source');
+      }),
       printJobs: jobs.map((job) => ({
         id: job.id,
         status: job.status,
@@ -2261,33 +2412,37 @@ function storedLines(
   }));
 }
 
-function toSummary(row: {
-  id: string;
-  documentType: string;
-  status: string;
-  clientId: string;
-  client: { displayName: string };
-  currency: string;
-  language: string;
-  pricesIncludeTax: boolean;
-  issueDate: Date | null;
-  dueDate: Date | null;
-  supplyDate: Date | null;
-  deliveryDeadline: Date | null;
-  number: string | null;
-  issuedAt: Date | null;
-  deliveries: { deliveredOn: Date }[];
-  reference: string | null;
-  subtotal: { toFixed(digits: number): string };
-  discountTotal: { toFixed(digits: number): string };
-  netTotal: { toFixed(digits: number): string };
-  taxTotal: { toFixed(digits: number): string };
-  total: { toFixed(digits: number): string };
-  version: number;
-  createdAt: Date;
-  updatedAt: Date;
-}): InvoiceSummary {
+function toSummary(
+  row: {
+    id: string;
+    documentType: string;
+    status: string;
+    clientId: string;
+    client: { displayName: string };
+    currency: string;
+    language: string;
+    pricesIncludeTax: boolean;
+    issueDate: Date | null;
+    dueDate: Date | null;
+    supplyDate: Date | null;
+    deliveryDeadline: Date | null;
+    number: string | null;
+    issuedAt: Date | null;
+    deliveries: { deliveredOn: Date }[];
+    reference: string | null;
+    subtotal: { toFixed(digits: number): string };
+    discountTotal: { toFixed(digits: number): string };
+    netTotal: { toFixed(digits: number): string };
+    taxTotal: { toFixed(digits: number): string };
+    total: { toFixed(digits: number): string };
+    version: number;
+    createdAt: Date;
+    updatedAt: Date;
+  },
+  balance: ReturnType<typeof invoiceBalance> = { openBalance: null, paymentState: null },
+): InvoiceSummary {
   return {
+    ...balance,
     id: row.id,
     documentType: row.documentType,
     status: row.status,
@@ -2366,7 +2521,9 @@ function toDetail(
   extras: DetailExtras = {},
 ): InvoiceDetail {
   return {
-    ...toSummary(row),
+    ...toSummary(row, extras.balance),
+    unappliedAmount: extras.unappliedAmount ?? null,
+    allocations: extras.allocations ?? [],
     notes: row.notes,
     terms: row.terms,
     printJobs: extras.printJobs ?? [],

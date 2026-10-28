@@ -451,7 +451,7 @@ async function loadPaymentFixtures(): Promise<PaymentFixtures> {
   const invoice = record(expectOk(draft, 'payment invoice draft').invoice);
   const invoiceId = stringField(invoice, 'id');
   expectOk(await send(paymentAdmin, 'post', `${prefix}/invoices/${invoiceId}/issue`, cid('payment-issue'), { expectedVersion: invoice.version }), 'payment invoice issue');
-  const credit = await send(paymentAdmin, 'post', `${prefix}/invoices/${invoiceId}/credit-notes`, cid('payment-credit'), { reason: 'Fictional return', full: true });
+  const credit = await send(paymentAdmin, 'post', `${prefix}/invoices/${invoiceId}/credit-notes`, cid('payment-credit'), { reason: 'Fictional return', lines: [{ invoiceLineId: stringField(record(arrayOf(invoice.lines)[0]), 'id'), quantity: '0.4' }] });
   const creditNote = record(expectOk(credit, 'payment credit note').creditNote);
   const creditNoteId = stringField(creditNote, 'id');
   expectOk(await send(paymentAdmin, 'post', `${prefix}/credit-notes/${creditNoteId}/issue`, cid('payment-credit-issue'), { expectedVersion: creditNote.version }), 'payment credit issue');
@@ -486,6 +486,7 @@ function sweepCases(adminB: Session, fx: Fixtures): SweepCase[] {
     onB('payment-create', 'POST /api/c/:companyId/payments', 'post', b('/payments'), () => paymentSnap(fx),
       { clientId: fx.payments.clientId, receivedOn: businessDateInZone(new Date(), 'Asia/Nicosia'), amount: '1.00', method: 'cash' }),
     onB('payment-list', 'GET /api/c/:companyId/payments', 'get', b(`/payments?clientId=${fx.payments.clientId}`), () => paymentSnap(fx)),
+    onB('client-account', 'GET /api/c/:companyId/clients/:id/account', 'get', b(`/clients/${fx.payments.clientId}/account`), () => paymentSnap(fx)),
     onB('payment-get', 'GET /api/c/:companyId/payments/:id', 'get', b(`/payments/${fx.payments.paymentId}`), () => paymentSnap(fx)),
     onB('payment-void', 'POST /api/c/:companyId/payments/:id/void', 'post', b(`/payments/${fx.payments.paymentId}/void`), () => paymentSnap(fx),
       { expectedVersion: 0, reason: 'isolation sweep' }),
