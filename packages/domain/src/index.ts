@@ -2,6 +2,7 @@ import './money/decimal';
 
 export {
   AmountError,
+  calculateCreditTotals,
   calculateDocumentTotals,
   currencyMinorDigits,
   isKnownCurrency,
@@ -12,6 +13,9 @@ export {
 } from './money';
 export type {
   AmountRejection,
+  CreditLineRequest,
+  CreditSourceLine,
+  CreditTotalsInput,
   DocumentLineInput,
   DocumentLineTotals,
   DocumentTotals,

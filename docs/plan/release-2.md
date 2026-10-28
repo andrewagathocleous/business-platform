@@ -223,6 +223,7 @@ Every write is audited, versioned (`expectedVersion`, 409 `version_conflict`) an
 - **Example:** four tax-exclusive €0.03 items at 19 % (VAT €0.02) credited one at a time reverse VAT €0.01, €0.00, €0.01 and €0.00 (the cumulative VAT is €0.01, €0.01, €0.02 and €0.02), so no valid return is refused.
 - **Example:** tax-inclusive lines of €11.93 and €11.92 credited one at a time never put a negative amount on either credit.
 - These three examples are unit tests against `packages/domain/money`.
+- *As built (R2-D1, 2026-10-28):* `calculateCreditTotals` in `packages/domain/src/money/credit.ts`, with a seeded property test (random invoices split over several credit notes add up exactly and never go negative). The invoice engine and the credit engine share exact whole-number arithmetic for the inclusive net and its allocation (`exact.ts`, rounding.md E13).
 - **Defence in depth:** the credited net, tax and gross per tax-code group must not exceed the original group's (409 `over_credit`).
 
 **Issuing.** On issue, with the credit note and its original locked by id, R2-C applies with its own series. The issue also re-derives every credit line from its source line and refuses a mismatch. Then the credit note is applied to the original (R2-E): it is allocated against the original's open balance, and any excess remains as the credit note's unapplied amount, which is client credit.
