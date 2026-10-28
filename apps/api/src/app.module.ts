@@ -15,6 +15,7 @@ import { HealthModule } from './health/health.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { InvoicesModule } from './invoices/invoices.module';
 import { OrdersModule } from './orders/orders.module';
+import { PaymentsModule } from './payments/payments.module';
 import { OutboundModule } from './outbound/outbound.module';
 import { VaultModule } from './vault/vault.module';
 import { ApiExceptionFilter } from './http/exception.filter';
@@ -42,6 +43,7 @@ import { buildThrottlerOptions } from './throttler/throttler';
     IntegrationsModule,
     InvoicesModule,
     OrdersModule,
+    PaymentsModule,
     OutboundModule,
     VaultModule,
     HealthModule,

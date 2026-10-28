@@ -1,5 +1,6 @@
 import { type INestApplication } from '@nestjs/common';
 import { TenantDb, type TenantTransaction } from '@bp/db';
+import { businessDateInZone } from '@bp/domain';
 import { Test } from '@nestjs/testing';
 import { Logger } from 'nestjs-pino';
 import { spawnSync } from 'node:child_process';
@@ -202,6 +203,7 @@ describe('company isolation sweep', () => {
 });
 
 type Fixtures = {
+  payments: PaymentFixtures;
   companyA: string;
   companyB: string;
   adminBUserId: string;
@@ -363,6 +365,7 @@ async function loadFixtures(adminA: Session, adminB: Session, companyA: string, 
     tx.company.findUniqueOrThrow({ where: { id: companyB }, select: { version: true } }),
   );
   return {
+    payments: await loadPaymentFixtures(),
     companyA,
     companyB,
     adminBUserId,
@@ -398,17 +401,106 @@ async function loadFixtures(adminA: Session, adminB: Session, companyA: string, 
   };
 }
 
+type PaymentFixtures = { companyId: string; clientId: string; paymentId: string; invoiceId: string; creditNoteId: string; allocationId: string; refundId: string };
+
+/** Issue in a company of this run: issued rows must not lock the seeded companies' settings. */
+async function loadPaymentFixtures(): Promise<PaymentFixtures> {
+  const owner = await login(started(), 'owner@example.test');
+  const created = await send(owner, 'post', '/api/platform/companies', cid('payment-company'), {
+    legalName: `Isolation payments ${runId} Ltd (fictional)`, tradingName: `Isolation payments ${runId}`, isFictional: true,
+  });
+  const companyId = stringField(record(expectOk(created, 'payment company').company), 'id');
+  const email = `isolation.payments.${runId}@example.test`;
+  const issuer = await started().get(PrismaService).client.userAccount.create({ data: {
+    email, displayName: `Isolation payments ${runId}`, identities: { create: {
+      provider: 'dev', issuer: 'https://dev-login.invalid', subject: email, emailAtLink: email,
+    } },
+  } });
+  await inCompany(companyId, async (tx) => {
+    const role = await tx.role.findFirstOrThrow({ where: { companyId, key: 'CA' } });
+    const membership = await tx.membership.create({ data: { companyId, userId: issuer.id, status: 'active' } });
+    await tx.membershipRole.create({ data: { membershipId: membership.id, roleId: role.id, scopeType: 'company', grantedById: adminUserId } });
+  });
+  const paymentAdmin = await login(started(), email);
+  const prefix = `/api/c/${companyId}`;
+  const series: string[] = [];
+  for (const documentType of ['invoice', 'credit_note'] as const) {
+    const result = await send(paymentAdmin, 'post', `${prefix}/invoice-series`, cid(`payment-series-${documentType}`), {
+      code: documentType === 'invoice' ? 'INV' : 'CN', documentType, prefix: `${documentType === 'invoice' ? 'I' : 'C'}${runId}-`,
+    });
+    series.push(stringField(record(expectOk(result, 'payment series').series), 'id'));
+  }
+  const settings = await inCompany(companyId, (tx) => tx.company.findUniqueOrThrow({ where: { id: companyId }, select: { version: true } }));
+  const details = await send(paymentAdmin, 'patch', `${prefix}/company`, cid('payment-details'), {
+    expectedVersion: settings.version, vatNumber: 'CY00000000X',
+    address: { line1: '1 Fictional Street', city: 'Nicosia', postcode: '1010', countryCode: 'CY' },
+    defaultInvoiceSeriesId: series[0], defaultCreditNoteSeriesId: series[1],
+  });
+  expectOk(details, 'payment company details');
+  const switched = await send(paymentAdmin, 'put', `${prefix}/automation/switches/invoice.issue_real`, cid('payment-switch'), { enabled: true, reason: 'Fictional isolation fixtures' });
+  expectOk(switched, 'payment issuing switch');
+  const client = await send(paymentAdmin, 'post', `${prefix}/clients`, cid('payment-client'), {
+    kind: 'organisation', displayName: `Isolation payments client ${runId} (fictional)`,
+    addresses: [{ kind: 'billing', line1: '2 Fictional Street', city: 'Nicosia', countryCode: 'CY', isDefault: true }],
+  });
+  const clientId = stringField(record(expectOk(client, 'payment client').client), 'id');
+  const tax = await inCompany(companyId, (tx) => tx.taxCode.findFirstOrThrow({ where: { companyId, code: 'STD19' } }));
+  const draft = await send(paymentAdmin, 'post', `${prefix}/invoices`, cid('payment-draft'), {
+    clientId, pricesIncludeTax: true, lines: [{ ...line(tax.id), unitPrice: '100.00' }],
+  });
+  const invoice = record(expectOk(draft, 'payment invoice draft').invoice);
+  const invoiceId = stringField(invoice, 'id');
+  expectOk(await send(paymentAdmin, 'post', `${prefix}/invoices/${invoiceId}/issue`, cid('payment-issue'), { expectedVersion: invoice.version }), 'payment invoice issue');
+  const credit = await send(paymentAdmin, 'post', `${prefix}/invoices/${invoiceId}/credit-notes`, cid('payment-credit'), { reason: 'Fictional return', full: true });
+  const creditNote = record(expectOk(credit, 'payment credit note').creditNote);
+  const creditNoteId = stringField(creditNote, 'id');
+  expectOk(await send(paymentAdmin, 'post', `${prefix}/credit-notes/${creditNoteId}/issue`, cid('payment-credit-issue'), { expectedVersion: creditNote.version }), 'payment credit issue');
+  const today = businessDateInZone(new Date(), 'Asia/Nicosia');
+  const payment = await send(paymentAdmin, 'post', `${prefix}/payments`, cid('payment-fixture'), { clientId, receivedOn: today, amount: '100.00', method: 'cash' }).set('Idempotency-Key', cid('payment-fixture'));
+  const paymentId = stringField(record(expectOk(payment, 'payment').payment), 'id');
+  const allocation = await send(paymentAdmin, 'post', `${prefix}/allocations`, cid('allocation-fixture'), { paymentId, invoiceId, amount: '10.00' }).set('Idempotency-Key', cid('allocation-fixture'));
+  const refund = await send(paymentAdmin, 'post', `${prefix}/refunds`, cid('refund-fixture'), { paymentId, amount: '10.00', refundedOn: today, method: 'cash' }).set('Idempotency-Key', cid('refund-fixture'));
+  return { companyId, clientId, invoiceId, creditNoteId, paymentId,
+    allocationId: stringField(record(expectOk(allocation, 'allocation').allocation), 'id'),
+    refundId: stringField(record(expectOk(refund, 'refund').refund), 'id') };
+}
+
+async function paymentSnap(fx: Fixtures): Promise<string> {
+  return JSON.stringify(await Promise.all([fx.payments.companyId, fx.companyB].map((companyId) => inCompany(companyId, async (tx) => ({
+    payments: await tx.payment.findMany({ orderBy: { id: 'asc' } }), allocations: await tx.allocation.findMany({ orderBy: { id: 'asc' } }),
+    refunds: await tx.refund.findMany({ orderBy: { id: 'asc' } }), retries: await tx.idempotencyRecord.findMany({ orderBy: { id: 'asc' } }),
+  })))));
+}
+
 function sweepCases(adminB: Session, fx: Fixtures): SweepCase[] {
   const onB = (name: string, route: string, method: Method, url: string, snap: Snap, body?: unknown): SweepCase => ({
     name,
     route,
     auditCompany: fx.companyB,
     snap,
-    call: (correlationId) => send(adminB, method, url, correlationId, body),
+    call: (correlationId) => send(adminB, method, url, correlationId, body).set('Idempotency-Key', correlationId),
   });
   const b = (suffix: string): string => `/api/c/${fx.companyB}${suffix}`;
   const lineBody = [line(fx.taxA)];
   return [
+    onB('payment-create', 'POST /api/c/:companyId/payments', 'post', b('/payments'), () => paymentSnap(fx),
+      { clientId: fx.payments.clientId, receivedOn: businessDateInZone(new Date(), 'Asia/Nicosia'), amount: '1.00', method: 'cash' }),
+    onB('payment-list', 'GET /api/c/:companyId/payments', 'get', b(`/payments?clientId=${fx.payments.clientId}`), () => paymentSnap(fx)),
+    onB('payment-get', 'GET /api/c/:companyId/payments/:id', 'get', b(`/payments/${fx.payments.paymentId}`), () => paymentSnap(fx)),
+    onB('payment-void', 'POST /api/c/:companyId/payments/:id/void', 'post', b(`/payments/${fx.payments.paymentId}/void`), () => paymentSnap(fx),
+      { expectedVersion: 0, reason: 'isolation sweep' }),
+    onB('allocation-create-payment', 'POST /api/c/:companyId/allocations', 'post', b('/allocations'), () => paymentSnap(fx),
+      { paymentId: fx.payments.paymentId, invoiceId: fx.payments.invoiceId, amount: '1.00' }),
+    onB('allocation-create-credit', 'POST /api/c/:companyId/allocations', 'post', b('/allocations'), () => paymentSnap(fx),
+      { creditNoteId: fx.payments.creditNoteId, invoiceId: fx.payments.invoiceId, amount: '1.00' }),
+    onB('allocation-reverse', 'POST /api/c/:companyId/allocations/:id/reverse', 'post', b(`/allocations/${fx.payments.allocationId}/reverse`), () => paymentSnap(fx),
+      { reason: 'isolation sweep' }),
+    onB('refund-create-payment', 'POST /api/c/:companyId/refunds', 'post', b('/refunds'), () => paymentSnap(fx),
+      { paymentId: fx.payments.paymentId, amount: '1.00', refundedOn: businessDateInZone(new Date(), 'Asia/Nicosia'), method: 'cash' }),
+    onB('refund-create-credit', 'POST /api/c/:companyId/refunds', 'post', b('/refunds'), () => paymentSnap(fx),
+      { creditNoteId: fx.payments.creditNoteId, amount: '1.00', refundedOn: businessDateInZone(new Date(), 'Asia/Nicosia'), method: 'cash' }),
+    onB('refund-void', 'POST /api/c/:companyId/refunds/:id/void', 'post', b(`/refunds/${fx.payments.refundId}/void`), () => paymentSnap(fx),
+      { expectedVersion: 0, reason: 'isolation sweep' }),
     onB('member-get', 'GET /api/c/:companyId/members/:membershipId', 'get', b(`/members/${fx.membershipA}`), () =>
       membershipSnap(fx),
     ),

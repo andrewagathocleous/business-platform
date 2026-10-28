@@ -36,6 +36,12 @@ const CODED_CONFLICTS = new Set([
   'not_a_quote',
   'already_converted',
   'credit_changed',
+  'not_allocatable',
+  'over_allocation',
+  'already_reversed',
+  'payment_refunded',
+  'not_recorded',
+  'idempotency_key_reused',
 ]);
 
 /** 409 reasons that are refusals by a switch, so they are audited as denials. */
@@ -85,7 +91,7 @@ export async function settleCommerceError(
     }
     throw new NotFoundException('Not found');
   }
-  if (error.status === 409 || error.status === 422) {
+  if (error.status === 409 || error.status === 422 || error.action) {
     await prisma.client.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT set_config('app.company_id', ${ctx.companyId}, true)`;
       await audit.record(tx, {
@@ -102,6 +108,9 @@ export async function settleCommerceError(
         details,
       });
     });
+    if (error.status === 400) {
+      throw new BadRequestException({ code: error.reason, message: error.message });
+    }
     if (error.status === 422) {
       const fields = error.details?.fields;
       throw new UnprocessableEntityException({

@@ -313,6 +313,8 @@ They are never edited or deleted. They are only reversed, with a date.
 - Tables `payment`, `allocation`, `refund` and `idempotency_record` (migration `20261029090000_r2e_payments`); a payment's status is `recorded` or `voided` (`payment_record_status`), so it does not reuse the sales-order `PaymentStatus`.
 - The database keeps financial history: no deletes or truncation for any role, fixed particulars, one reversal per allocation and one void per payment or refund, and a void date that never changes. It also checks the current limits on every allocation and refund insert, under the lock order. The as-of rules (effective dates, refunds on every later date) are in `packages/domain/src/payments/settlement.ts` and the routes apply them.
 
+**As built, R2-E2a (2026-10-28).** Routes: `POST …/payments`, `…/allocations`, `…/refunds` (with `Idempotency-Key`), `…/allocations/:id/reverse`, `…/payments/:id/void`, `…/refunds/:id/void` (`payment.record`), and `GET …/payments[/:id]` (`invoice.view`). Reversals and voids happen on today's business date. Idempotency takes a transaction advisory lock on (company, operation, key) before any other lock. Malformed requests are refused with 400 before the audited path, as on every other route.
+
 ## R2-F. Store invoice authority (P3-06)
 
 Order-to-invoice conversion is deferred (R2-02), so in R2 this step is a guard only:
