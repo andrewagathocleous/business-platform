@@ -700,21 +700,8 @@ describe('finance settings', () => {
     expect(typeChange.status).toBe(409);
     expect(errorCode(typeChange.body)).toBe('document_type_locked');
 
-    await inCompany(companyA, (tx) =>
-      tx.invoice.update({ where: { id: draftId }, data: { documentType: 'credit_note' } }),
-    );
-    const creditEdit = await send(
-      admin,
-      'patch',
-      `/api/c/${companyA}/invoices/${draftId}`,
-      cid('guard-credit'),
-      {
-        expectedVersion: 1,
-        reference: 'Edited credit note',
-      },
-    );
-    expect(creditEdit.status).toBe(409);
-    expect(errorCode(creditEdit.body)).toBe('credit_note_draft');
+    // The credit-note refusal on this route is tested with a real credit note in
+    // invoice-issue.integration.test.ts.
 
     const usd = await send(admin, 'post', `/api/c/${companyA}/clients`, cid('usd-client'), {
       kind: 'organisation',

@@ -54,6 +54,63 @@ describe('row level security', () => {
   let companyB = '';
   let userId = '';
   let graphA: Graph;
+
+  /** A draft with one line and one tax-summary row, copied from the fixture graph. */
+  async function draftOf(tx: TenantTransaction, documentType?: 'quote') {
+    const source = await tx.invoice.findUniqueOrThrow({ where: { id: graphA.invoice } });
+    const line = await tx.invoiceLine.findUniqueOrThrow({ where: { id: graphA.invoice_line } });
+    const summary = await tx.invoiceTaxSummary.findUniqueOrThrow({
+      where: { id: graphA.invoice_tax_summary },
+    });
+    const draft = await tx.invoice.create({
+      data: {
+        companyId: companyA,
+        documentType: documentType ?? 'invoice',
+        clientId: source.clientId,
+        currency: source.currency,
+        language: source.language,
+        pricesIncludeTax: source.pricesIncludeTax,
+        subtotal: source.subtotal,
+        discountTotal: source.discountTotal,
+        netTotal: source.netTotal,
+        taxTotal: source.taxTotal,
+        total: source.total,
+        createdById: userId,
+      },
+    });
+    await tx.invoiceLine.create({
+      data: {
+        companyId: companyA,
+        invoiceId: draft.id,
+        position: line.position,
+        kind: line.kind,
+        description: line.description,
+        quantity: line.quantity,
+        unit: line.unit,
+        unitPrice: line.unitPrice,
+        discountPercent: line.discountPercent,
+        taxCodeId: line.taxCodeId,
+        taxRatePercent: line.taxRatePercent,
+        lineSubtotal: line.lineSubtotal,
+        lineDiscount: line.lineDiscount,
+        lineNet: line.lineNet,
+        lineGross: line.lineGross,
+      },
+    });
+    await tx.invoiceTaxSummary.create({
+      data: {
+        companyId: companyA,
+        invoiceId: draft.id,
+        taxCodeId: summary.taxCodeId,
+        taxRatePercent: summary.taxRatePercent,
+        net: summary.net,
+        tax: summary.tax,
+        gross: summary.gross,
+      },
+    });
+    return draft;
+  }
+
   let graphB: Graph;
 
   beforeAll(async () => {
@@ -256,61 +313,6 @@ describe('row level security', () => {
 
   it('issues a document only from a draft, complete, with its own sealed PDF', async () => {
     const ctx = { companyId: companyA, actor: userId, correlationId: randomUUID() };
-    /** A draft with one line and one tax-summary row, copied from the fixture graph. */
-    const draftOf = async (tx: TenantTransaction, documentType?: 'quote') => {
-      const source = await tx.invoice.findUniqueOrThrow({ where: { id: graphA.invoice } });
-      const line = await tx.invoiceLine.findUniqueOrThrow({ where: { id: graphA.invoice_line } });
-      const summary = await tx.invoiceTaxSummary.findUniqueOrThrow({
-        where: { id: graphA.invoice_tax_summary },
-      });
-      const draft = await tx.invoice.create({
-        data: {
-          companyId: companyA,
-          documentType: documentType ?? 'invoice',
-          clientId: source.clientId,
-          currency: source.currency,
-          language: source.language,
-          pricesIncludeTax: source.pricesIncludeTax,
-          subtotal: source.subtotal,
-          discountTotal: source.discountTotal,
-          netTotal: source.netTotal,
-          taxTotal: source.taxTotal,
-          total: source.total,
-          createdById: userId,
-        },
-      });
-      await tx.invoiceLine.create({
-        data: {
-          companyId: companyA,
-          invoiceId: draft.id,
-          position: line.position,
-          kind: line.kind,
-          description: line.description,
-          quantity: line.quantity,
-          unit: line.unit,
-          unitPrice: line.unitPrice,
-          discountPercent: line.discountPercent,
-          taxCodeId: line.taxCodeId,
-          taxRatePercent: line.taxRatePercent,
-          lineSubtotal: line.lineSubtotal,
-          lineDiscount: line.lineDiscount,
-          lineNet: line.lineNet,
-          lineGross: line.lineGross,
-        },
-      });
-      await tx.invoiceTaxSummary.create({
-        data: {
-          companyId: companyA,
-          invoiceId: draft.id,
-          taxCodeId: summary.taxCodeId,
-          taxRatePercent: summary.taxRatePercent,
-          net: summary.net,
-          tax: summary.tax,
-          gross: summary.gross,
-        },
-      });
-      return draft;
-    };
     for (const tenant of [appTenant, ownerTenant]) {
       // The trigger runs before the CHECK, so a bare status change fails on the PDF first.
       await expect(
@@ -405,6 +407,150 @@ describe('row level security', () => {
       return tx.invoice.findUniqueOrThrow({ where: { id: draft.id }, select: { status: true } });
     });
     expect(issued.status).toBe('issued');
+  });
+
+  it('ties a credit note to an issued invoice and each credit line to one of its lines', async () => {
+    const ctx = { companyId: companyA, actor: userId, correlationId: randomUUID() };
+    const issued = await appTenant.run(ctx, async (tx) => {
+      const draft = await draftOf(tx);
+      expect(await markIssued(tx, companyA, draft.id, userId)).toBe(1);
+      const line = await tx.invoiceLine.findFirstOrThrow({ where: { invoiceId: draft.id } });
+      return { id: draft.id, lineId: line.id };
+    });
+    const headerOf = async (
+      tx: TenantTransaction,
+      fields: {
+        documentType?: 'invoice' | 'quote' | 'credit_note';
+        creditedInvoiceId?: string | null;
+        creditReason?: string | null;
+        sourceQuoteId?: string | null;
+      },
+    ) => {
+      const source = await tx.invoice.findUniqueOrThrow({ where: { id: graphA.invoice } });
+      return tx.invoice.create({
+        data: {
+          companyId: companyA,
+          documentType: fields.documentType ?? 'credit_note',
+          clientId: source.clientId,
+          currency: source.currency,
+          language: source.language,
+          pricesIncludeTax: source.pricesIncludeTax,
+          subtotal: source.subtotal,
+          discountTotal: source.discountTotal,
+          netTotal: source.netTotal,
+          taxTotal: source.taxTotal,
+          total: source.total,
+          createdById: userId,
+          creditedInvoiceId: fields.creditedInvoiceId ?? null,
+          creditReason: fields.creditReason ?? null,
+          sourceQuoteId: fields.sourceQuoteId ?? null,
+        },
+      });
+    };
+    const lineOf = async (tx: TenantTransaction, invoiceId: string, creditedLineId: string | null) => {
+      const line = await tx.invoiceLine.findUniqueOrThrow({ where: { id: graphA.invoice_line } });
+      return tx.invoiceLine.create({
+        data: {
+          companyId: companyA,
+          invoiceId,
+          position: 1,
+          kind: line.kind,
+          description: line.description,
+          quantity: line.quantity,
+          unit: line.unit,
+          unitPrice: line.unitPrice,
+          discountPercent: line.discountPercent,
+          taxCodeId: line.taxCodeId,
+          taxRatePercent: line.taxRatePercent,
+          lineSubtotal: line.lineSubtotal,
+          lineDiscount: line.lineDiscount,
+          lineNet: line.lineNet,
+          lineGross: line.lineGross,
+          creditedLineId,
+        },
+      });
+    };
+    const refuses = async (work: (tx: TenantTransaction) => Promise<unknown>, message: RegExp) => {
+      await expect(appTenant.run(ctx, work)).rejects.toThrow(message);
+    };
+
+    await refuses((tx) => headerOf(tx, { creditReason: 'Damaged' }), /invoice_credit_note_check/);
+    await refuses(
+      (tx) => headerOf(tx, { creditedInvoiceId: issued.id, creditReason: '\t\n' }),
+      /invoice_credit_note_check/,
+    );
+    await refuses(
+      (tx) => headerOf(tx, { documentType: 'invoice', creditReason: 'Not a credit note' }),
+      /invoice_credit_note_check/,
+    );
+    await refuses(
+      async (tx) => headerOf(tx, { creditedInvoiceId: (await draftOf(tx)).id, creditReason: 'Draft' }),
+      /a credit note credits an issued invoice/,
+    );
+    const credit = await appTenant.run(ctx, async (tx) => {
+      const note = await headerOf(tx, { creditedInvoiceId: issued.id, creditReason: 'Damaged' });
+      await lineOf(tx, note.id, issued.lineId);
+      return note;
+    });
+    await refuses((tx) => lineOf(tx, credit.id, null), /credits a line of the credited invoice/);
+    await refuses(
+      (tx) => lineOf(tx, credit.id, graphA.invoice_line),
+      /credits a line of the credited invoice/,
+    );
+    await refuses(
+      async (tx) => lineOf(tx, (await draftOf(tx)).id, issued.lineId),
+      /only a credit note line credits another line/,
+    );
+    await refuses(
+      async (tx) =>
+        tx.invoice.update({
+          where: { id: credit.id },
+          data: { creditedInvoiceId: (await draftOf(tx)).id },
+        }),
+      /never change/,
+    );
+    await refuses(
+      (tx) => tx.invoice.update({ where: { id: issued.id }, data: { documentType: 'quote' } }),
+      /never change|immutable/,
+    );
+    await refuses(
+      async (tx) =>
+        tx.invoice.update({
+          where: { id: (await draftOf(tx, 'quote')).id },
+          data: { documentType: 'invoice' },
+        }),
+      /never change/,
+    );
+    // A credit line keeps its original line, and carries that line's prices and rates.
+    const creditLine = await appTenant.run(ctx, (tx) =>
+      tx.invoiceLine.findFirstOrThrow({ where: { invoiceId: credit.id } }),
+    );
+    const secondLine = await appTenant.run(ctx, async (tx) => {
+      const other = await draftOf(tx);
+      expect(await markIssued(tx, companyA, other.id, userId)).toBe(1);
+      return tx.invoiceLine.findFirstOrThrow({ where: { invoiceId: other.id } });
+    });
+    await refuses(
+      (tx) =>
+        tx.invoiceLine.update({
+          where: { id: creditLine.id },
+          data: { creditedLineId: secondLine.id },
+        }),
+      /keeps the line it credits/,
+    );
+    await refuses(
+      (tx) => tx.invoiceLine.update({ where: { id: creditLine.id }, data: { unitPrice: '0.0001' } }),
+      /at its prices and rates/,
+    );
+    await refuses(
+      (tx) => headerOf(tx, { documentType: 'invoice', sourceQuoteId: issued.id }),
+      /converted from a quote/,
+    );
+    await refuses(
+      async (tx) =>
+        headerOf(tx, { documentType: 'quote', sourceQuoteId: (await draftOf(tx, 'quote')).id }),
+      /invoice_source_quote_check/,
+    );
   });
 
   it('rejects changes to an issued invoice, its lines and its tax summary', async () => {
@@ -1021,6 +1167,7 @@ const COMPANY_SCOPED_PARENTS = [
   'client',
   'integration_credential',
   'invoice',
+  'invoice_line',
   'invoice_series',
   'job',
   'location',
@@ -1041,10 +1188,16 @@ const COMPOSITE_FOREIGN_KEYS: ReadonlyArray<readonly [string, string]> = [
   ['invoice', 'FOREIGN KEY (company_id, series_id) REFERENCES invoice_series(company_id, id)'],
   ['invoice', 'FOREIGN KEY (company_id, source_order_id) REFERENCES sales_order(company_id, id)'],
   ['invoice', 'FOREIGN KEY (company_id, pdf_file_id) REFERENCES stored_file(company_id, id)'],
+  ['invoice', 'FOREIGN KEY (company_id, credited_invoice_id) REFERENCES invoice(company_id, id)'],
+  ['invoice', 'FOREIGN KEY (company_id, source_quote_id) REFERENCES invoice(company_id, id)'],
   ['invoice_delivery', 'FOREIGN KEY (company_id, invoice_id) REFERENCES invoice(company_id, id)'],
   ['invoice_line', 'FOREIGN KEY (company_id, invoice_id) REFERENCES invoice(company_id, id)'],
   ['invoice_line', 'FOREIGN KEY (company_id, tax_code_id) REFERENCES tax_code(company_id, id)'],
   ['invoice_line', 'FOREIGN KEY (company_id, product_id) REFERENCES product(company_id, id)'],
+  [
+    'invoice_line',
+    'FOREIGN KEY (company_id, credited_line_id) REFERENCES invoice_line(company_id, id)',
+  ],
   [
     'invoice_tax_summary',
     'FOREIGN KEY (company_id, invoice_id) REFERENCES invoice(company_id, id)',

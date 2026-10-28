@@ -30,6 +30,11 @@ const CODED_CONFLICTS = new Set([
   'not_issued',
   'e_invoice_not_accepted',
   'request_key_reused',
+  'over_credit',
+  'not_creditable',
+  'nothing_to_credit',
+  'not_a_quote',
+  'already_converted',
 ]);
 
 /** 409 reasons that are refusals by a switch, so they are audited as denials. */

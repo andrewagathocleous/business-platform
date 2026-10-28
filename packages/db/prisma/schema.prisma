@@ -926,6 +926,16 @@ model Invoice {
   terms            String?
   sourceOrderId    String?             @map("source_order_id") @db.Uuid
   sourceOrder      SalesOrder?         @relation(fields: [companyId, sourceOrderId], references: [companyId, id])
+  /// A credit note credits this issued invoice (R2-D). Set exactly when document_type is credit_note.
+  creditedInvoiceId String?            @map("credited_invoice_id") @db.Uuid
+  creditedInvoice  Invoice?            @relation("CreditNotes", fields: [companyId, creditedInvoiceId], references: [companyId, id])
+  creditNotes      Invoice[]           @relation("CreditNotes")
+  /// Why the credit note was made. Required on a credit note.
+  creditReason     String?             @map("credit_reason")
+  /// The quote this invoice was converted from. A quote converts once (partial unique index).
+  sourceQuoteId    String?             @map("source_quote_id") @db.Uuid
+  sourceQuote      Invoice?            @relation("QuoteConversion", fields: [companyId, sourceQuoteId], references: [companyId, id])
+  convertedInvoices Invoice[]          @relation("QuoteConversion")
   createdById      String              @map("created_by") @db.Uuid
   createdBy        UserAccount         @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
   updatedById      String?             @map("updated_by") @db.Uuid
@@ -979,7 +989,12 @@ model InvoiceLine {
   lineGross       Decimal         @map("line_gross") @db.Decimal(19, 2)
   /// Frozen at issue: the tax code's code, name, kind and legal notes in both languages.
   taxSnapshot     Json?           @map("tax_snapshot") @db.JsonB
+  /// On a credit note: the original invoice line this line credits.
+  creditedLineId  String?         @map("credited_line_id") @db.Uuid
+  creditedLine    InvoiceLine?    @relation("CreditedLines", fields: [companyId, creditedLineId], references: [companyId, id])
+  creditLines     InvoiceLine[]   @relation("CreditedLines")
 
+  @@unique([companyId, id])
   @@map("invoice_line")
 }
 

@@ -102,6 +102,10 @@ export type InvoiceLineView = {
   lineDiscount: string;
   lineNet: string;
   lineGross: string;
+  /** On a credit note: the original line it credits. */
+  creditedLineId: string | null;
+  /** On an issued invoice: the quantity issued credit notes have credited so far. */
+  creditedQuantity: string;
 };
 
 export type TaxSummaryView = {
@@ -152,6 +156,27 @@ export type InvoiceDetail = InvoiceSummary & {
   printJobs: InvoicePrintJob[];
   /** The first print that still counts, however old: another first print is refused; a reprint refers to it. */
   firstPrintJobId: string | null;
+  /** A credit note: the invoice it credits, and why. */
+  creditedInvoice: { id: string; number: string | null; issueDate: string | null } | null;
+  creditReason: string | null;
+  /** An invoice: the credit notes made against it, drafts included. */
+  creditNotes: {
+    id: string;
+    number: string | null;
+    status: string;
+    total: string;
+    issueDate: string | null;
+  }[];
+  /** An invoice converted from a quote, or a quote's converted invoice. */
+  sourceQuoteId: string | null;
+  convertedInvoiceId: string | null;
+};
+
+type DetailExtras = {
+  printJobs?: InvoicePrintJob[];
+  firstPrintJobId?: string | null;
+  /** Per original line id: the quantity issued credit notes credited. */
+  creditedQuantities?: ReadonlyMap<string, string>;
 };
 
 export type InvoicePrintJob = {
@@ -315,6 +340,12 @@ const detailInclude = {
   lines: { orderBy: { position: 'asc' as const }, include: { taxCode: true } },
   taxSummary: { include: { taxCode: true } },
   deliveries: { orderBy: { createdAt: 'asc' as const } },
+  creditedInvoice: { select: { id: true, number: true, issueDate: true } },
+  creditNotes: {
+    orderBy: { createdAt: 'asc' as const },
+    select: { id: true, number: true, status: true, total: true, issueDate: true },
+  },
+  convertedInvoices: { select: { id: true } },
 } as const;
 
 /** Paper deliveries keep the company's printed copy (reg. 11Γ(4)). */
@@ -1011,6 +1042,174 @@ export class InvoiceService {
   }
 
   /**
+   * Turns a quote into a new draft invoice with the quote's lines. The quote stays as it is;
+   * it converts once (409 already_converted, also enforced by a unique index).
+   */
+  async convertQuote(
+    ctx: RequestContext,
+    quoteId: string,
+    meta: RequestMeta,
+  ): Promise<InvoiceDetail> {
+    const actor = requireActor(ctx);
+    try {
+      return await this.tenants.run(this.context(ctx, actor), async (tx) => {
+        if (!isUuid(quoteId)) {
+          throw new CommerceError(404, 'invoice_not_found', 'invoice', null, 'Not found');
+        }
+        const id = quoteId.toLowerCase();
+        const companyId = ctx.companyId;
+        const quote = await this.load(tx, companyId, id);
+        if (quote.documentType !== 'quote') {
+          throw new CommerceError(
+            409,
+            'not_a_quote',
+            'invoice',
+            id,
+            'Only a quote is converted.',
+            'quote.converted',
+          );
+        }
+        if (quote.status !== 'draft') {
+          throw new CommerceError(
+            409,
+            'not_draft',
+            'invoice',
+            id,
+            'This quote can no longer be converted.',
+            'quote.converted',
+          );
+        }
+        // A converted quote says so before its lines are checked again (a code may be inactive
+        // by now). Checked once more under the lock below, and by the unique index.
+        const earlier = await tx.invoice.findFirst({
+          where: { companyId, sourceQuoteId: id },
+          select: { id: true },
+        });
+        if (earlier) {
+          throw alreadyConverted(id, earlier.id);
+        }
+        // Lock order: the company, then the tax codes (resolveLines), then the quote row.
+        const company = await this.company(tx, companyId, { lock: true });
+        const client = await this.client(tx, companyId, quote.clientId);
+        const currency = draftCurrency(company, client, null);
+        const lines = await this.resolveLines(
+          tx,
+          companyId,
+          quote.lines.map((line) => ({
+            position: line.position,
+            kind: line.kind,
+            productId: line.productId,
+            description: line.description,
+            quantity: fixed(line.quantity, 4),
+            unit: line.unit,
+            unitPrice: fixed(line.unitPrice, 4),
+            discountPercent: fixed(line.discountPercent, 2),
+            taxCodeId: line.taxCodeId,
+          })),
+        );
+        const locked = await tx.$queryRaw<{ version: number }[]>`
+          SELECT version FROM invoice
+          WHERE company_id = ${companyId}::uuid AND id = ${id}::uuid
+          FOR SHARE
+        `;
+        if (locked[0]?.version !== quote.version) {
+          throw new CommerceError(
+            409,
+            'version_conflict',
+            'invoice',
+            id,
+            'version conflict',
+            'quote.converted',
+          );
+        }
+        const existing = await tx.invoice.findFirst({
+          where: { companyId, sourceQuoteId: id },
+          select: { id: true },
+        });
+        if (existing) {
+          throw alreadyConverted(id, existing.id);
+        }
+        const totals = calculated(quote.pricesIncludeTax, lines);
+        const created = await tx.invoice.create({
+          data: {
+            companyId,
+            documentType: 'invoice',
+            status: 'draft',
+            clientId: client.id,
+            currency,
+            language: languageOf(quote.language, company.documentLanguage),
+            pricesIncludeTax: quote.pricesIncludeTax,
+            dueDate: this.dueDate(undefined, null, client, company),
+            reference: quote.reference,
+            notes: quote.notes,
+            terms: quote.terms,
+            sourceQuoteId: id,
+            ...moneyFields(totals),
+            createdById: actor,
+          },
+        });
+        await this.writeLines(tx, companyId, created.id, lines, totals);
+        await this.audit.record(tx, {
+          companyId,
+          actorType: 'user',
+          actorId: actor,
+          actorLabel: ctx.actorLabel,
+          action: 'quote.converted',
+          objectType: 'invoice',
+          objectId: id,
+          outcome: 'success',
+          ip: meta.ip,
+          userAgent: meta.userAgent,
+          details: { invoiceId: created.id, total: totals.total },
+        });
+        return this.detail(tx, companyId, created.id);
+      });
+    } catch (error) {
+      // Two conversions raced: the unique index let one through.
+      let settled = isUniqueViolation(error)
+        ? alreadyConverted(quoteId.toLowerCase(), null)
+        : error;
+      if (
+        settled instanceof CommerceError &&
+        settled.reason !== 'already_converted' &&
+        isUuid(quoteId)
+      ) {
+        // Another conversion may have committed while this one waited on a lock; that is the
+        // answer, not a refusal found later (for example a tax code switched off since).
+        const converted = await this.tenants.run(this.context(ctx, actor), (tx) =>
+          tx.invoice.findFirst({
+            where: { companyId: ctx.companyId, sourceQuoteId: quoteId.toLowerCase() },
+            select: { id: true },
+          }),
+        );
+        if (converted) {
+          settled = alreadyConverted(quoteId.toLowerCase(), converted.id);
+        }
+      }
+      // A refusal from the shared draft rules (currency, tax codes, amounts) is a refused
+      // conversion of this quote, and is audited as one. The request itself was well formed,
+      // so what was 400 (for example tax_code_inactive) is 422: the quote cannot convert as is.
+      if (
+        settled instanceof CommerceError &&
+        settled.status !== 404 &&
+        settled.status !== 403 &&
+        isUuid(quoteId)
+      ) {
+        settled = new CommerceError(
+          settled.status === 400 ? 422 : settled.status,
+          settled.reason,
+          'invoice',
+          quoteId.toLowerCase(),
+          settled.message,
+          'quote.converted',
+          settled.details,
+        );
+      }
+      return this.fail(ctx, meta, settled);
+    }
+  }
+
+  /**
    * Records how and when an issued document reached the client (Cyprus VAT reg. 11(5), 11(6)).
    * The record is append-only. A delivery after the deadline is recorded with a warning.
    */
@@ -1030,7 +1229,13 @@ export class InvoiceService {
         const companyId = ctx.companyId;
         const invoice = await tx.invoice.findFirst({
           where: { id, companyId },
-          select: { id: true, status: true, clientId: true, issueDate: true, deliveryDeadline: true },
+          select: {
+            id: true,
+            status: true,
+            clientId: true,
+            issueDate: true,
+            deliveryDeadline: true,
+          },
         });
         if (!invoice) {
           throw new CommerceError(404, 'invoice_not_found', 'invoice', id, 'Not found');
@@ -1309,7 +1514,8 @@ export class InvoiceService {
     return client;
   }
 
-  private async detail(
+  /** The full detail of one document, inside the caller's transaction. */
+  async detail(
     tx: TenantTransaction,
     companyId: string,
     invoiceId: string,
@@ -1318,6 +1524,10 @@ export class InvoiceService {
     if (row.status !== 'issued') {
       return toDetail(row);
     }
+    const creditedQuantities =
+      row.documentType === 'invoice'
+        ? await creditedQuantitiesOf(tx, companyId, row.id)
+        : undefined;
     const jobs = await tx.printJob.findMany({
       where: { companyId, sourceType: 'invoice', sourceId: row.id },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -1343,9 +1553,8 @@ export class InvoiceService {
       },
       select: { id: true },
     });
-    return toDetail(
-      row,
-      jobs.map((job) => ({
+    return toDetail(row, {
+      printJobs: jobs.map((job) => ({
         id: job.id,
         status: job.status,
         isReprint: job.isReprint,
@@ -1353,8 +1562,9 @@ export class InvoiceService {
         createdAt: job.createdAt.toISOString(),
         simulationLabel: job.printer.provider === 'mock' ? SIMULATED_PRINTING_LABEL : null,
       })),
-      first?.id ?? null,
-    );
+      firstPrintJobId: first?.id ?? null,
+      ...(creditedQuantities ? { creditedQuantities } : {}),
+    });
   }
 
   private async load(tx: TenantTransaction, companyId: string, invoiceId: string) {
@@ -1715,6 +1925,7 @@ function toDetail(
     terms: string | null;
     lines: (Parameters<typeof storedLines>[0][number] & {
       id: string;
+      creditedLineId: string | null;
       lineSubtotal: { toFixed(digits: number): string };
       lineDiscount: { toFixed(digits: number): string };
       lineNet: { toFixed(digits: number): string };
@@ -1738,16 +1949,43 @@ function toDetail(
       recordedById: string;
       createdAt: Date;
     }[];
+    creditReason: string | null;
+    sourceQuoteId: string | null;
+    creditedInvoice: { id: string; number: string | null; issueDate: Date | null } | null;
+    creditNotes: {
+      id: string;
+      number: string | null;
+      status: string;
+      total: { toFixed(digits: number): string };
+      issueDate: Date | null;
+    }[];
+    convertedInvoices: { id: string }[];
   },
-  printJobs: InvoicePrintJob[] = [],
-  firstPrintJobId: string | null = null,
+  extras: DetailExtras = {},
 ): InvoiceDetail {
   return {
     ...toSummary(row),
     notes: row.notes,
     terms: row.terms,
-    printJobs,
-    firstPrintJobId,
+    printJobs: extras.printJobs ?? [],
+    firstPrintJobId: extras.firstPrintJobId ?? null,
+    creditReason: row.creditReason,
+    creditedInvoice: row.creditedInvoice
+      ? {
+          id: row.creditedInvoice.id,
+          number: row.creditedInvoice.number,
+          issueDate: formatDateOnly(row.creditedInvoice.issueDate),
+        }
+      : null,
+    creditNotes: row.creditNotes.map((note) => ({
+      id: note.id,
+      number: note.number,
+      status: note.status,
+      total: fixed(note.total, 2),
+      issueDate: formatDateOnly(note.issueDate),
+    })),
+    sourceQuoteId: row.sourceQuoteId,
+    convertedInvoiceId: row.convertedInvoices[0]?.id ?? null,
     deliveries: row.deliveries.map((delivery) => ({
       id: delivery.id,
       method: delivery.method,
@@ -1774,6 +2012,8 @@ function toDetail(
       lineDiscount: fixed(line.lineDiscount, 2),
       lineNet: fixed(line.lineNet, 2),
       lineGross: fixed(line.lineGross, 2),
+      creditedLineId: line.creditedLineId,
+      creditedQuantity: extras.creditedQuantities?.get(line.id) ?? '0.0000',
     })),
     taxSummary: [...row.taxSummary]
       .sort((left, right) => left.taxCode.code.localeCompare(right.taxCode.code))
@@ -1830,6 +2070,24 @@ function clientAddressLines(
 }
 
 type ClientAddress = ClientRow['addresses'][number];
+
+/** Per original line: the quantity credited by issued credit notes. Drafts do not count. */
+export async function creditedQuantitiesOf(
+  tx: TenantTransaction,
+  companyId: string,
+  invoiceId: string,
+): Promise<Map<string, string>> {
+  const rows = await tx.$queryRaw<{ lineId: string; quantity: string }[]>`
+    SELECT l.credited_line_id::text AS "lineId", sum(l.quantity)::text AS quantity
+    FROM invoice_line l
+    JOIN invoice c ON c.company_id = l.company_id AND c.id = l.invoice_id
+    WHERE l.company_id = ${companyId}::uuid
+      AND c.credited_invoice_id = ${invoiceId}::uuid
+      AND c.status = 'issued'
+    GROUP BY l.credited_line_id
+  `;
+  return new Map(rows.map((row) => [row.lineId, decimalField(row.quantity, 4, 'quantity')]));
+}
 
 /** The default billing address, else the first billing address, else any address. */
 function chosenAddress<T extends { kind: string; isDefault: boolean }>(
@@ -1920,6 +2178,18 @@ async function lockSeries(
     FOR UPDATE
   `;
   return rows[0] ?? null;
+}
+
+function alreadyConverted(quoteId: string, invoiceId: string | null): CommerceError {
+  return new CommerceError(
+    409,
+    'already_converted',
+    'invoice',
+    quoteId,
+    'This quote was already converted to an invoice.',
+    'quote.converted',
+    invoiceId ? { invoiceId } : undefined,
+  );
 }
 
 function numberTaken(invoiceId: string, number: string | null): CommerceError {

@@ -982,6 +982,373 @@ describe('issuing invoices', () => {
     return arrayOf(record(response.body).invoices).map((entry) => stringField(record(entry), 'id'));
   }
 
+  it('creates credit-note drafts against an issued invoice, within its quantities', async () => {
+    const original = await issuedInvoice([
+      { description: 'Gift box (demo)', quantity: '2', unitPrice: '10.00' },
+      { description: 'Card (demo)', quantity: '1', unitPrice: '2.50' },
+    ]);
+    const [box, card] = original.lineIds;
+    const credits = `/api/c/${company}/invoices/${original.id}/credit-notes`;
+
+    const partial = await send(admin, 'post', credits, cid('credit-partial'), {
+      reason: 'One box arrived damaged',
+      lines: [{ invoiceLineId: box, quantity: '1' }],
+    });
+    expect(partial.status, text(partial)).toBe(200);
+    const note = record(record(partial.body).creditNote);
+    expect(note).toMatchObject({
+      documentType: 'credit_note',
+      status: 'draft',
+      creditReason: 'One box arrived damaged',
+      netTotal: '10.00',
+      taxTotal: '1.90',
+      total: '11.90',
+    });
+    expect(record(note.creditedInvoice)).toMatchObject({
+      id: original.id,
+      number: original.number,
+    });
+    expect(arrayOf(note.lines).map((line) => record(line).creditedLineId)).toEqual([box]);
+
+    const tooMany = await send(admin, 'post', credits, cid('credit-over'), {
+      reason: 'Too many',
+      lines: [{ invoiceLineId: box, quantity: '3' }],
+    });
+    expect(tooMany.status).toBe(409);
+    expect(errorCode(tooMany.body)).toBe('over_credit');
+    const together = await send(admin, 'post', credits, cid('credit-together'), {
+      reason: 'Two lines on one line',
+      lines: [
+        { invoiceLineId: box, quantity: '1.5' },
+        { invoiceLineId: box, quantity: '0.6' },
+      ],
+    });
+    expect(together.status).toBe(409);
+    expect(errorCode(together.body)).toBe('over_credit');
+
+    const other = await issuedInvoice([
+      { description: 'Other (demo)', quantity: '1', unitPrice: '1.00' },
+    ]);
+    const stranger = await send(admin, 'post', credits, cid('credit-stranger'), {
+      reason: 'Wrong line',
+      lines: [{ invoiceLineId: other.lineIds[0], quantity: '1' }],
+    });
+    expect(stranger.status).toBe(422);
+    expect(errorCode(stranger.body)).toBe('invalid_credit_line');
+
+    const full = await send(admin, 'post', credits, cid('credit-full'), {
+      reason: 'Order cancelled',
+      full: true,
+    });
+    expect(full.status, text(full)).toBe(200);
+    // Drafts do not count against the quantities; issued credit notes will (R2-D3).
+    expect(
+      arrayOf(record(record(full.body).creditNote).lines).map((line) => [
+        record(line).creditedLineId,
+        record(line).quantity,
+      ]),
+    ).toEqual([
+      [box, '2.0000'],
+      [card, '1.0000'],
+    ]);
+
+    const noteId = stringField(note, 'id');
+    const edited = await send(
+      admin,
+      'patch',
+      `/api/c/${company}/credit-notes/${noteId}`,
+      cid('credit-edit'),
+      {
+        expectedVersion: numberField(note, 'version'),
+        reason: 'Both boxes arrived damaged',
+        lines: [{ id: stringField(record(arrayOf(note.lines)[0]), 'id'), quantity: '2' }],
+      },
+    );
+    expect(edited.status, text(edited)).toBe(200);
+    expect(record(record(edited.body).creditNote)).toMatchObject({
+      creditReason: 'Both boxes arrived damaged',
+      netTotal: '20.00',
+      taxTotal: '3.80',
+      version: numberField(note, 'version') + 1,
+    });
+    const overCorrelation = cid('credit-edit-over');
+    const overEdit = await send(
+      admin,
+      'patch',
+      `/api/c/${company}/credit-notes/${noteId}`,
+      overCorrelation,
+      {
+        expectedVersion: numberField(note, 'version') + 1,
+        lines: [{ id: stringField(record(arrayOf(note.lines)[0]), 'id'), quantity: '3' }],
+      },
+    );
+    expect(overEdit.status).toBe(409);
+    expect(errorCode(overEdit.body)).toBe('over_credit');
+    expect(
+      (await auditEvents(overCorrelation)).map((event) => [
+        event.action,
+        event.outcome,
+        event.objectId,
+      ]),
+    ).toEqual([['credit_note.updated', 'failure', noteId]]);
+    const foreignLine = await send(
+      admin,
+      'patch',
+      `/api/c/${company}/credit-notes/${noteId}`,
+      cid('credit-edit-foreign'),
+      {
+        expectedVersion: numberField(note, 'version') + 1,
+        lines: [{ id: box, quantity: '1' }],
+      },
+    );
+    expect(foreignLine.status).toBe(422);
+    expect(errorCode(foreignLine.body)).toBe('invalid_credit_line');
+    const generic = await send(
+      admin,
+      'patch',
+      `/api/c/${company}/invoices/${noteId}`,
+      cid('credit-generic'),
+      {
+        expectedVersion: numberField(note, 'version') + 1,
+        reference: 'Edited elsewhere',
+      },
+    );
+    expect(generic.status).toBe(409);
+    expect(errorCode(generic.body)).toBe('credit_note_draft');
+
+    const detail = await send(
+      admin,
+      'get',
+      `/api/c/${company}/invoices/${original.id}`,
+      cid('credit-original'),
+    );
+    const invoice = record(record(detail.body).invoice);
+    expect(arrayOf(invoice.creditNotes).map((entry) => record(entry).status)).toEqual([
+      'draft',
+      'draft',
+    ]);
+    expect(arrayOf(invoice.lines).map((line) => record(line).creditedQuantity)).toEqual([
+      '0.0000',
+      '0.0000',
+    ]);
+
+    const draft = await createDraft();
+    const unissued = await send(
+      admin,
+      'post',
+      `/api/c/${company}/invoices/${draft.id}/credit-notes`,
+      cid('credit-draft'),
+      {
+        reason: 'Not issued',
+        full: true,
+      },
+    );
+    expect(unissued.status).toBe(409);
+    expect(errorCode(unissued.body)).toBe('not_issued');
+    const quote = await createDraft({ documentType: 'quote' });
+    const quoted = await send(
+      admin,
+      'post',
+      `/api/c/${company}/invoices/${quote.id}/credit-notes`,
+      cid('credit-quote'),
+      {
+        reason: 'A quote',
+        full: true,
+      },
+    );
+    expect(quoted.status).toBe(409);
+    expect(errorCode(quoted.body)).toBe('not_creditable');
+  });
+
+  it('converts a quote to a draft invoice once', async () => {
+    const quote = await createDraft({ documentType: 'quote', unitPrice: '12.34' });
+    const converted = await send(
+      admin,
+      'post',
+      `/api/c/${company}/quotes/${quote.id}/convert`,
+      cid('quote-convert'),
+      {},
+    );
+    expect(converted.status, text(converted)).toBe(200);
+    const invoice = record(record(converted.body).invoice);
+    expect(invoice).toMatchObject({
+      documentType: 'invoice',
+      status: 'draft',
+      sourceQuoteId: quote.id,
+      netTotal: '12.34',
+    });
+    const source = await send(
+      admin,
+      'get',
+      `/api/c/${company}/invoices/${quote.id}`,
+      cid('quote-source'),
+    );
+    expect(record(record(source.body).invoice).convertedInvoiceId).toBe(invoice.id);
+    // Even with a tax code of its lines switched off since, a converted quote says so.
+    const code = await inCompany(company, (tx) =>
+      tx.taxCode.findUniqueOrThrow({ where: { id: standardTax } }),
+    );
+    const off = await send(
+      admin,
+      'patch',
+      `/api/c/${company}/tax-codes/${standardTax}`,
+      cid('quote-code-off'),
+      {
+        expectedVersion: code.version,
+        active: false,
+      },
+    );
+    expect(off.status, text(off)).toBe(200);
+    const again = await send(
+      admin,
+      'post',
+      `/api/c/${company}/quotes/${quote.id}/convert`,
+      cid('quote-again'),
+      {},
+    );
+    expect(again.status).toBe(409);
+    expect(errorCode(again.body)).toBe('already_converted');
+    const on = await send(
+      admin,
+      'patch',
+      `/api/c/${company}/tax-codes/${standardTax}`,
+      cid('quote-code-on'),
+      {
+        expectedVersion: code.version + 1,
+        active: true,
+      },
+    );
+    expect(on.status, text(on)).toBe(200);
+
+    const racing = await createDraft({ documentType: 'quote' });
+    const responses = await Promise.all(
+      [1, 2, 3].map((index) =>
+        send(
+          admin,
+          'post',
+          `/api/c/${company}/quotes/${racing.id}/convert`,
+          cid(`quote-race-${String(index)}`),
+          {},
+        ),
+      ),
+    );
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409, 409]);
+    // A refusal from the draft rules is audited as a refused conversion of the quote.
+    const usdQuote = await createDraft({ documentType: 'quote' });
+    await inCompany(company, (tx) =>
+      tx.invoice.update({ where: { id: usdQuote.id }, data: { currency: 'USD' } }),
+    );
+    const usdClient = await createClient(`USD client ${runId}`, null, 'CY');
+    await inCompany(company, async (tx) => {
+      await tx.client.update({ where: { id: usdClient }, data: { defaultCurrency: 'USD' } });
+      await tx.invoice.update({ where: { id: usdQuote.id }, data: { clientId: usdClient } });
+    });
+    const currencyCorrelation = cid('quote-currency');
+    const currency = await send(
+      admin,
+      'post',
+      `/api/c/${company}/quotes/${usdQuote.id}/convert`,
+      currencyCorrelation,
+      {},
+    );
+    expect(currency.status).toBe(422);
+    expect(errorCode(currency.body)).toBe('currency_not_supported');
+    expect(
+      (await auditEvents(currencyCorrelation)).map((event) => [
+        event.action,
+        event.outcome,
+        event.objectId,
+      ]),
+    ).toEqual([['quote.converted', 'failure', usdQuote.id]]);
+    const inactiveQuote = await createDraft({ documentType: 'quote' });
+    const live = await inCompany(company, (tx) =>
+      tx.taxCode.findUniqueOrThrow({ where: { id: standardTax } }),
+    );
+    const switchedOff = await send(
+      admin,
+      'patch',
+      `/api/c/${company}/tax-codes/${standardTax}`,
+      cid('quote-inactive-off'),
+      {
+        expectedVersion: live.version,
+        active: false,
+      },
+    );
+    expect(switchedOff.status, text(switchedOff)).toBe(200);
+    try {
+      const inactiveCorrelation = cid('quote-inactive');
+      const inactive = await send(
+        admin,
+        'post',
+        `/api/c/${company}/quotes/${inactiveQuote.id}/convert`,
+        inactiveCorrelation,
+        {},
+      );
+      expect(inactive.status).toBe(422);
+      expect(errorCode(inactive.body)).toBe('tax_code_inactive');
+      expect(
+        (await auditEvents(inactiveCorrelation)).map((event) => [
+          event.action,
+          event.outcome,
+          event.objectId,
+        ]),
+      ).toEqual([['quote.converted', 'failure', inactiveQuote.id]]);
+    } finally {
+      await send(
+        admin,
+        'patch',
+        `/api/c/${company}/tax-codes/${standardTax}`,
+        cid('quote-inactive-on'),
+        {
+          expectedVersion: live.version + 1,
+          active: true,
+        },
+      );
+    }
+    const notQuote = await createDraft();
+    const refused = await send(
+      admin,
+      'post',
+      `/api/c/${company}/quotes/${notQuote.id}/convert`,
+      cid('quote-invoice'),
+      {},
+    );
+    expect(refused.status).toBe(409);
+    expect(errorCode(refused.body)).toBe('not_a_quote');
+  });
+
+  /** Creates and issues an invoice with these lines (standard rate, prices excluding VAT). */
+  async function issuedInvoice(
+    lines: { description: string; quantity: string; unitPrice: string }[],
+  ): Promise<{ id: string; number: string; lineIds: string[] }> {
+    const created = await send(admin, 'post', `/api/c/${company}/invoices`, cid('multi-draft'), {
+      clientId,
+      pricesIncludeTax: false,
+      lines: lines.map((line, index) => ({
+        position: index + 1,
+        description: line.description,
+        quantity: line.quantity,
+        unit: 'pc',
+        unitPrice: line.unitPrice,
+        taxCodeId: standardTax,
+      })),
+    });
+    expect(created.status, text(created)).toBe(200);
+    const draft = record(record(created.body).invoice);
+    const issued = await issue(
+      stringField(draft, 'id'),
+      numberField(draft, 'version'),
+      cid('multi-issue'),
+    );
+    expect(issued.status, text(issued)).toBe(200);
+    const invoice = record(record(issued.body).invoice);
+    return {
+      id: stringField(invoice, 'id'),
+      number: stringField(invoice, 'number'),
+      lineIds: arrayOf(invoice.lines).map((line) => stringField(record(line), 'id')),
+    };
+  }
+
   async function createDraft(
     options: {
       pricesIncludeTax?: boolean;

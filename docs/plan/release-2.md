@@ -232,6 +232,12 @@ Every write is audited, versioned (`expectedVersion`, 409 `version_conflict`) an
 - Credit amounts are stored positive, with `document_type = credit_note`. Reports subtract them.
 - Quotes are never tax documents. `POST …/quotes/:id/convert` (`invoice.draft`) creates a new draft invoice with the quote's lines and `source_quote_id`. A quote converts once (409 `already_converted`).
 
+**As built, R2-D2 (2026-10-28).**
+- Credit amounts group by tax code **id**, so a code renamed since the invoice keeps the original's groups.
+- A full credit takes what issued credit notes have not credited; draft credit notes do not reserve quantities, so issuing re-checks (R2-D3).
+- A converted invoice copies the quote's lines through the draft rules (active tax codes, current rates, the company currency) and gets its dates at issue like any draft.
+- Database: `invoice_credit_note_check`, `invoice_source_quote_check`, the partial unique index `invoice_company_source_quote_key`, and the triggers `invoice_credit_guard` (a document's type, credited invoice and source quote never change) and `invoice_line_credit_guard` (a credit line keeps its original line and carries that line's kind, prices, discount, tax code and rate).
+
 ## R2-E. Payments, allocations, refunds and balances (P3-04)
 
 Recording a payment never moves money, and the UI says so.
