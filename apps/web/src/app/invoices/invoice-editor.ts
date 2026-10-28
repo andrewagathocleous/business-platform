@@ -13,6 +13,8 @@ import { canAttempt } from '../core/nav';
 import { NAVIGATE_ON_DENIED } from '../core/navigate-on-denied';
 import { dropNavigationKey, navigationRunning, navigationState } from '../core/navigation-state';
 import { fieldValue } from '../orders/field-value';
+import { InvoicePayments } from '../payments/invoice-payments';
+import type { AllocationView, PaymentState } from '../payments/payment-view';
 import { type CreditNoteDetail, CreditNoteView } from './credit-note-view';
 import { type CreditNoteLink, type CreditableLine, CreditPanel } from './credit-panel';
 import { type DeadlineState, companyToday, deadlineState } from './delivery-deadline';
@@ -99,7 +101,16 @@ const CONVERT_ERRORS: Readonly<Record<string, string>> = {
 @Component({
   selector: 'bp-invoice-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, RouterLink, Button, Tag, IssuedActions, CreditNoteView, CreditPanel],
+  imports: [
+    TranslocoPipe,
+    RouterLink,
+    Button,
+    Tag,
+    IssuedActions,
+    CreditNoteView,
+    CreditPanel,
+    InvoicePayments,
+  ],
   template: `
     <section class="screen">
       @if (conflict(); as item) {
@@ -549,6 +560,17 @@ const CONVERT_ERRORS: Readonly<Record<string, string>> = {
                 (changed)="reload()"
               />
               @if (documentType() === 'invoice') {
+                <bp-invoice-payments
+                  [companyId]="companyId()"
+                  [invoiceId]="id"
+                  [clientId]="client()?.id ?? ''"
+                  [currency]="savedCurrency()"
+                  [openBalance]="openBalance()"
+                  [paymentState]="paymentState()"
+                  [allocations]="allocations()"
+                  [frozen]="refreshing()"
+                  (changed)="reload()"
+                />
                 <bp-credit-panel
                   [companyId]="companyId()"
                   [invoiceId]="id"
@@ -688,6 +710,9 @@ export class InvoiceEditorPage {
   readonly issueProblems = signal<string[]>([]);
   readonly issueError = signal<{ key: string; correlationId: string | null } | null>(null);
   readonly issueWarnings = signal<string[]>([]);
+  readonly openBalance = signal('0.00');
+  readonly paymentState = signal<PaymentState>('unpaid');
+  readonly allocations = signal<AllocationView[]>([]);
   /** Set when the document is a credit note: it has its own view instead of the form. */
   readonly creditNote = signal<CreditNoteDetail | null>(null);
   /** An issued invoice: its lines with what is credited, and its credit notes. */
@@ -802,7 +827,7 @@ export class InvoiceEditorPage {
 
   /** A credit note saved or issued in its view: show what the API returned. */
   applySaved(saved: InvoiceView): void {
-    if (saved.id === this.invoiceId()) {
+    if (saved.id.toLowerCase() === this.invoiceId()?.toLowerCase()) {
       this.apply(saved);
     }
   }
@@ -1249,7 +1274,7 @@ export class InvoiceEditorPage {
   private consumeCarriedInvoice(invoiceId: string): CarriedInvoice | null {
     const state = navigationState(this.router);
     const carried = carriedInvoiceFrom(state?.['carriedInvoice']);
-    if (!carried || carried.id !== invoiceId) {
+    if (!carried || carried.id.toLowerCase() !== invoiceId.toLowerCase()) {
       return null;
     }
     dropNavigationKey(state, 'carriedInvoice');
@@ -1454,6 +1479,9 @@ export class InvoiceEditorPage {
     this.deliveries.set(invoice.deliveries ?? []);
     this.printJobs.set(invoice.printJobs ?? []);
     this.firstPrintJobId.set(invoice.firstPrintJobId ?? null);
+    this.openBalance.set(invoice.openBalance ?? invoice.total ?? '0.00');
+    this.paymentState.set(invoice.paymentState ?? 'unpaid');
+    this.allocations.set(invoice.allocations ?? []);
     this.creditNote.set(creditNoteOf(invoice));
     this.creditableLines.set(
       invoice.documentType === 'invoice' && invoice.status === 'issued'
@@ -1609,6 +1637,8 @@ function creditNoteOf(invoice: InvoiceView): CreditNoteDetail | null {
     number: invoice.number ?? null,
     version: invoice.version,
     currency: invoice.currency,
+    unappliedAmount: invoice.unappliedAmount ?? null,
+    allocations: invoice.allocations ?? [],
     creditReason: invoice.creditReason ?? '',
     creditedInvoice: invoice.creditedInvoice ?? null,
     netTotal: invoice.netTotal ?? '',

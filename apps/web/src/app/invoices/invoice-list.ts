@@ -12,6 +12,7 @@ import { NAVIGATE_ON_DENIED } from '../core/navigate-on-denied';
 import { ActiveLang } from '../format/active-lang';
 import { MoneyPipe } from '../format/money.pipe';
 import { fieldValue } from '../orders/field-value';
+import type { PaymentState } from '../payments/payment-view';
 import { type DeadlineState, companyToday, deadlineState } from './delivery-deadline';
 import {
   type InvoiceQuery,
@@ -36,6 +37,8 @@ type InvoiceRow = {
   deliveryDeadline?: string | null;
   lastDeliveredOn?: string | null;
   total: string;
+  openBalance?: string | null;
+  paymentState?: PaymentState | null;
 };
 
 type ClientOption = { id: string; displayName: string };
@@ -77,6 +80,13 @@ type ClientOption = { id: string; displayName: string };
           </select>
         </label>
         <label>
+          {{ 'payments.filter' | transloco }}
+          <select (change)="setPayment($event)">
+            <option value="" [selected]="query().payment === ''">{{ 'invoices.filters.any' | transloco }}</option>
+            <option value="open" [selected]="query().payment === 'open'">{{ 'payments.moneyOwing' | transloco }}</option>
+          </select>
+        </label>
+        <label>
           {{ 'invoices.filters.client' | transloco }}
           <select (change)="setClient($event)">
             <option value="" [selected]="query().clientId === ''">{{ 'invoices.filters.anyClient' | transloco }}</option>
@@ -114,6 +124,7 @@ type ClientOption = { id: string; displayName: string };
               <th>{{ 'invoices.columns.dueDate' | transloco }}</th>
               <th>{{ 'invoices.columns.deadline' | transloco }}</th>
               <th>{{ 'invoices.columns.status' | transloco }}</th>
+              <th>{{ 'payments.filter' | transloco }}</th>
               <th>{{ 'invoices.columns.total' | transloco }}</th>
             </tr>
           </ng-template>
@@ -138,6 +149,12 @@ type ClientOption = { id: string; displayName: string };
                 }
               </td>
               <td><p-tag [value]="statusLabel(invoice.status) | transloco" [severity]="statusSeverity(invoice.status)" /></td>
+              <td>
+                @if (invoice.status === 'issued' && invoice.documentType === 'invoice' && invoice.paymentState) {
+                  <p-tag [value]="'payments.states.' + invoice.paymentState | transloco" [severity]="invoice.paymentState === 'paid' ? 'success' : 'warn'" />
+                  <p>{{ invoice.openBalance | money: invoice.currency : lang.code() }}</p>
+                }
+              </td>
               <td>{{ invoice.total | money: invoice.currency : lang.code() }}</td>
             </tr>
           </ng-template>
@@ -251,6 +268,10 @@ export class InvoiceListPage {
     );
   }
 
+  setPayment(event: Event): void {
+    this.navigate({ ...this.query(), payment: fieldValue(event) === 'open' ? 'open' : '' });
+  }
+
   setDelivery(event: Event): void {
     this.navigate({ ...this.query(), delivery: fieldValue(event) === 'pending' ? 'pending' : '' });
   }
@@ -335,6 +356,7 @@ export class InvoiceListPage {
       q: 'invoices.search',
       status: 'invoices.filters.status',
       delivery: 'invoices.filters.delivery',
+      payment: 'payments.filter',
       clientId: 'invoices.filters.client',
       from: 'invoices.filters.from',
       to: 'invoices.filters.to',

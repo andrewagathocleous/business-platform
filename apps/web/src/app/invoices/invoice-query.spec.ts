@@ -3,6 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { invalidInvoiceFilters, invoicesHttpParams, parseInvoiceQuery } from './invoice-query';
 
 describe('parseInvoiceQuery', () => {
+  it('keeps only the money-owing payment filter', () => {
+    const open = parseInvoiceQuery(convertToParamMap({ payment: 'open' }));
+    expect(open.payment).toBe('open');
+    expect(invoicesHttpParams(open).get('payment')).toBe('open');
+    const invalid = convertToParamMap({ payment: 'paid' });
+    expect(parseInvoiceQuery(invalid).payment).toBe('');
+    expect(invalidInvoiceFilters(invalid)).toEqual(['payment']);
+  });
+
   it('drops an impossible date and keeps the valid status', () => {
     const dated = convertToParamMap({ status: 'issued', from: '2026-13-01' });
     const parsed = parseInvoiceQuery(dated);

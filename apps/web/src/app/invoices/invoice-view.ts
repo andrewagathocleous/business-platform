@@ -1,3 +1,4 @@
+import type { AllocationView, PaymentState } from '../payments/payment-view';
 import type { CreditNoteLink } from './credit-panel';
 import type { LineKind } from './invoice-lines';
 import type { DeliveryView, InvoicePrintJob } from './issued-actions';
@@ -21,6 +22,10 @@ export type InvoiceView = {
   deliveries?: DeliveryView[];
   printJobs?: InvoicePrintJob[];
   firstPrintJobId?: string | null;
+  openBalance?: string | null;
+  paymentState?: PaymentState | null;
+  unappliedAmount?: string | null;
+  allocations?: AllocationView[];
   reference: string | null;
   notes: string | null;
   terms: string | null;

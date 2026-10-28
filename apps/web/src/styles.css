@@ -728,6 +728,7 @@ tr.review-row,
 
 .screen h1,
 .screen h2,
+.screen h3,
 .screen p {
   overflow-wrap: anywhere;
 }

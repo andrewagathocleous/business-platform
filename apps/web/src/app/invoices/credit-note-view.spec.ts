@@ -39,6 +39,33 @@ const DRAFT: CreditNoteDetail = {
 };
 
 describe('CreditNoteView', () => {
+  it('shows the unapplied remainder, target links and reversed applications on an issued credit', async () => {
+    const { fixture, http } = await setup([], {
+      ...DRAFT,
+      status: 'issued',
+      number: 'CN-1',
+      unappliedAmount: '5.00',
+      allocations: [
+        {
+          id: 'a',
+          amount: '6.90',
+          effectiveOn: '2026-10-28',
+          reversedOn: '2026-10-28',
+          reversalReason: 'Demo correction',
+          invoice: { id: 'invoice-2', number: 'INV-2' },
+        },
+      ],
+    });
+    expect(textOf(fixture)).toContain('Not yet applied: 5.00 EUR');
+    expect(textOf(fixture)).toContain('INV-2');
+    expect(textOf(fixture)).toContain('Reversed on 28/10/2026: Demo correction');
+    expect(
+      rootOf(fixture).querySelector('[data-testid="credit-applications"] a')?.getAttribute('href'),
+    ).toBe('/c/company-1/invoices/invoice-2');
+    expect(textOf(fixture)).not.toContain('Issue credit note');
+    http.verify();
+  });
+
   it('saves only what changed, and waits for the save before issuing', async () => {
     const { fixture, http, component, events } = await setup(['invoice.credit'], DRAFT);
     const text = textOf(fixture);

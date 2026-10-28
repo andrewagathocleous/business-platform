@@ -236,6 +236,9 @@ export async function runE2e(deps = {}) {
     STORAGE_ROOT: storage,
     MOCK_PRINT_ROOT: mockPrint,
     E2E_RUN_ID: runId,
+    // The suite signs in more than 20 times a minute; the auth limit itself is covered by
+    // throttle.integration.test.ts, not by e2e.
+    THROTTLE_AUTH_LIMIT: '200',
   };
 
   let exitCode = 1;

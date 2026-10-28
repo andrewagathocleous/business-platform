@@ -159,6 +159,7 @@ test('the owner issues an invoice and records its paper delivery', async ({ page
   await checkScreen(page, 'credit-note-issued');
   await page
     .getByTestId('credit-note')
+    .getByTestId('credited-invoice')
     .getByRole('link', { name: `E${stamp.slice(-6)}-0001`, exact: true })
     .click();
   await expect(page.getByTestId('credit-panel')).toContainText(

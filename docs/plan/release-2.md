@@ -317,6 +317,8 @@ They are never edited or deleted. They are only reversed, with a date.
 
 **As built, R2-E2b (2026-10-28).** Balances are derived, never stored: `openBalance`, `paymentState` and `unappliedAmount` on invoice and credit-note views, `GET …/invoices?payment=open`, and `GET …/clients/:id/account`. Issuing a credit note applies min(its total, the original's open balance) to the original in the same transaction. Read-only balance views run at repeatable read so their queries share one snapshot.
 
+**As built, R2-E3 (2026-10-28).** Screens: a Payments panel on issued invoices, the client account on the client page (apply credit, refund, void), credit-note application details, and a Payment column and Money owing filter on the invoice list. Create requests keep their `Idempotency-Key` per tab and per user until a definite answer; duplicate entry from separate tabs, devices or people is BACKLOG H-07.
+
 ## R2-F. Store invoice authority (P3-06)
 
 Order-to-invoice conversion is deferred (R2-02), so in R2 this step is a guard only:

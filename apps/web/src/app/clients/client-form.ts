@@ -11,6 +11,7 @@ import { canAttempt } from '../core/nav';
 import { NAVIGATE_ON_DENIED } from '../core/navigate-on-denied';
 import { dropNavigationKey, navigationState } from '../core/navigation-state';
 import { fieldValue } from '../orders/field-value';
+import { ClientAccount } from '../payments/client-account';
 import {
   type AddressDraft,
   type AddressKind,
@@ -75,7 +76,7 @@ type DuplicateMatch = {
 @Component({
   selector: 'bp-client-form',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, RouterLink, Button],
+  imports: [TranslocoPipe, RouterLink, Button, ClientAccount],
   template: `
     <section class="screen">
       @if (conflict(); as item) {
@@ -470,6 +471,11 @@ type DuplicateMatch = {
           }
         </form>
       }
+      @if (clientId(); as id) {
+        @if (!loading() && !error() && canViewAccount()) {
+          <bp-client-account [companyId]="companyId()" [clientId]="id" />
+        }
+      }
       @if (duplicates(); as matches) {
         <div class="modal" role="presentation">
           <div
@@ -575,6 +581,15 @@ export class ClientFormPage {
       return;
     }
     this.fetch();
+  }
+
+  canViewAccount(): boolean {
+    return canAttempt(
+      this.context.grants(),
+      this.context.withheldPermissions(),
+      this.context.mfaStepUpRequired(),
+      'invoice.view',
+    );
   }
 
   canManage(): boolean {
@@ -901,7 +916,7 @@ export class ClientFormPage {
   private consumeCarriedClient(clientId: string): CarriedClient | null {
     const state = navigationState(this.router);
     const carried = carriedClientFrom(state?.['carriedClient']);
-    if (!carried || carried.id !== clientId) {
+    if (!carried || carried.id.toLowerCase() !== clientId.toLowerCase()) {
       return null;
     }
     dropNavigationKey(state, 'carriedClient');

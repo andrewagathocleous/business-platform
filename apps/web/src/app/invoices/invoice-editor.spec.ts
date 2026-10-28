@@ -364,61 +364,66 @@ describe('InvoiceEditorPage', () => {
     http.verify();
   });
 
-  it('keeps a carried create draft instead of the stored invoice', async () => {
-    vi.useFakeTimers();
-    const carriedInvoice = {
-      id: 'invoice-9',
-      version: 1,
-      status: 'draft',
-      currency: 'EUR',
-      documentType: 'invoice' as const,
-      pricesIncludeTax: false,
-      issueDate: '',
-      dueDate: '',
-      reference: '',
-      notes: 'typed after save',
-      terms: '',
-      client: {
-        id: 'client-1',
-        displayName: 'Acme Demo',
-        defaultLanguage: 'el',
-        defaultCurrency: 'EUR',
-      },
-      lines: [
-        {
-          key: 'line-1',
-          productId: '',
-          description: 'Nuts',
-          quantity: '1',
-          unit: 'kg',
-          unitPrice: '10.00',
-          discountPercent: '',
-          taxCodeId: 'tax-1',
-          kind: 'item' as const,
+  it.each(['invoice-9', 'INVOICE-9'])(
+    'keeps a carried create draft instead of the stored invoice at route %s',
+    async (routeId) => {
+      vi.useFakeTimers();
+      const carriedInvoice = {
+        id: 'invoice-9',
+        version: 1,
+        status: 'draft',
+        currency: 'EUR',
+        documentType: 'invoice' as const,
+        pricesIncludeTax: false,
+        issueDate: '',
+        dueDate: '',
+        reference: '',
+        notes: 'typed after save',
+        terms: '',
+        client: {
+          id: 'client-1',
+          displayName: 'Acme Demo',
+          defaultLanguage: 'el',
+          defaultCurrency: 'EUR',
         },
-      ],
-    };
-    const { fixture, http } = await setup(['invoice.draft', 'invoice.view'], {
-      getCurrentNavigation: () => ({ extras: { state: { carriedInvoice } } }),
-    });
-    const component = fixture.componentInstance;
-    component.open('company-1', 'invoice-9');
-    flushCatalog(http);
-    const loaded = http.match((request) => request.url === '/api/c/company-1/invoices/invoice-9');
-    for (const request of loaded) {
-      request.flush({
-        invoice: { ...invoice('Nuts'), id: 'invoice-9', notes: 'server copy', version: 7 },
+        lines: [
+          {
+            key: 'line-1',
+            productId: '',
+            description: 'Nuts',
+            quantity: '1',
+            unit: 'kg',
+            unitPrice: '10.00',
+            discountPercent: '',
+            taxCodeId: 'tax-1',
+            kind: 'item' as const,
+          },
+        ],
+      };
+      const { fixture, http } = await setup(['invoice.draft', 'invoice.view'], {
+        getCurrentNavigation: () => ({ extras: { state: { carriedInvoice } } }),
       });
-    }
-    expect(component.notes()).toBe('typed after save');
-    component.save();
-    const patch = http.expectOne('/api/c/company-1/invoices/invoice-9');
-    expect(patch.request.body).toMatchObject({ expectedVersion: 1, notes: 'typed after save' });
-    patch.flush({
-      invoice: { ...invoice('Nuts'), id: 'invoice-9', notes: 'typed after save', version: 2 },
-    });
-    http.verify();
-  });
+      const component = fixture.componentInstance;
+      component.open('company-1', routeId);
+      flushCatalog(http);
+      const loaded = http.match(
+        (request) => request.url === `/api/c/company-1/invoices/${routeId}`,
+      );
+      for (const request of loaded) {
+        request.flush({
+          invoice: { ...invoice('Nuts'), id: 'invoice-9', notes: 'server copy', version: 7 },
+        });
+      }
+      expect(component.notes()).toBe('typed after save');
+      component.save();
+      const patch = http.expectOne(`/api/c/company-1/invoices/${routeId}`);
+      expect(patch.request.body).toMatchObject({ expectedVersion: 1, notes: 'typed after save' });
+      patch.flush({
+        invoice: { ...invoice('Nuts'), id: 'invoice-9', notes: 'typed after save', version: 2 },
+      });
+      http.verify();
+    },
+  );
 
   it('keeps a note typed after save is clicked', async () => {
     vi.useFakeTimers();
@@ -951,23 +956,31 @@ describe('InvoiceEditorPage', () => {
     http.verify();
   });
 
-  it('shows the credit note its view saved, without loading it again', async () => {
-    const credit = {
-      ...invoice('Gift box (demo)'),
-      id: 'credit-1',
-      documentType: 'credit_note',
-      creditReason: 'One box damaged',
-      creditedInvoice: { id: 'invoice-1', number: 'INV-0007', issueDate: '2026-10-20' },
-    };
-    const { http, component } = await openDocument(CREDITOR, credit);
-    component.applySaved({ ...credit, creditReason: 'Two boxes damaged', version: 5 } as never);
-    expect(component.creditNote()?.creditReason).toBe('Two boxes damaged');
-    expect(component.creditNote()?.version).toBe(5);
-    // Another document's answer is ignored.
-    component.applySaved({ ...credit, id: 'credit-9', creditReason: 'Other' } as never);
-    expect(component.creditNote()?.creditReason).toBe('Two boxes damaged');
-    http.verify();
-  });
+  it.each(['credit-1', 'CREDIT-1'])(
+    'shows the credit note its view saved at route %s, without loading it again',
+    async (routeId) => {
+      const credit = {
+        ...invoice('Gift box (demo)'),
+        id: routeId,
+        documentType: 'credit_note',
+        creditReason: 'One box damaged',
+        creditedInvoice: { id: 'invoice-1', number: 'INV-0007', issueDate: '2026-10-20' },
+      };
+      const { http, component } = await openDocument(CREDITOR, credit);
+      component.applySaved({
+        ...credit,
+        id: 'credit-1',
+        creditReason: 'Two boxes damaged',
+        version: 5,
+      } as never);
+      expect(component.creditNote()?.creditReason).toBe('Two boxes damaged');
+      expect(component.creditNote()?.version).toBe(5);
+      // Another document's answer is ignored.
+      component.applySaved({ ...credit, id: 'credit-9', creditReason: 'Other' } as never);
+      expect(component.creditNote()?.creditReason).toBe('Two boxes damaged');
+      http.verify();
+    },
+  );
 
   it('links an invoice to the quote it was made from', async () => {
     const { fixture, http } = await openDocument(ISSUER, {

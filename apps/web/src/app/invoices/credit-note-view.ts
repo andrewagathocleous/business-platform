@@ -18,6 +18,7 @@ import { isVersionConflict, readApiError } from '../core/api-error';
 import { CompanyContextStore } from '../core/company-context.store';
 import { canAttempt } from '../core/nav';
 import { fieldValue } from '../orders/field-value';
+import type { AllocationView } from '../payments/payment-view';
 import { quantityText, quantityUnits } from './credit-quantities';
 import { decimalInput } from './decimal-input';
 import { calendarDate } from './invoice-query';
@@ -41,6 +42,8 @@ export type CreditNoteDetail = {
   number: string | null;
   version: number;
   currency: string;
+  unappliedAmount?: string | null;
+  allocations?: readonly AllocationView[];
   creditReason: string;
   creditedInvoice: { id: string; number: string | null; issueDate: string | null } | null;
   netTotal: string;
@@ -93,13 +96,41 @@ const ISSUE_ERRORS: Readonly<Record<string, string>> = {
         }
       </h2>
       @if (note().creditedInvoice; as original) {
-        <p>
+        <p data-testid="credited-invoice">
           {{ 'invoices.creditNote.credits' | transloco }}
           <a [routerLink]="['/c', companyId(), 'invoices', original.id]">{{ original.number }}</a>
           @if (original.issueDate) {
             ({{ dateLabel(original.issueDate) }})
           }
         </p>
+      }
+      @if (note().status === 'issued') {
+        <section data-testid="credit-applications">
+          <h3>{{ 'payments.applications' | transloco }}</h3>
+          <p>
+            {{ 'payments.notApplied' | transloco }}: {{ note().unappliedAmount }}
+            {{ note().currency }}
+          </p>
+          <ul class="credit-list">
+            @for (item of note().allocations ?? []; track item.id) {
+              <li>
+                @if (item.invoice; as target) {
+                  <a [routerLink]="['/c', companyId(), 'invoices', target.id]">{{
+                    target.number
+                  }}</a>
+                }
+                · {{ item.amount }} · {{ dateLabel(item.effectiveOn) }}
+                @if (item.reversedOn) {
+                  <p>
+                    {{ 'payments.reversedOn' | transloco }} {{ dateLabel(item.reversedOn) }}:
+                    {{ item.reversalReason }}
+                  </p>
+                }
+              </li>
+            }
+          </ul>
+          <p>{{ 'payments.applyElsewhere' | transloco }}</p>
+        </section>
       }
       @if (editable()) {
         <label class="span-all">
