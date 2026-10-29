@@ -1,0 +1,105 @@
+@if (can('client.export')) {
+<section class="card" data-testid="client-csv-export" aria-labelledby="client-export-title">
+  <h2 id="client-export-title">{{ 'clients.csv.export' | transloco }}</h2>
+  <p>{{ 'clients.csv.sensitive' | transloco }}</p>
+  @if (stepUp('client.export')) {
+  <p>{{ 'clients.csv.errors.mfa' | transloco }}</p>
+  }
+  <p-button
+    [disabled]="exporting()"
+    [label]="'clients.csv.export' | transloco"
+    (onClick)="download()"
+  />
+  @if (exporting()) {
+  <p role="status">{{ 'clients.csv.exporting' | transloco }}</p>
+  } @if (exportError(); as error) {
+  <p role="alert">{{ error.key | transloco }}</p>
+  @if (error.correlationId) {
+  <p>{{ 'errors.correlation' | transloco }}: {{ error.correlationId }}</p>
+  } }
+</section>
+} @if (can('client.import')) {
+<section class="card stack" data-testid="client-csv-import" aria-labelledby="client-import-title">
+  <h2 id="client-import-title">{{ 'clients.csv.import' | transloco }}</h2>
+  <p>{{ 'clients.csv.instructions' | transloco }}</p>
+  @if (stepUp('client.import')) {
+  <p>{{ 'clients.csv.errors.mfa' | transloco }}</p>
+  }
+  <label
+    >{{ 'clients.csv.file' | transloco }}<input
+      type="file"
+      accept=".csv"
+      [disabled]="importing()"
+      (change)="selectFile($event)"
+  /></label>
+  @if (importing()) {
+  <p role="status">{{ 'clients.csv.working' | transloco }}</p>
+  } @if (importError(); as error) {
+  <p role="alert">{{ error.key | transloco }}</p>
+  @if (error.correlationId) {
+  <p>{{ 'errors.correlation' | transloco }}: {{ error.correlationId }}</p>
+  } } @if (created() !== null) {
+  <p role="status">{{ 'clients.csv.created' | transloco: { count: created() } }}</p>
+  } @if (preview(); as data) {
+  <div data-testid="client-csv-preview">
+    <h3 class="file-name">{{ 'clients.csv.preview' | transloco }}: {{ data.fileName }}</h3>
+    <p data-testid="import-counts">{{ 'clients.csv.counts' | transloco: data.counts }}</p>
+    <p>{{ 'clients.csv.order' | transloco }}</p>
+    <div class="table-scroll" tabindex="0" [attr.aria-label]="'clients.csv.preview' | transloco">
+      <table class="items">
+        <thead>
+          <tr>
+            <th scope="col">{{ 'clients.csv.row' | transloco }}</th>
+            <th scope="col">{{ 'clients.csv.status' | transloco }}</th>
+            <th scope="col">{{ 'clients.fields.displayName' | transloco }}</th>
+            <th scope="col">{{ 'clients.csv.messages' | transloco }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of visibleRows(); track row.number) {
+          <tr>
+            <th scope="row">{{ row.number }}</th>
+            <td>{{ 'clients.csv.statuses.' + row.status | transloco }}</td>
+            <td class="customer-text">{{ row.values.display_name }}</td>
+            <td>
+              @if (row.messages.length === 0) { <span>—</span> } @else {
+              <ul>
+                @for (message of row.messages; track $index) {
+                <li class="customer-text">
+                  {{ message.field }} ({{ message.code }}): {{ message.message }}
+                </li>
+                }
+              </ul>
+              }
+            </td>
+          </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+    @if (pageCount() > 1) {
+    <div class="filters">
+      <p-button
+        [label]="'clients.csv.previous' | transloco"
+        [disabled]="page() === 0"
+        (onClick)="page.set(page() - 1)"
+      />
+      <p role="status">
+        {{ 'clients.csv.page' | transloco: { current: page() + 1, total: pageCount() } }}
+      </p>
+      <p-button
+        [label]="'clients.csv.next' | transloco"
+        [disabled]="page() + 1 >= pageCount()"
+        (onClick)="page.set(page() + 1)"
+      />
+    </div>
+    }
+    <p-button
+      [label]="'clients.csv.confirm' | transloco: { count: data.counts.new }"
+      [disabled]="importing() || confirmBlocked() || data.counts.new === 0"
+      (onClick)="confirm()"
+    />
+  </div>
+  }
+</section>
+}

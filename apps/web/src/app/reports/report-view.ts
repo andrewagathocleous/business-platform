@@ -106,6 +106,10 @@ export async function exportFailure(error: unknown): Promise<Failure> {
 }
 
 export function exportFileName(disposition: string | null, from: string, to: string): string {
+  return downloadFileName(disposition, `accountant-export-${from}-${to}.zip`);
+}
+
+export function downloadFileName(disposition: string | null, fallback: string): string {
   const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition ?? '')?.[1];
   if (encoded) {
     try {
@@ -117,7 +121,7 @@ export function exportFileName(disposition: string | null, from: string, to: str
   return (
     /filename="([^"]+)"/i.exec(disposition ?? '')?.[1] ??
     /filename=([^;\s]+)/i.exec(disposition ?? '')?.[1] ??
-    `accountant-export-${from}-${to}.zip`
+    fallback
   );
 }
 
