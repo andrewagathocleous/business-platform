@@ -83,6 +83,14 @@ enum ClientKind {
   @@map("client_kind")
 }
 
+enum ClientImportStatus {
+  previewed
+  applied
+  expired
+
+  @@map("client_import_status")
+}
+
 enum AddressKind {
   billing
   shipping
@@ -335,6 +343,8 @@ model UserAccount {
   invitationsAccepted    Invitation[]       @relation("InvitationAcceptedBy")
   serviceIdentities      ServiceIdentity[]  @relation("ServiceIdentityCreatedBy")
   switchesUpdated        AutomationSwitch[] @relation("SwitchUpdatedBy")
+  clientImportsCreated   ClientImport[] @relation("ClientImportCreatedBy")
+  clientImportsApplied   ClientImport[] @relation("ClientImportAppliedBy")
   clientsCreated         Client[]           @relation("ClientCreatedBy")
   invoicesCreated        Invoice[]          @relation("InvoiceCreatedBy")
   invoicesUpdated        Invoice[]          @relation("InvoiceUpdatedBy")
@@ -473,6 +483,7 @@ model Company {
   credentials        IntegrationCredential[]
   connections        StoreConnection[]
   inboxEvents        IntegrationInbox[]
+  clientImports      ClientImport[]
   clients            Client[]
   contacts           ClientContact[]
   addresses          ClientAddress[]
@@ -824,6 +835,27 @@ model Client {
 
   @@unique([companyId, id])
   @@map("client")
+}
+
+model ClientImport {
+  id           String             @id @default(uuid(7)) @db.Uuid
+  companyId    String             @map("company_id") @db.Uuid
+  company      Company            @relation(fields: [companyId], references: [id])
+  status       ClientImportStatus @default(previewed)
+  fileName     String             @map("file_name")
+  sha256       String
+  rowCount     Int                @map("row_count")
+  rows         Json               @db.JsonB
+  createdById  String             @map("created_by") @db.Uuid
+  createdBy    UserAccount        @relation("ClientImportCreatedBy", fields: [createdById], references: [id])
+  createdAt    DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  appliedById  String?            @map("applied_by") @db.Uuid
+  appliedBy    UserAccount?       @relation("ClientImportAppliedBy", fields: [appliedById], references: [id], onDelete: Restrict)
+  appliedAt    DateTime?          @map("applied_at") @db.Timestamptz(6)
+  appliedCount Int?               @map("applied_count")
+
+  @@unique([companyId, id])
+  @@map("client_import")
 }
 
 model ClientContact {

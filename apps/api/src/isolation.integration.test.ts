@@ -36,6 +36,8 @@ const VERBS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 const runId = randomUUID().slice(0, 8);
 
 const EXEMPTIONS: { route: string; reason: string }[] = [
+  { route: 'GET /api/c/:companyId/clients/export.csv', reason: 'Company export. No object id; mismatch tested in client-import.integration.test.ts.' },
+  { route: 'POST /api/c/:companyId/clients/imports', reason: 'Creates a preview. No object id; mismatch tested in client-import.integration.test.ts.' },
   {
     route: 'GET /api/c/:companyId/exports/accountant',
     reason: 'Company export. No object id; company mismatch tested in export.integration.test.ts.',
@@ -223,6 +225,7 @@ type Fixtures = {
   companyA: string;
   companyB: string;
   adminBUserId: string;
+  clientImportA: string;
   clientA: string;
   contactA: string;
   addressA: string;
@@ -381,6 +384,9 @@ async function loadFixtures(adminA: Session, adminB: Session, companyA: string, 
     tx.company.findUniqueOrThrow({ where: { id: companyB }, select: { version: true } }),
   );
   return {
+    clientImportA: stringField(record(expectOk(await send(adminA, 'post', `/api/c/${companyA}/clients/imports`, cid('fix-import-a'), {
+      fileName: 'clients-fictional.csv', content: 'kind,display_name\nperson,Isolation import (fictional)',
+    }), 'client import').import), 'id'),
     payments: await loadPaymentFixtures(),
     companyA,
     companyB,
@@ -499,6 +505,8 @@ function sweepCases(adminB: Session, fx: Fixtures): SweepCase[] {
   const b = (suffix: string): string => `/api/c/${fx.companyB}${suffix}`;
   const lineBody = [line(fx.taxA)];
   return [
+    onB('client-import-get', 'GET /api/c/:companyId/clients/imports/:id', 'get', b(`/clients/imports/${fx.clientImportA}`), () => importSnap(fx)),
+    onB('client-import-confirm', 'POST /api/c/:companyId/clients/imports/:id/confirm', 'post', b(`/clients/imports/${fx.clientImportA}/confirm`), () => importSnap(fx), { expectedSha256: '0'.repeat(64) }),
     onB('payment-create', 'POST /api/c/:companyId/payments', 'post', b('/payments'), () => paymentSnap(fx),
       { clientId: fx.payments.clientId, receivedOn: businessDateInZone(new Date(), 'Asia/Nicosia'), amount: '1.00', method: 'cash' }),
     onB('payment-list', 'GET /api/c/:companyId/payments', 'get', b(`/payments?clientId=${fx.payments.clientId}`), () => paymentSnap(fx)),
@@ -1067,6 +1075,13 @@ function objectParams(route: string): string[] {
   return [...path.matchAll(/:([A-Za-z0-9_]+)/g)]
     .map((match) => match[1] ?? '')
     .filter((name) => name !== 'companyId');
+}
+
+function importSnap(fx: Fixtures): Promise<string> {
+  return inCompany(fx.companyA, async (tx) => JSON.stringify({
+    preview: await tx.clientImport.findUniqueOrThrow({ where: { id: fx.clientImportA } }),
+    clients: await tx.client.findMany({ orderBy: { id: 'asc' } }),
+  }));
 }
 
 function clientSnap(fx: Fixtures): Promise<string> {

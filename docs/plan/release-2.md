@@ -357,6 +357,8 @@ Order-to-invoice conversion is deferred (R2-02), so in R2 this step is a guard o
   - The maximum is 5,000 rows, and every confirmed import is audited.
 - **Tests:** a role with `client.manage` but not `client.import` cannot import, and a role with `client.view` and `invoice.export` but not `client.export` cannot export.
 
+**As built, R2-H1 (2026-10-29).** Export `GET …/clients/export.csv`; import `POST …/clients/imports` (preview, stored in `client_import`) and `POST …/clients/imports/:id/confirm` (once, within 24 hours, same file hash). Layout in `docs/clients/csv-layout.md`. The import route alone accepts 4 MiB, in Express and Caddy.
+
 ## R2-I. Live checks
 
 On the laptop after R1 is live. Sample documents never enter the real company's books.

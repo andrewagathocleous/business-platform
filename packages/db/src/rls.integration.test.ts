@@ -21,6 +21,7 @@ const RLS_TABLES = [
   'client',
   'client_address',
   'client_contact',
+  'client_import',
   'company_bank_account',
   'gift_message_template',
   'integration_credential',
@@ -280,6 +281,54 @@ describe('row level security', () => {
     await expect(
       appTenant.run({ companyId: companyA, actor: userId, correlationId: randomUUID() }, (tx) =>
         tx.brand.create({ data: { companyId: companyB, name: 'cross-tenant' } }),
+      ),
+    ).rejects.toThrow(/row-level security/i);
+  });
+
+  it('permits scoped preview inserts and updates but refuses deletes and foreign-company writes', async () => {
+    const ctx = { companyId: companyA, actor: userId, correlationId: randomUUID() };
+    const grants = await app.$queryRaw<{ privilege_type: string }[]>`
+      SELECT privilege_type FROM information_schema.role_table_grants
+      WHERE grantee = 'bp_app' AND table_name = 'client_import'
+    `;
+    expect(grants.map((row) => row.privilege_type).sort()).toEqual(['INSERT', 'SELECT', 'UPDATE']);
+    await expect(
+      appTenant.run(ctx, (tx) => tx.clientImport.delete({ where: { id: graphA.client_import } })),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      appTenant.run(ctx, (tx) =>
+        tx.clientImport.create({
+          data: {
+            companyId: companyB,
+            fileName: 'foreign-fictional.csv',
+            sha256: '0'.repeat(64),
+            rowCount: 0,
+            rows: [],
+            createdById: userId,
+          },
+        }),
+      ),
+    ).rejects.toThrow(/row-level security/i);
+    await appTenant.run(ctx, async (tx) => {
+      expect(
+        (
+          await tx.clientImport.updateMany({
+            where: { id: graphB.client_import },
+            data: { status: 'expired' },
+          })
+        ).count,
+      ).toBe(0);
+      await tx.clientImport.update({
+        where: { id: graphA.client_import },
+        data: { status: 'expired' },
+      });
+    });
+    await expect(
+      appTenant.run(ctx, (tx) =>
+        tx.clientImport.update({
+          where: { id: graphA.client_import },
+          data: { companyId: companyB },
+        }),
       ),
     ).rejects.toThrow(/row-level security/i);
   });
@@ -2094,6 +2143,7 @@ async function markIssued(
 const COMPANY_SCOPED_PARENTS = [
   'brand',
   'client',
+  'client_import',
   'integration_credential',
   'invoice',
   'invoice_line',
@@ -2527,7 +2577,18 @@ async function insertGraph(
     },
   });
 
+  const clientImport = await tx.clientImport.create({
+    data: {
+      companyId,
+      fileName: 'clients-fictional.csv',
+      sha256: '0'.repeat(64),
+      rowCount: 0,
+      rows: [],
+      createdById: userId,
+    },
+  });
   return {
+    client_import: clientImport.id,
     allocation: allocation.id,
     payment: payment.id,
     refund: refund.id,

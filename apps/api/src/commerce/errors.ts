@@ -12,6 +12,9 @@ import type { RequestMeta } from '../identity/request-meta';
 
 /** 409 reasons the client tells apart, so they keep their code in the error body. */
 const CODED_CONFLICTS = new Set([
+  'already_applied',
+  'preview_expired',
+  'preview_changed',
   'name_taken',
   'location_in_use',
   'code_taken',

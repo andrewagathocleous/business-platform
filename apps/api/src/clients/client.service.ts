@@ -204,17 +204,8 @@ export class ClientService {
     const actor = requireActor(ctx);
     try {
       return await this.tenants.run(this.context(ctx, actor), async (tx) => {
-        const data = clientData(input);
-        assertChildren(input.contacts ?? [], input.addresses ?? []);
-        const created = await tx.client.create({
-          data: {
-            companyId: ctx.companyId,
-            ...data,
-            createdById: actor,
-          },
-        });
-        await this.replaceContacts(tx, ctx.companyId, created.id, input.contacts ?? [], []);
-        await this.replaceAddresses(tx, ctx.companyId, created.id, input.addresses ?? [], []);
+        await lockClientWrites(tx, ctx.companyId);
+        const created = await this.createInTransaction(tx, ctx.companyId, actor, input);
         await this.audit.record(tx, {
           companyId: ctx.companyId,
           actorType: 'user',
@@ -236,6 +227,21 @@ export class ClientService {
     }
   }
 
+  /** Shared by CSV confirm: the caller owns the tenant transaction and client-write lock. */
+  async createInTransaction(
+    tx: TenantTransaction,
+    companyId: string,
+    actor: string,
+    input: ClientWrite,
+  ): Promise<{ id: string; version: number; acceptsEInvoices: boolean }> {
+    const data = clientData(input);
+    assertChildren(input.contacts ?? [], input.addresses ?? []);
+    const created = await tx.client.create({ data: { companyId, ...data, createdById: actor } });
+    await this.replaceContacts(tx, companyId, created.id, input.contacts ?? [], []);
+    await this.replaceAddresses(tx, companyId, created.id, input.addresses ?? [], []);
+    return created;
+  }
+
   async update(
     ctx: RequestContext,
     clientId: string,
@@ -245,6 +251,7 @@ export class ClientService {
     const actor = requireActor(ctx);
     try {
       return await this.tenants.run(this.context(ctx, actor), async (tx) => {
+        await lockClientWrites(tx, ctx.companyId);
         const current = await this.load(tx, ctx.companyId, clientId);
         if (current.version !== patch.expectedVersion) {
           throw new CommerceError(
@@ -633,4 +640,9 @@ function toClient(row: ClientRow): ClientView {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+/** Serialise import duplicate rechecks with every client create and edit in this company. */
+export async function lockClientWrites(tx: TenantTransaction, companyId: string): Promise<void> {
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`clients:${companyId}`}, 0))::text`;
 }
