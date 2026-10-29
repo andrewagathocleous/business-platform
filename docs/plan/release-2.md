@@ -344,6 +344,8 @@ Order-to-invoice conversion is deferred (R2-02), so in R2 this step is a guard o
 
 **Test:** the worked examples agree across invoiced, collected, open balances and ageing.
 
+**As built, R2-G1 (2026-10-29).** `GET …/reports/invoiced`, `…/collected` and `…/ageing` (`report.finance.view`), read in one snapshot. Periods include both ends and are at most 366 days. Collected excludes voided payments and refunds; ageing counts allocations and refunds by their dates as of the chosen day.
+
 ## R2-H. Client CSV import and export (P3-12)
 
 - **Export:** `client.export` (MFA), audited.

@@ -36,6 +36,18 @@ const VERBS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 const runId = randomUUID().slice(0, 8);
 
 const EXEMPTIONS: { route: string; reason: string }[] = [
+  {
+    route: 'GET /api/c/:companyId/reports/invoiced',
+    reason: 'Company report. No object id; company mismatch tested in reports.integration.test.ts.',
+  },
+  {
+    route: 'GET /api/c/:companyId/reports/collected',
+    reason: 'Company report. No object id; company mismatch tested in reports.integration.test.ts.',
+  },
+  {
+    route: 'GET /api/c/:companyId/reports/ageing',
+    reason: 'Company report. No object id; company mismatch tested in reports.integration.test.ts.',
+  },
   { route: 'GET /api/c/:companyId/context', reason: 'Caller summary. No object id.' },
   { route: 'GET /api/c/:companyId/members', reason: 'Member list. No object id.' },
   { route: 'POST /api/c/:companyId/invitations', reason: 'Creates an invitation. No existing object id.' },

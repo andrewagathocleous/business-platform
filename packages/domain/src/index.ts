@@ -114,3 +114,13 @@ export type {
   RefundAllowedInput,
   SettlementSource,
 } from './payments/settlement';
+
+export { ageingBucket, ageingReport, collectedReport, invoicedReport } from './reports/finance';
+export type {
+  AgeingBucket,
+  AgeingInvoice,
+  AgeingSource,
+  CollectedMovement,
+  InvoicedDocument,
+  ReportFigure,
+} from './reports/finance';
