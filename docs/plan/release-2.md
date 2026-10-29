@@ -346,6 +346,8 @@ Order-to-invoice conversion is deferred (R2-02), so in R2 this step is a guard o
 
 **As built, R2-G1 (2026-10-29).** `GET …/reports/invoiced`, `…/collected` and `…/ageing` (`report.finance.view`), read in one snapshot. Periods include both ends and are at most 366 days. Collected excludes voided payments and refunds; ageing counts allocations and refunds by their dates as of the chosen day.
 
+**As built, R2-G2 (2026-10-29).** `GET …/exports/accountant` (`invoice.export`): a streamed ZIP of six CSV files, a README and optional PDFs (at most 1,000 and 150 MiB). The CSV writer in `apps/api/src/export/csv.ts` is the one R2-H uses. Audited as `invoice.export_prepared`, then `invoice.exported` success or `transfer_interrupted`.
+
 ## R2-H. Client CSV import and export (P3-12)
 
 - **Export:** `client.export` (MFA), audited.

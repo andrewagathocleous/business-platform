@@ -10,6 +10,7 @@ import { AutomationModule } from './automation/automation.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { ClientsModule } from './clients/clients.module';
 import { DocumentsModule } from './documents/documents.module';
+import { ExportModule } from './export/export.module';
 import { FinanceSettingsModule } from './finance-settings/finance-settings.module';
 import { HealthModule } from './health/health.module';
 import { IntegrationsModule } from './integrations/integrations.module';
@@ -39,6 +40,7 @@ import { buildThrottlerOptions } from './throttler/throttler';
     AutomationModule,
     ClientsModule,
     DocumentsModule,
+    ExportModule,
     CatalogModule,
     FinanceSettingsModule,
     IntegrationsModule,

@@ -37,6 +37,10 @@ const runId = randomUUID().slice(0, 8);
 
 const EXEMPTIONS: { route: string; reason: string }[] = [
   {
+    route: 'GET /api/c/:companyId/exports/accountant',
+    reason: 'Company export. No object id; company mismatch tested in export.integration.test.ts.',
+  },
+  {
     route: 'GET /api/c/:companyId/reports/invoiced',
     reason: 'Company report. No object id; company mismatch tested in reports.integration.test.ts.',
   },
