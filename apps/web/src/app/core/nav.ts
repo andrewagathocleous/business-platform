@@ -11,6 +11,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { path: 'orders', permission: 'order.view', labelKey: 'nav.orders', admin: false },
   { path: 'clients', permission: 'client.view', labelKey: 'nav.clients', admin: false },
   { path: 'invoices', permission: 'invoice.view', labelKey: 'nav.invoices', admin: false },
+  { path: 'reports', permission: 'report.finance.view', labelKey: 'nav.reports', admin: false },
   { path: 'admin/members', permission: 'member.view', labelKey: 'nav.members', admin: true },
   {
     path: 'admin/automation',

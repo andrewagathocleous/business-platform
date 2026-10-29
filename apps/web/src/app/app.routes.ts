@@ -78,6 +78,12 @@ export const routes: Routes = [
         canActivate: [permissionGuard],
         data: { permission: 'invoice.view' },
       },
+      {
+        path: 'reports',
+        loadComponent: () => import('./reports/reports-page').then((module) => module.ReportsPage),
+        canActivate: [permissionGuard],
+        data: { permission: 'report.finance.view' },
+      },
       { path: 'admin', pathMatch: 'full', canActivate: [adminHomeGuard], component: EmptyPage },
       {
         path: 'admin/members',

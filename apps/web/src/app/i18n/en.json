@@ -22,7 +22,8 @@
     "invoicing": "Invoicing",
     "stores": "Stores",
     "integrations": "Integrations",
-    "giftCards": "Gift cards"
+    "giftCards": "Gift cards",
+    "reports": "Reports"
   },
   "user": {
     "menu": "Account menu",
@@ -1205,5 +1206,71 @@
       "fields": "Enter a positive amount (up to two decimal places) and a date no later than today."
     },
     "loading": "Loading client account"
+  },
+  "reports": {
+    "title": "Reports",
+    "view": "Report",
+    "views": {
+      "invoiced": "Invoiced",
+      "collected": "Collected",
+      "ageing": "Unpaid and ageing"
+    },
+    "from": "From",
+    "to": "To",
+    "asOf": "As of",
+    "show": "Show report",
+    "loading": "Loading report…",
+    "empty": "No figures for these dates.",
+    "figure": "Figure",
+    "count": "Documents",
+    "records": "Records",
+    "net": "Net",
+    "tax": "Tax",
+    "gross": "Gross",
+    "basis": "Basis",
+    "taxCode": "Tax code",
+    "taxCodes": "By tax code",
+    "invoiced": "Invoices",
+    "credited": "Credit notes",
+    "totals": "Grand totals",
+    "total": "Net collected",
+    "method": "Method",
+    "amount": "Amount",
+    "payments": "Payments",
+    "refunds": "Refunds",
+    "client": "Client",
+    "openTotal": "Money owing",
+    "creditTotal": "Client credit (separate)",
+    "invoice": "Invoice",
+    "dueDate": "Due date",
+    "bucket": "Ageing bucket",
+    "buckets": {
+      "current": "Current",
+      "days1To30": "1–30 days",
+      "days31To60": "31–60 days",
+      "days61To90": "61–90 days",
+      "over90": "Over 90 days"
+    },
+    "export": {
+      "title": "Accountant export",
+      "sensitive": "This export contains customer and financial data. Keep it secure.",
+      "pdfs": "Include the stored PDFs",
+      "download": "Download",
+      "loading": "Preparing download…"
+    },
+    "errors": {
+      "date": "Enter valid dates in YYYY-MM-DD format.",
+      "order": "From must be on or before To.",
+      "period": "Choose a period of at most 366 days, including both dates.",
+      "future": "As of must not be after today in the company timezone.",
+      "dates": "Check the dates: From must be on or before To, with at most 366 days including both dates.",
+      "asOf": "Enter a valid As of date, no later than today in the company timezone.",
+      "tooLarge": "The export is too large. Choose a shorter period or download without PDFs.",
+      "integrity": "A stored PDF failed its integrity check. Contact support with the correlation id.",
+      "mfa": "Two-step sign-in is required. Sign out from the account menu and sign in again with two-step verification.",
+      "permission": "You do not have permission for this action.",
+      "session": "Your session has ended. Sign in again.",
+      "failed": "The request could not be completed. Contact support with the correlation id if this continues."
+    }
   }
 }
