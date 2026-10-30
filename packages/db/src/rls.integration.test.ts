@@ -402,16 +402,32 @@ describe('row level security', () => {
       ).rejects.toThrow(/sealed stored file is immutable/);
     }
     // TRUNCATE skips row triggers, so it has its own guard, which CASCADE cannot get past.
+    // H-03 adds audit_event, print_job, and the other retained tables the application never deletes.
+    // Test cleanup still deletes print_job with DELETE; that does not fire this trigger.
     for (const statement of [
       'TRUNCATE stored_file CASCADE',
       'TRUNCATE invoice CASCADE',
       'TRUNCATE invoice_line',
       'TRUNCATE invoice_tax_summary',
       'TRUNCATE invoice_delivery',
+      'TRUNCATE audit_event',
+      'TRUNCATE idempotency_record',
+      'TRUNCATE client_import',
+      'TRUNCATE print_job',
     ]) {
       await expect(owner.$executeRawUnsafe(statement)).rejects.toThrow(/is never truncated/);
     }
-    await expect(app.$executeRawUnsafe('TRUNCATE stored_file CASCADE')).rejects.toThrow();
+    for (const statement of [
+      'TRUNCATE stored_file CASCADE',
+      'TRUNCATE audit_event',
+      'TRUNCATE idempotency_record',
+      'TRUNCATE client_import',
+      'TRUNCATE print_job',
+    ]) {
+      await expect(app.$executeRawUnsafe(statement)).rejects.toThrow(
+        /permission denied|is never truncated/,
+      );
+    }
     const still = await ownerTenant.run(ctx, (tx) =>
       tx.storedFile.findUnique({ where: { id: file.id }, select: { sealed: true } }),
     );
