@@ -91,7 +91,7 @@ export {
   vatExclusiveUnitPrice,
 } from './invoicing/issue-rules';
 export type { DeliveryDeadlineRule } from './invoicing/issue-rules';
-export { normalizeForDuplicateCheck } from './text/normalize';
+export { foldForComparison, normalizeForDuplicateCheck } from './text/normalize';
 export { addDaysToBusinessDate, businessDateInZone } from './time/business-date';
 export { isIanaTimeZone } from './time/iana-zone';
 export { instantToWallTimeInZone, wallTimeInZoneToInstant } from './time/wall-time';

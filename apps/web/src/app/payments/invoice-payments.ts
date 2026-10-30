@@ -25,6 +25,7 @@ import {
   paymentFailure,
   smallerMoney,
   type AllocationView,
+  type DuplicateMatch,
   type Failure,
   type PaymentState,
 } from './payment-view';
@@ -125,7 +126,38 @@ import { MoneyRecordForm, type RecordFields } from './record-form';
       @if (notice(); as key) {
         <p role="status">{{ key | transloco }}</p>
       }
-      @if (creates.failure() ?? failure(); as item) {
+      @if (duplicate(); as match) {
+        <div role="alert" data-testid="possible-duplicate">
+          <p>{{ 'payments.duplicate.explain' | transloco }}</p>
+          <p>
+            {{ dateLabel(match.date) }} · {{ match.amount }} ·
+            @if (match.reference) {
+              {{ match.reference }}
+            } @else {
+              {{ 'payments.duplicate.noReference' | transloco }}
+            }
+            · {{ 'payments.duplicate.recordedAt' | transloco }} {{ match.recordedAt }}
+          </p>
+          @if (creates.failure()?.correlationId; as correlationId) {
+            <p>{{ 'errors.correlation' | transloco }}: {{ correlationId }}</p>
+          }
+          <div class="form-actions">
+            <p-button
+              type="button"
+              [label]="'payments.duplicate.recordAnyway' | transloco"
+              [disabled]="locked() || creates.blocked()"
+              (onClick)="recordAnyway()"
+            />
+            <p-button
+              type="button"
+              severity="secondary"
+              [label]="'payments.duplicate.cancel' | transloco"
+              [disabled]="locked()"
+              (onClick)="cancelDuplicate()"
+            />
+          </div>
+        </div>
+      } @else if (creates.failure() ?? failure(); as item) {
         <p role="alert">{{ item.key | transloco }}</p>
         @if (item.correlationId) {
           <p>{{ 'errors.correlation' | transloco }}: {{ item.correlationId }}</p>
@@ -154,6 +186,10 @@ export class InvoicePayments {
   readonly notice = signal<string | null>(null);
   readonly formOpen = signal(true);
   readonly locked = computed(() => this.busy() || this.creates.busy() || this.frozen());
+  private duplicateAttempt: {
+    body: Record<string, unknown>;
+    followUp?: { invoiceId: string; amount: string };
+  } | null = null;
   readonly dateLabel = calendarDate;
   private generation = 0;
   constructor() {
@@ -167,6 +203,7 @@ export class InvoicePayments {
         this.notice.set(null);
         this.formOpen.set(true);
         this.reasons.set({});
+        this.duplicateAttempt = null;
         this.creates.reset(
           company,
           `invoice.${invoice}`,
@@ -216,20 +253,44 @@ export class InvoicePayments {
     this.failure.set(null);
     this.notice.set(null);
     const allocation = smallerMoney(fields.amount, this.openBalance());
-    this.creates.start(
-      'payments',
-      {
-        clientId: this.clientId(),
-        amount: fields.amount,
-        receivedOn: fields.date,
-        method: fields.method,
-        reference: fields.reference,
-        notes: fields.notes,
-      },
+    const followUp =
       fields.apply && allocation !== '0.00' && allocation !== '0'
         ? { invoiceId: this.invoiceId(), amount: allocation }
-        : undefined,
-    );
+        : undefined;
+    const body = {
+      clientId: this.clientId(),
+      amount: fields.amount,
+      receivedOn: fields.date,
+      method: fields.method,
+      reference: fields.reference,
+      notes: fields.notes,
+    };
+    this.duplicateAttempt = { body, followUp };
+    this.creates.start('payments', body, followUp);
+  }
+  duplicate(): DuplicateMatch | null {
+    if (this.creates.pending()) return null;
+    return this.creates.failure()?.duplicate ?? null;
+  }
+  recordAnyway(): void {
+    const saved = this.duplicateAttempt;
+    if (
+      !this.canRecord() ||
+      this.locked() ||
+      this.creates.blocked() ||
+      this.creates.pending() ||
+      !saved ||
+      !this.duplicate()
+    )
+      return;
+    this.notice.set(null);
+    this.failure.set(null);
+    this.creates.failure.set(null);
+    this.creates.start('payments', { ...saved.body, confirmDuplicate: true }, saved.followUp);
+  }
+  cancelDuplicate(): void {
+    if (!this.canRecord() || this.locked() || !this.duplicate()) return;
+    this.creates.failure.set(null);
   }
   retry(): void {
     if (!this.canRecord() || this.locked()) return;

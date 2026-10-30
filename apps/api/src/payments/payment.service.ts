@@ -3,6 +3,7 @@ import { Prisma, TenantDb, type TenantTransaction } from '@bp/db';
 import {
   allocationEffectiveOn,
   businessDateInZone,
+  foldForComparison,
   parseAmount,
   refundAllowed,
   sourceRemaining,
@@ -28,6 +29,7 @@ type PaymentInput = {
   method: Method;
   reference?: string;
   notes?: string;
+  confirmDuplicate?: true;
 };
 type AllocationInput = SourceInput & { invoiceId: string; amount: unknown };
 type RefundInput = SourceInput & {
@@ -36,6 +38,14 @@ type RefundInput = SourceInput & {
   method: Method;
   reference?: string;
   notes?: string;
+  confirmDuplicate?: true;
+};
+type DuplicateMatch = {
+  id: string;
+  date: string;
+  amount: string;
+  reference: string | null;
+  recordedAt: string;
 };
 type VoidInput = { expectedVersion: number; reason: string };
 type PaymentRow = Awaited<ReturnType<TenantTransaction['payment']['findFirstOrThrow']>>;
@@ -106,6 +116,10 @@ export class PaymentService {
     return this.run(ctx, meta, 'payment.recorded', async (tx, actor) => {
       const key = idempotencyKey(header);
       return idempotent(tx, ctx.companyId, actor, 'payment.record', key, input, async () => {
+        const clientId = canonicalUuid(input.clientId);
+        // After the idempotency advisory lock and before any row lock.
+        // The plan's row lock order stays company, then payment, then invoice.
+        if (clientId) await lockDuplicateScope(tx, ctx.companyId, clientId);
         const company = await this.company(tx, ctx);
         if (company.defaultCurrency !== 'EUR') {
           throw new CommerceError(
@@ -116,13 +130,22 @@ export class PaymentService {
             'Only EUR payments are supported',
           );
         }
-        const clientId = await this.client(tx, ctx, input.clientId);
+        const resolvedClientId = await this.client(tx, ctx, input.clientId);
         const amount = positiveAmount(input.amount);
         const receivedOn = validDate(input.receivedOn, company.today, 'receivedOn');
+        const match = await this.paymentDuplicate(
+          tx,
+          ctx,
+          resolvedClientId,
+          amount,
+          receivedOn,
+          input.reference,
+        );
+        if (match && input.confirmDuplicate !== true) throw possibleDuplicate('payment', match);
         const payment = await tx.payment.create({
           data: {
             companyId: ctx.companyId,
-            clientId,
+            clientId: resolvedClientId,
             receivedOn,
             amount,
             currency: company.defaultCurrency,
@@ -133,7 +156,15 @@ export class PaymentService {
           },
           include: paymentInclude,
         });
-        await this.success(tx, ctx, meta, 'payment.recorded', 'payment', payment.id);
+        await this.success(
+          tx,
+          ctx,
+          meta,
+          'payment.recorded',
+          'payment',
+          payment.id,
+          match ? { duplicateConfirmed: true, matchedId: match.id } : undefined,
+        );
         return { payment: paymentView(payment) };
       });
     });
@@ -390,10 +421,23 @@ export class PaymentService {
     return this.run(ctx, meta, 'refund.recorded', async (tx, actor) => {
       const key = idempotencyKey(header);
       return idempotent(tx, ctx.companyId, actor, 'refund.record', key, input, async () => {
+        const sourceId = refundScopeId(input);
+        // After the idempotency advisory lock and before any row lock.
+        // The plan's row lock order stays company, then payment, then invoice.
+        if (sourceId) await lockDuplicateScope(tx, ctx.companyId, sourceId);
         const company = await this.company(tx, ctx);
         const amount = positiveAmount(input.amount);
         const { source } = await this.lockSource(tx, ctx, input);
         const refundedOn = validDate(input.refundedOn, company.today, 'refundedOn', source.date);
+        const match = await this.refundDuplicate(
+          tx,
+          ctx,
+          source,
+          amount,
+          refundedOn,
+          input.reference,
+        );
+        if (match && input.confirmDuplicate !== true) throw possibleDuplicate('refund', match);
         if (
           !refundAllowed({
             amount,
@@ -418,7 +462,15 @@ export class PaymentService {
             createdById: actor,
           },
         });
-        await this.success(tx, ctx, meta, 'refund.recorded', 'refund', refund.id);
+        await this.success(
+          tx,
+          ctx,
+          meta,
+          'refund.recorded',
+          'refund',
+          refund.id,
+          match ? { duplicateConfirmed: true, matchedId: match.id } : undefined,
+        );
         return { refund: refundView(refund) };
       });
     });
@@ -610,6 +662,52 @@ export class PaymentService {
     };
   }
 
+  private async paymentDuplicate(
+    tx: TenantTransaction,
+    ctx: RequestContext,
+    clientId: string,
+    amount: string,
+    receivedOn: Date,
+    reference: string | undefined,
+  ): Promise<DuplicateMatch | null> {
+    const rows = await tx.payment.findMany({
+      where: { companyId: ctx.companyId, clientId, status: 'recorded', amount, receivedOn },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { id: true, amount: true, reference: true, receivedOn: true, createdAt: true },
+    });
+    return duplicateMatch(
+      rows.find((row) => referenceKey(row.reference) === referenceKey(reference)),
+      (row) => day(row.receivedOn),
+    );
+  }
+
+  private async refundDuplicate(
+    tx: TenantTransaction,
+    ctx: RequestContext,
+    source: Source,
+    amount: string,
+    refundedOn: Date,
+    reference: string | undefined,
+  ): Promise<DuplicateMatch | null> {
+    const rows = await tx.refund.findMany({
+      where: {
+        companyId: ctx.companyId,
+        status: 'recorded',
+        amount,
+        refundedOn,
+        ...(source.paymentId
+          ? { paymentId: source.paymentId }
+          : { creditNoteId: source.creditNoteId }),
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { id: true, amount: true, reference: true, refundedOn: true, createdAt: true },
+    });
+    return duplicateMatch(
+      rows.find((row) => referenceKey(row.reference) === referenceKey(reference)),
+      (row) => day(row.refundedOn),
+    );
+  }
+
   private success(
     tx: TenantTransaction,
     ctx: RequestContext,
@@ -634,6 +732,51 @@ export class PaymentService {
   }
 }
 
+/** Serialises identical entries. Held until the transaction ends, so the waiter sees the winner. */
+function lockDuplicateScope(tx: TenantTransaction, companyId: string, scopeId: string) {
+  const lock = JSON.stringify(['possible-duplicate', companyId, scopeId]);
+  return tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lock}, 0))::text`;
+}
+function canonicalUuid(value: string | undefined): string | null {
+  return value !== undefined && isUuid(value) ? value.toLowerCase() : null;
+}
+function refundScopeId(input: SourceInput): string | null {
+  if ((input.paymentId !== undefined) === (input.creditNoteId !== undefined)) return null;
+  return canonicalUuid(input.paymentId ?? input.creditNoteId);
+}
+function referenceKey(value: string | null | undefined): string {
+  return foldForComparison((value ?? '').trim());
+}
+function possibleDuplicate(type: 'payment' | 'refund', match: DuplicateMatch): CommerceError {
+  return new CommerceError(
+    409,
+    'possible_duplicate',
+    type,
+    match.id,
+    'possible_duplicate',
+    undefined,
+    {
+      duplicate: match,
+    },
+  );
+}
+function duplicateMatch<
+  T extends {
+    id: string;
+    amount: { toFixed(digits: number): string };
+    reference: string | null;
+    createdAt: Date;
+  },
+>(row: T | undefined, date: (row: T) => string): DuplicateMatch | null {
+  if (!row) return null;
+  return {
+    id: row.id,
+    date: date(row),
+    amount: fixed(row.amount, 2),
+    reference: row.reference,
+    recordedAt: row.createdAt.toISOString(),
+  };
+}
 function objectId(value: string, objectType: string): string {
   if (!isUuid(value)) throw missing(objectType, null);
   return value.toLowerCase();

@@ -46,6 +46,7 @@ const CODED_CONFLICTS = new Set([
   'payment_refunded',
   'not_recorded',
   'idempotency_key_reused',
+  'possible_duplicate',
 ]);
 
 /** 409 reasons that are refusals by a switch, so they are audited as denials. */
@@ -135,6 +136,14 @@ export async function settleCommerceError(
       throw new ConflictException({
         code: 'print_provider_not_configured',
         message: error.message,
+      });
+    }
+    if (error.reason === 'possible_duplicate') {
+      const duplicate = error.details?.duplicate;
+      throw new ConflictException({
+        code: 'possible_duplicate',
+        message: error.message,
+        ...(duplicate !== undefined ? { details: duplicate } : {}),
       });
     }
     if (CODED_CONFLICTS.has(error.reason)) {

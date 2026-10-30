@@ -49,7 +49,14 @@ export type PaymentDetail = {
   remaining: string;
   refunds: RefundView[];
 };
-export type Failure = { key: string; correlationId: string | null };
+export type DuplicateMatch = {
+  id: string;
+  date: string;
+  amount: string;
+  reference: string | null;
+  recordedAt: string;
+};
+export type Failure = { key: string; correlationId: string | null; duplicate?: DuplicateMatch };
 
 const ERRORS: Readonly<Record<string, string>> = {
   payment_refunded: 'payments.errors.refunded',
@@ -61,15 +68,42 @@ const ERRORS: Readonly<Record<string, string>> = {
   currency_not_supported: 'invoices.issue.errors.currency',
   already_reversed: 'payments.errors.reversed',
   not_recorded: 'payments.errors.notRecorded',
+  possible_duplicate: 'payments.duplicate.explain',
 };
 export function paymentFailure(error: unknown): Failure {
   const body = error instanceof HttpErrorResponse ? readApiError(error) : null;
+  const duplicate = readDuplicate(error);
   return {
     key: isVersionConflict(error)
       ? 'payments.errors.version'
       : (ERRORS[body?.code ?? ''] ?? 'payments.errors.failed'),
     correlationId: body?.correlationId ?? null,
+    ...(duplicate ? { duplicate } : {}),
   };
+}
+
+function readDuplicate(error: unknown): DuplicateMatch | undefined {
+  if (!(error instanceof HttpErrorResponse) || error.status !== 409) return undefined;
+  const root: unknown = error.error;
+  if (!isRecord(root)) return undefined;
+  const body = root['error'];
+  if (!isRecord(body) || body['code'] !== 'possible_duplicate') return undefined;
+  const details = body['details'];
+  if (!isRecord(details)) return undefined;
+  const id = details['id'];
+  const date = details['date'];
+  const amount = details['amount'];
+  const reference = details['reference'];
+  const recordedAt = details['recordedAt'];
+  if (typeof id !== 'string' || id.length === 0) return undefined;
+  if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return undefined;
+  if (typeof amount !== 'string' || amount.length === 0) return undefined;
+  if (reference !== null && typeof reference !== 'string') return undefined;
+  if (typeof recordedAt !== 'string' || recordedAt.length === 0) return undefined;
+  return { id, date, amount, reference, recordedAt };
+}
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** Minor-unit comparisons only: amounts remain decimal strings on the wire. */

@@ -26,6 +26,7 @@ import {
   smallerMoney,
   type AccountView,
   type ClientCredit,
+  type DuplicateMatch,
   type Failure,
   type PaymentDetail,
   type RefundView,
@@ -275,7 +276,38 @@ import { MoneyRecordForm, type RecordFields } from './record-form';
           }
         }
       }
-      @if (creates.failure() ?? failure(); as item) {
+      @if (duplicate(); as match) {
+        <div role="alert" data-testid="possible-duplicate">
+          <p>{{ 'payments.duplicate.explain' | transloco }}</p>
+          <p>
+            {{ dateLabel(match.date) }} · {{ match.amount }} ·
+            @if (match.reference) {
+              {{ match.reference }}
+            } @else {
+              {{ 'payments.duplicate.noReference' | transloco }}
+            }
+            · {{ 'payments.duplicate.recordedAt' | transloco }} {{ match.recordedAt }}
+          </p>
+          @if (creates.failure()?.correlationId; as correlationId) {
+            <p>{{ 'errors.correlation' | transloco }}: {{ correlationId }}</p>
+          }
+          <div class="form-actions">
+            <p-button
+              type="button"
+              [label]="'payments.duplicate.recordAnyway' | transloco"
+              [disabled]="locked() || creates.blocked()"
+              (onClick)="recordAnyway()"
+            />
+            <p-button
+              type="button"
+              severity="secondary"
+              [label]="'payments.duplicate.cancel' | transloco"
+              [disabled]="locked()"
+              (onClick)="cancelDuplicate()"
+            />
+          </div>
+        </div>
+      } @else if (creates.failure() ?? failure(); as item) {
         <p role="alert">{{ item.key | transloco }}</p>
         @if (item.correlationId) {
           <p>{{ 'errors.correlation' | transloco }}: {{ item.correlationId }}</p>
@@ -304,6 +336,7 @@ export class ClientAccount {
   readonly busy = signal(false);
   readonly failure = signal<Failure | null>(null);
   readonly locked = computed(() => this.busy() || this.creates.busy() || this.loading());
+  private duplicateAttempt: Record<string, unknown> | null = null;
   readonly field = fieldValue;
   readonly dateLabel = calendarDate;
   private generation = 0;
@@ -324,6 +357,7 @@ export class ClientAccount {
         this.account.set(null);
         this.payments.set([]);
         this.failure.set(null);
+        this.duplicateAttempt = null;
         this.creates.reset(
           company,
           `client.${client}`,
@@ -425,14 +459,39 @@ export class ClientAccount {
     if (!this.canRecord() || this.locked() || !credit) return;
     this.failure.set(null);
     this.creates.failure.set(null);
-    this.creates.start('refunds', {
+    const body = {
       ...source(credit),
       amount: fields.amount,
       refundedOn: fields.date,
       method: fields.method,
       reference: fields.reference,
       notes: fields.notes,
-    });
+    };
+    this.duplicateAttempt = body;
+    this.creates.start('refunds', body);
+  }
+  duplicate(): DuplicateMatch | null {
+    if (this.creates.pending()) return null;
+    return this.creates.failure()?.duplicate ?? null;
+  }
+  recordAnyway(): void {
+    const saved = this.duplicateAttempt;
+    if (
+      !this.canRecord() ||
+      this.locked() ||
+      this.creates.blocked() ||
+      this.creates.pending() ||
+      !saved ||
+      !this.duplicate()
+    )
+      return;
+    this.failure.set(null);
+    this.creates.failure.set(null);
+    this.creates.start('refunds', { ...saved, confirmDuplicate: true });
+  }
+  cancelDuplicate(): void {
+    if (!this.canRecord() || this.locked() || !this.duplicate()) return;
+    this.creates.failure.set(null);
   }
   retry(): void {
     if (!this.canRecord() || this.locked()) return;

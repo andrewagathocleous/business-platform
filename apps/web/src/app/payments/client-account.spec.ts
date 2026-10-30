@@ -481,6 +481,68 @@ describe('ClientAccount', () => {
     expect(sessionStorage.length).toBe(1);
     http.verify();
   });
+
+  it('shows a possible duplicate refund and records it only after Record anyway', async () => {
+    const { fixture, component, http } = await setup();
+    const credit = ACCOUNT.credits[0];
+    if (!credit) throw new Error('credit missing');
+    const fields = {
+      amount: '10.00',
+      date: '2026-10-28',
+      method: 'cash',
+      reference: 'Demo refund',
+      notes: 'Paid back\n  as typed ',
+    };
+    component.selectCredit(credit, 'refund');
+    component.refund(fields);
+    const first = http.expectOne('/api/c/company-1/refunds');
+    const firstKey = first.request.headers.get('Idempotency-Key');
+    expect(first.request.body).not.toHaveProperty('confirmDuplicate');
+    first.flush(duplicateBody(fields.amount, fields.reference), {
+      status: 409,
+      statusText: 'Conflict',
+    });
+    fixture.detectChanges();
+    const prompt = root(fixture).querySelector('[data-testid="possible-duplicate"]');
+    expect(prompt?.textContent).toContain('same money');
+    expect(prompt?.textContent).toContain('28/10/2026');
+    expect(prompt?.textContent).toContain(fields.amount);
+    expect(prompt?.textContent).toContain(fields.reference);
+    expect(prompt?.textContent).toContain('2026-10-28T10:15:00.000Z');
+    expect(component.creates.pending()).toBeNull();
+    expect(sessionStorage.length).toBe(0);
+    http.expectNone('/api/c/company-1/refunds');
+    clickButton(fixture, 'Cancel');
+    fixture.detectChanges();
+    expect(root(fixture).querySelector('[data-testid="possible-duplicate"]')).toBeNull();
+    http.expectNone('/api/c/company-1/refunds');
+    component.refund(fields);
+    const again = http.expectOne('/api/c/company-1/refunds');
+    expect(again.request.body).not.toHaveProperty('confirmDuplicate');
+    again.flush(duplicateBody(fields.amount, fields.reference), {
+      status: 409,
+      statusText: 'Conflict',
+    });
+    fixture.detectChanges();
+    http.expectNone('/api/c/company-1/refunds');
+    clickButton(fixture, 'Record anyway');
+    const confirmed = http.expectOne('/api/c/company-1/refunds');
+    expect(confirmed.request.headers.get('Idempotency-Key')).toBeTruthy();
+    expect(confirmed.request.headers.get('Idempotency-Key')).not.toBe(firstKey);
+    expect(confirmed.request.body).toEqual({
+      paymentId: 'payment-1',
+      amount: fields.amount,
+      refundedOn: fields.date,
+      method: fields.method,
+      reference: fields.reference,
+      notes: fields.notes,
+      confirmDuplicate: true,
+    });
+    confirmed.flush({ refund: { id: 'refund-2' } });
+    http.expectOne('/api/c/company-1/payments/payment-1').flush({ payment: PAYMENT });
+    flushAccount(http);
+    http.verify();
+  });
 });
 
 async function setup(record = true) {
@@ -540,6 +602,29 @@ function root(fixture: ComponentFixture<unknown>): HTMLElement {
 }
 function text(fixture: ComponentFixture<unknown>): string {
   return root(fixture).textContent.replace(/\s+/g, ' ');
+}
+function clickButton(fixture: ComponentFixture<unknown>, label: string): void {
+  const button = [...root(fixture).querySelectorAll('button')].find(
+    (item) => item.textContent.trim() === label,
+  );
+  if (!button) throw new Error(`${label} button missing`);
+  button.click();
+}
+function duplicateBody(amount: string, reference: string) {
+  return {
+    error: {
+      code: 'possible_duplicate',
+      message: 'possible_duplicate',
+      correlationId: 'corr-dup',
+      details: {
+        id: '018f6c2e-7b1a-7c3d-8e4f-9a0b1c2d3e54',
+        date: '2026-10-28',
+        amount,
+        reference,
+        recordedAt: '2026-10-28T10:15:00.000Z',
+      },
+    },
+  };
 }
 function event(value: string): Event {
   const input = document.createElement('select');

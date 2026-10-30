@@ -1,5 +1,14 @@
 import { HttpException } from '@nestjs/common';
 
+/** A matching payment or refund. Notes, actors and anything else stay off this object. */
+export type DuplicateDetails = {
+  id: string;
+  date: string;
+  amount: string;
+  reference: string | null;
+  recordedAt: string;
+};
+
 export type ErrorBody = {
   error: {
     code: string;
@@ -8,6 +17,7 @@ export type ErrorBody = {
     printJobId?: string;
     /** Field codes a 422 names, for example `seller.vatNumber`. */
     fields?: string[];
+    details?: DuplicateDetails;
   };
 };
 
@@ -26,6 +36,7 @@ export function errorBody(exception: unknown, correlationId: string): { status: 
   const status = statusOf(exception);
   const printJobId = explicitPrintJobId(exception);
   const fields = explicitFields(exception, status);
+  const details = explicitDuplicateDetails(exception);
   return {
     status,
     body: {
@@ -35,6 +46,7 @@ export function errorBody(exception: unknown, correlationId: string): { status: 
         correlationId,
         ...(printJobId ? { printJobId } : {}),
         ...(fields ? { fields } : {}),
+        ...(details ? { details } : {}),
       },
     },
   };
@@ -73,6 +85,41 @@ function explicitCode(exception: unknown): string | undefined {
 }
 
 const PRINT_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DUPLICATE_ID = PRINT_JOB_ID;
+const DUPLICATE_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const DUPLICATE_AMOUNT = /^\d{1,17}\.\d{2}$/;
+const DUPLICATE_RECORDED_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
+
+function explicitDuplicateDetails(exception: unknown): DuplicateDetails | undefined {
+  if (!(exception instanceof HttpException)) {
+    return undefined;
+  }
+  const response = exception.getResponse();
+  if (
+    !isRecord(response) ||
+    response.code !== 'possible_duplicate' ||
+    !isRecord(response.details)
+  ) {
+    return undefined;
+  }
+  const { id, date, amount, reference, recordedAt } = response.details;
+  if (typeof id !== 'string' || !DUPLICATE_ID.test(id)) {
+    return undefined;
+  }
+  if (typeof date !== 'string' || !DUPLICATE_DATE.test(date)) {
+    return undefined;
+  }
+  if (typeof amount !== 'string' || !DUPLICATE_AMOUNT.test(amount)) {
+    return undefined;
+  }
+  if (reference !== null && (typeof reference !== 'string' || reference.length > 200)) {
+    return undefined;
+  }
+  if (typeof recordedAt !== 'string' || !DUPLICATE_RECORDED_AT.test(recordedAt)) {
+    return undefined;
+  }
+  return { id, date, amount, reference, recordedAt };
+}
 
 function explicitPrintJobId(exception: unknown): string | undefined {
   if (!(exception instanceof HttpException)) {

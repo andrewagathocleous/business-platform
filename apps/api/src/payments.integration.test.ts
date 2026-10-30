@@ -697,9 +697,10 @@ describe('payments, allocations and refunds (real Postgres)', () => {
 
   it('lets exactly one concurrent refund of 80.00 use a payment of 100.00', async () => {
     const payment = await recordPayment();
+    // Different references, so this stays the balance race and not a possible duplicate.
     const responses = await Promise.all([
-      post('refunds', refundBody(stringField(payment, 'id'), '80.00')),
-      post('refunds', refundBody(stringField(payment, 'id'), '80.00')),
+      post('refunds', { ...refundBody(stringField(payment, 'id'), '80.00'), reference: 'left' }),
+      post('refunds', { ...refundBody(stringField(payment, 'id'), '80.00'), reference: 'right' }),
     ]);
     expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
     expect(errorCode(responses.find((response) => response.status === 409)?.body)).toBe(
@@ -1310,6 +1311,307 @@ describe('payments, allocations and refunds (real Postgres)', () => {
     expect(await financialSnapshot()).toEqual(before);
   });
 
+  it('refuses a possible duplicate payment until it is confirmed, and replays the first key', async () => {
+    const body = {
+      ...paymentBody(),
+      amount: '21.11',
+      reference: '  Dup Receipt  ',
+      notes: 'PRIVATE-NOTE-SENTINEL',
+    };
+    const first = await post('payments', body, 'dup-pay', 'dup-pay-first');
+    const payment = createdEntity(first, 'payment');
+    const second = await post(
+      'payments',
+      { ...body, reference: 'dup receipt', notes: undefined },
+      'dup-pay-other',
+      'dup-pay-second',
+    );
+    expect(second.status, text(second)).toBe(409);
+    expect(errorCode(second.body)).toBe('possible_duplicate');
+    expect(errorDetails(second.body)).toEqual({
+      id: payment.id,
+      date: today(),
+      amount: '21.11',
+      reference: '  Dup Receipt  ',
+      recordedAt: payment.createdAt,
+    });
+    expect(JSON.stringify(second.body)).not.toContain('PRIVATE-NOTE-SENTINEL');
+    expect(
+      await inCompany(company, (tx) =>
+        tx.idempotencyRecord.count({
+          where: { operation: 'payment.record', key: `${runId}-dup-pay-other` },
+        }),
+      ),
+    ).toBe(0);
+    await expectAudit('dup-pay-second', 'payment.recorded', 'failure', stringField(payment, 'id'));
+    expect(JSON.stringify((await auditEvents('dup-pay-second'))[0]?.details)).not.toContain(
+      'PRIVATE-NOTE-SENTINEL',
+    );
+    const replay = await post('payments', body, 'dup-pay', 'dup-pay-replay');
+    expect(replay.status, text(replay)).toBe(200);
+    expect(replay.body).toEqual(first.body);
+    expect(await auditEvents('dup-pay-replay')).toEqual([]);
+    const confirmed = createdEntity(
+      await post(
+        'payments',
+        { ...body, reference: 'DUP RECEIPT', confirmDuplicate: true },
+        'dup-pay-confirm',
+        'dup-pay-confirm',
+      ),
+      'payment',
+    );
+    expect(confirmed.id).not.toBe(payment.id);
+    expect(record((await auditEvents('dup-pay-confirm'))[0]?.details)).toEqual({
+      duplicateConfirmed: true,
+      matchedId: payment.id,
+    });
+    const third = await post('payments', {
+      ...body,
+      reference: '  dup receipt',
+      notes: undefined,
+    });
+    expect(third.status, text(third)).toBe(409);
+    expect(stringField(errorDetails(third.body), 'id')).toBe(stringField(payment, 'id'));
+  });
+
+  it('ignores a voided payment and does not treat a different reference, amount, date or client as a duplicate', async () => {
+    const body = { ...paymentBody(), amount: '21.12', reference: 'Same receipt' };
+    const payment = createdEntity(await post('payments', body), 'payment');
+    createdEntity(
+      await post(`payments/${stringField(payment, 'id')}/void`, {
+        expectedVersion: 0,
+        reason: 'Fictional void',
+      }),
+      'payment',
+    );
+    const afterVoid = createdEntity(await post('payments', body), 'payment');
+    expect(afterVoid.id).not.toBe(payment.id);
+    const open = { ...paymentBody(), amount: '21.13', reference: 'Open receipt' };
+    const kept = createdEntity(await post('payments', open), 'payment');
+    const yesterday = addDaysToBusinessDate(today(), -1);
+    for (const variant of [
+      { ...open, reference: 'Other receipt' },
+      { ...open, amount: '21.14' },
+      { ...open, receivedOn: yesterday },
+      { ...open, clientId: otherClient },
+    ]) {
+      expect((await post('payments', variant)).status, JSON.stringify(variant)).toBe(200);
+    }
+    const folded = await post('payments', { ...open, reference: '  open receipt  ' });
+    expect(folded.status, text(folded)).toBe(409);
+    expect(errorCode(folded.body)).toBe('possible_duplicate');
+    expect(stringField(errorDetails(folded.body), 'id')).toBe(stringField(kept, 'id'));
+    const bare = { ...paymentBody(), amount: '21.15' };
+    createdEntity(await post('payments', bare), 'payment');
+    for (const reference of ['   ', '']) {
+      const empty = await post('payments', { ...bare, reference });
+      expect(empty.status, text(empty)).toBe(409);
+      expect(errorCode(empty.body)).toBe('possible_duplicate');
+      expect(errorDetails(empty.body).reference).toBeNull();
+    }
+  });
+
+  it('lets exactly one of two concurrent identical payments through', async () => {
+    const body = { ...paymentBody(), amount: '21.16', reference: 'Race receipt' };
+    const responses = await Promise.all([
+      post('payments', body),
+      post('payments', { ...body, reference: '  RACE RECEIPT  ' }),
+    ]);
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    const refused = responses.find((response) => response.status === 409);
+    const winner = responses.find((response) => response.status === 200);
+    if (!refused || !winner) throw new Error('expected one success and one refusal');
+    expect(errorCode(refused.body)).toBe('possible_duplicate');
+    expect(stringField(errorDetails(refused.body), 'id')).toBe(
+      stringField(createdEntity(winner, 'payment'), 'id'),
+    );
+    expect(
+      await inCompany(company, (tx) =>
+        tx.payment.count({
+          where: { companyId: company, clientId, amount: '21.16', status: 'recorded' },
+        }),
+      ),
+    ).toBe(1);
+  });
+
+  it('refuses a possible duplicate refund until it is confirmed, and replays the first key', async () => {
+    const payment = await recordPayment();
+    const body = {
+      ...refundBody(stringField(payment, 'id'), '11.00'),
+      reference: '  Refund A  ',
+      notes: 'PRIVATE-NOTE-SENTINEL',
+    };
+    const first = await post('refunds', body, 'dup-refund', 'dup-refund-first');
+    const refund = createdEntity(first, 'refund');
+    const second = await post(
+      'refunds',
+      { ...body, reference: 'refund a', notes: undefined },
+      'dup-refund-other',
+      'dup-refund-second',
+    );
+    expect(second.status, text(second)).toBe(409);
+    expect(errorCode(second.body)).toBe('possible_duplicate');
+    expect(errorDetails(second.body)).toEqual({
+      id: refund.id,
+      date: today(),
+      amount: '11.00',
+      reference: '  Refund A  ',
+      recordedAt: refund.createdAt,
+    });
+    expect(JSON.stringify(second.body)).not.toContain('PRIVATE-NOTE-SENTINEL');
+    expect(
+      await inCompany(company, (tx) =>
+        tx.idempotencyRecord.count({
+          where: { operation: 'refund.record', key: `${runId}-dup-refund-other` },
+        }),
+      ),
+    ).toBe(0);
+    await expectAudit('dup-refund-second', 'refund.recorded', 'failure', stringField(refund, 'id'));
+    const replay = await post('refunds', body, 'dup-refund', 'dup-refund-replay');
+    expect(replay.status, text(replay)).toBe(200);
+    expect(replay.body).toEqual(first.body);
+    expect(await auditEvents('dup-refund-replay')).toEqual([]);
+    const confirmed = createdEntity(
+      await post(
+        'refunds',
+        { ...body, reference: 'REFUND A', confirmDuplicate: true },
+        'dup-refund-confirm',
+        'dup-refund-confirm',
+      ),
+      'refund',
+    );
+    expect(confirmed.id).not.toBe(refund.id);
+    expect(record((await auditEvents('dup-refund-confirm'))[0]?.details)).toEqual({
+      duplicateConfirmed: true,
+      matchedId: refund.id,
+    });
+  });
+
+  it('ignores a voided refund and does not treat a different reference, amount, date or source as a duplicate', async () => {
+    const payment = await recordPayment();
+    const body = { ...refundBody(stringField(payment, 'id'), '12.00'), reference: 'Void refund' };
+    const refund = createdEntity(await post('refunds', body), 'refund');
+    createdEntity(
+      await post(`refunds/${stringField(refund, 'id')}/void`, {
+        expectedVersion: 0,
+        reason: 'Fictional void',
+      }),
+      'refund',
+    );
+    const afterVoid = createdEntity(await post('refunds', body), 'refund');
+    expect(afterVoid.id).not.toBe(refund.id);
+    const yesterday = addDaysToBusinessDate(today(), -1);
+    const earlier = await recordPayment({ receivedOn: yesterday });
+    const open = {
+      ...refundBody(stringField(earlier, 'id'), '13.00'),
+      reference: 'Open refund',
+      refundedOn: yesterday,
+    };
+    const kept = createdEntity(await post('refunds', open), 'refund');
+    const otherPayment = await recordPayment({ receivedOn: yesterday });
+    for (const variant of [
+      { ...open, reference: 'Other refund' },
+      { ...open, amount: '13.50' },
+      { ...open, refundedOn: today() },
+      { ...open, paymentId: otherPayment.id },
+    ]) {
+      expect((await post('refunds', variant)).status, JSON.stringify(variant)).toBe(200);
+    }
+    const folded = await post('refunds', { ...open, reference: '  open refund  ' });
+    expect(folded.status, text(folded)).toBe(409);
+    expect(errorCode(folded.body)).toBe('possible_duplicate');
+    expect(stringField(errorDetails(folded.body), 'id')).toBe(stringField(kept, 'id'));
+    const bare = refundBody(stringField(payment, 'id'), '14.00');
+    createdEntity(await post('refunds', bare), 'refund');
+    for (const reference of ['   ', '']) {
+      const empty = await post('refunds', { ...bare, reference });
+      expect(empty.status, text(empty)).toBe(409);
+      expect(errorCode(empty.body)).toBe('possible_duplicate');
+      expect(errorDetails(empty.body).reference).toBeNull();
+    }
+    const invoice = await issuedInvoice();
+    const settling = await recordPayment();
+    createdEntity(
+      await post('allocations', {
+        paymentId: settling.id,
+        invoiceId: invoice.id,
+        amount: '100.00',
+      }),
+      'allocation',
+    );
+    const credit = await issuedCredit(stringField(invoice, 'id'), '0.4');
+    const otherCredit = await issuedCredit(stringField(invoice, 'id'), '0.4');
+    const creditBody = {
+      creditNoteId: credit.id,
+      amount: '8.00',
+      refundedOn: today(),
+      method: 'cash',
+      reference: 'Credit refund',
+    };
+    const creditRefund = createdEntity(await post('refunds', creditBody), 'refund');
+    const creditDuplicate = await post('refunds', { ...creditBody, reference: '  credit refund ' });
+    expect(creditDuplicate.status, text(creditDuplicate)).toBe(409);
+    expect(errorCode(creditDuplicate.body)).toBe('possible_duplicate');
+    expect(stringField(errorDetails(creditDuplicate.body), 'id')).toBe(
+      stringField(creditRefund, 'id'),
+    );
+    expect((await post('refunds', { ...creditBody, creditNoteId: otherCredit.id })).status).toBe(
+      200,
+    );
+  });
+
+  it('lets exactly one of two concurrent identical refunds through', async () => {
+    const payment = await recordPayment();
+    const body = { ...refundBody(stringField(payment, 'id'), '15.00'), reference: 'Race refund' };
+    const responses = await Promise.all([
+      post('refunds', body),
+      post('refunds', { ...body, reference: '  RACE REFUND  ' }),
+    ]);
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    const refused = responses.find((response) => response.status === 409);
+    const winner = responses.find((response) => response.status === 200);
+    if (!refused || !winner) throw new Error('expected one success and one refusal');
+    expect(errorCode(refused.body)).toBe('possible_duplicate');
+    expect(stringField(errorDetails(refused.body), 'id')).toBe(
+      stringField(createdEntity(winner, 'refund'), 'id'),
+    );
+    expect(
+      await inCompany(company, (tx) =>
+        tx.refund.count({
+          where: { companyId: company, paymentId: stringField(payment, 'id'), status: 'recorded' },
+        }),
+      ),
+    ).toBe(1);
+  });
+
+  it('treats a Greek capital sigma and a typed sigma as the same payment reference', async () => {
+    const body = { ...paymentBody(), amount: '21.17', reference: 'ΟΣ-1' };
+    const payment = createdEntity(await post('payments', body), 'payment');
+    const duplicate = await post('payments', { ...body, reference: 'οσ-1' });
+    expect(duplicate.status, text(duplicate)).toBe(409);
+    expect(errorCode(duplicate.body)).toBe('possible_duplicate');
+    expect(stringField(errorDetails(duplicate.body), 'id')).toBe(stringField(payment, 'id'));
+  });
+
+  it('treats Straße and STRASSE as the same payment reference', async () => {
+    const body = { ...paymentBody(), amount: '21.18', reference: 'Straße-1' };
+    const payment = createdEntity(await post('payments', body), 'payment');
+    const duplicate = await post('payments', { ...body, reference: 'STRASSE-1' });
+    expect(duplicate.status, text(duplicate)).toBe(409);
+    expect(errorCode(duplicate.body)).toBe('possible_duplicate');
+    expect(stringField(errorDetails(duplicate.body), 'id')).toBe(stringField(payment, 'id'));
+  });
+
+  it('treats a Greek capital sigma and a typed sigma as the same refund reference', async () => {
+    const payment = await recordPayment();
+    const body = { ...refundBody(stringField(payment, 'id'), '16.00'), reference: 'ΟΣ-1' };
+    const refund = createdEntity(await post('refunds', body), 'refund');
+    const duplicate = await post('refunds', { ...body, reference: 'οσ-1' });
+    expect(duplicate.status, text(duplicate)).toBe(409);
+    expect(errorCode(duplicate.body)).toBe('possible_duplicate');
+    expect(stringField(errorDetails(duplicate.body), 'id')).toBe(stringField(refund, 'id'));
+  });
+
   function url(path: string, companyId = company) {
     return `/api/c/${companyId}/${path}`;
   }
@@ -1339,7 +1641,15 @@ describe('payments, allocations and refunds (real Postgres)', () => {
     return send(admin, 'get', url(path), cid(randomUUID()));
   }
   async function recordPayment(extra: Record<string, unknown> = {}) {
-    return createdEntity(await post('payments', { ...paymentBody(), ...extra }), 'payment');
+    // A unique reference, so the default payments in this file are not possible duplicates.
+    return createdEntity(
+      await post('payments', {
+        ...paymentBody(),
+        reference: `fictional-${randomUUID()}`,
+        ...extra,
+      }),
+      'payment',
+    );
   }
   async function createClient(companyId: string, name: string) {
     const response = await send(admin, 'post', url('clients', companyId), cid('client'), {
@@ -1617,6 +1927,10 @@ function stringField(value: Record<string, unknown>, key: string): string {
 function errorCode(body: unknown): string | undefined {
   const code = record(record(body).error).code;
   return typeof code === 'string' ? code : undefined;
+}
+
+function errorDetails(body: unknown): Record<string, unknown> {
+  return record(record(record(body).error).details);
 }
 
 function cookieHeader(response: request.Response, name: string): string {

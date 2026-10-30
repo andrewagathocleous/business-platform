@@ -1247,6 +1247,13 @@
     "applyElsewhere": "Apply the remaining credit to another invoice on the client account.",
     "filter": "Payment",
     "moneyOwing": "Money owing",
+    "duplicate": {
+      "explain": "This looks like the same money. A recorded payment or refund already has this amount, date and reference.",
+      "recordedAt": "Recorded at",
+      "noReference": "No reference",
+      "recordAnyway": "Record anyway",
+      "cancel": "Cancel"
+    },
     "errors": {
       "refunded": "This payment has recorded refunds. Void its refunds first.",
       "overAllocation": "The amount exceeds the available credit or invoice balance on one or more dates. Reload the account and check the amount and date.",

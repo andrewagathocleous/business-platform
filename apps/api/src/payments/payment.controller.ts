@@ -25,6 +25,7 @@ const textFields = {
 const sourceFields = { paymentId: z.string().optional(), creditNoteId: z.string().optional() };
 const oneSource = (body: { paymentId?: string; creditNoteId?: string }) =>
   (body.paymentId !== undefined) !== (body.creditNoteId !== undefined);
+const confirmDuplicate = z.literal(true).optional();
 const recordBody = z
   .object({
     clientId: z.string(),
@@ -32,6 +33,7 @@ const recordBody = z
     amount: z.unknown(),
     method,
     ...textFields,
+    confirmDuplicate,
   })
   .strict();
 const allocationBody = z
@@ -39,7 +41,14 @@ const allocationBody = z
   .strict()
   .refine(oneSource, 'exactly one of paymentId or creditNoteId is required');
 const refundBody = z
-  .object({ ...sourceFields, amount: z.unknown(), refundedOn: z.string(), method, ...textFields })
+  .object({
+    ...sourceFields,
+    amount: z.unknown(),
+    refundedOn: z.string(),
+    method,
+    ...textFields,
+    confirmDuplicate,
+  })
   .strict()
   .refine(oneSource, 'exactly one of paymentId or creditNoteId is required');
 const reason = z
