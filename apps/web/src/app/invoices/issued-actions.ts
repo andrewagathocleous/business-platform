@@ -19,6 +19,14 @@ import { CompanyContextStore } from '../core/company-context.store';
 import { canAttempt } from '../core/nav';
 import { formatCompanyDate } from '../format/company-date';
 import { fieldValue } from '../orders/field-value';
+import {
+  readPendingPrint,
+  removePendingPrintIfKey,
+  requestKeyOf,
+  unknownPrintOutcome,
+  writePendingPrint,
+  type PendingPrint,
+} from '../printing/pending-print';
 import { companyToday } from './delivery-deadline';
 import { calendarDate } from './invoice-query';
 
@@ -68,13 +76,6 @@ const PRINT_ERRORS: Readonly<Record<string, string>> = {
 type Failure = { key: string; correlationId: string | null };
 
 type LocationOption = { id: string; name: string };
-
-/**
- * A print request that has not had a definite answer. Sent again as it is, it cannot print
- * twice. `lost`: an answer went missing, so only a success settles it; a refused retry does not
- * show that the first attempt failed.
- */
-type PendingPrint = { body: Record<string, unknown>; lost: boolean };
 
 /**
  * Delivery record and printing for an issued document. After each action the editor reloads
@@ -186,7 +187,15 @@ type PendingPrint = { body: Record<string, unknown>; lost: boolean };
             }
           </p>
         }
-        @if (pending()) {
+        @if (cannotCheck()) {
+          <p role="alert">{{ 'invoices.print.unreadable' | transloco }}</p>
+          <p-button
+            type="button"
+            [label]="'invoices.print.checkAgain' | transloco"
+            [disabled]="busy()"
+            (onClick)="checkAgain()"
+          />
+        } @else if (pending()) {
           <p role="alert">{{ 'invoices.print.uncertain' | transloco }}</p>
           <p-button
             type="button"
@@ -288,6 +297,11 @@ export class IssuedActions {
    * It is kept in session storage too, so a page reload does not lose it.
    */
   readonly pending = signal<PendingPrint | null>(null);
+  /**
+   * The saved note could not be read. A new print or reprint would replace a request whose
+   * outcome is unknown, so both stay refused until a later read succeeds.
+   */
+  readonly cannotCheck = signal(false);
 
   /** What a reprint refers to: the first print that still counts, else the latest job. */
   readonly reprintOf = computed(() => this.firstPrintJobId() ?? this.printJobs()[0]?.id ?? null);
@@ -313,7 +327,9 @@ export class IssuedActions {
       this.queued.set(null);
       this.locations.set([]);
       this.locationId.set('');
-      this.pending.set(untracked(() => this.storedPending()));
+      untracked(() => {
+        this.loadStored();
+      });
       this.retryRefused.set(false);
     });
   }
@@ -335,7 +351,8 @@ export class IssuedActions {
       this.allowed('invoice.view') &&
       this.allowed('print.submit') &&
       this.firstPrintJobId() === null &&
-      this.pending() === null
+      this.pending() === null &&
+      !this.cannotCheck()
     );
   }
 
@@ -344,7 +361,8 @@ export class IssuedActions {
       this.allowed('invoice.view') &&
       this.allowed('print.reprint') &&
       this.reprintOf() !== null &&
-      this.pending() === null
+      this.pending() === null &&
+      !this.cannotCheck()
     );
   }
 
@@ -434,7 +452,7 @@ export class IssuedActions {
   }
 
   print(reprint: boolean): void {
-    if (this.busy() || this.pending()) {
+    if (this.busy() || this.pending() || this.cannotCheck()) {
       return;
     }
     const prior = this.reprintOf();
@@ -466,6 +484,15 @@ export class IssuedActions {
     this.send(body);
   }
 
+  /** Reads the saved note again. A new print stays refused while it still cannot be read. */
+  checkAgain(): void {
+    this.loadStored();
+    if (!this.cannotCheck()) {
+      this.retryRefused.set(false);
+      this.printFailure.set(null);
+    }
+  }
+
   /** Sends the request whose answer was lost, unchanged. The API returns its job if it exists. */
   retry(): void {
     const pending = this.pending();
@@ -481,7 +508,7 @@ export class IssuedActions {
     if (!pending || !this.retryRefused() || this.busy()) {
       return;
     }
-    this.clearPending(keyOf(pending.body));
+    this.clearPending(requestKeyOf(pending.body));
     this.retryRefused.set(false);
     this.printFailure.set(null);
   }
@@ -491,7 +518,7 @@ export class IssuedActions {
     this.printFailure.set(null);
     this.queued.set(null);
     const generation = this.generation;
-    const key = keyOf(body);
+    const key = requestKeyOf(body);
     this.http
       .post<unknown>(`/api/c/${this.companyId()}/print-requests`, body)
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -519,13 +546,13 @@ export class IssuedActions {
             return;
           }
           this.busy.set(false);
-          if (unknownOutcome(error)) {
+          if (unknownPrintOutcome(error)) {
             // Kept: the only way on is to send the same request again.
             this.markLost(key);
             this.changed.emit();
             return;
           }
-          if (this.pending()?.lost && keyOf(this.pending()?.body) === key) {
+          if (this.pending()?.lost && requestKeyOf(this.pending()?.body) === key) {
             // This attempt was refused, but an earlier one may have been queued: keep it.
             this.retryRefused.set(true);
             this.printFailure.set(failure(error, PRINT_ERRORS, 'invoices.print.errors.failed'));
@@ -553,54 +580,37 @@ export class IssuedActions {
     return `bp.invoicePrint.${this.companyId()}.${this.invoiceId()}`;
   }
 
-  private storedPending(): PendingPrint | null {
-    try {
-      const raw = sessionStorage.getItem(this.storageKey());
-      const parsed: unknown = raw ? JSON.parse(raw) : null;
-      if (typeof parsed === 'object' && parsed !== null && 'body' in parsed) {
-        const body = parsed.body;
-        if (typeof body === 'object' && body !== null) {
-          // Found after a reload: whatever happened to it, its answer is lost.
-          return { body: body as Record<string, unknown>, lost: true };
-        }
-      }
-    } catch {
-      // Storage may be unavailable; the pending request then lives only in this page.
+  /** A failed read is kept: it must not be treated as "no earlier request". */
+  private loadStored(): void {
+    const read = readPendingPrint(() => sessionStorage, this.storageKey());
+    if (read.kind === 'unreadable') {
+      this.cannotCheck.set(true);
+      this.pending.set(null);
+      return;
     }
-    return null;
+    this.cannotCheck.set(false);
+    this.pending.set(read.kind === 'pending' ? read.pending : null);
   }
 
   /** Only the request that owns the saved key may change it. */
   private markLost(key: string | null): void {
     const pending = this.pending();
-    if (pending && !pending.lost && keyOf(pending.body) === key) {
+    if (pending && !pending.lost && requestKeyOf(pending.body) === key) {
       this.setPending({ ...pending, lost: true });
     }
   }
 
   private clearPending(key: string | null): void {
-    if (keyOf(this.pending()?.body) === key) {
+    if (requestKeyOf(this.pending()?.body) === key) {
       this.pending.set(null);
     }
-    try {
-      const stored = this.storedPending();
-      if (stored && keyOf(stored.body) === key) {
-        sessionStorage.removeItem(this.storageKey());
-      }
-    } catch {
-      // Storage may be unavailable.
-    }
+    removePendingPrintIfKey(() => sessionStorage, this.storageKey(), key);
   }
 
   /** False when the browser would not save it; the page still holds it until it is closed. */
   private setPending(pending: PendingPrint): boolean {
     this.pending.set(pending);
-    try {
-      sessionStorage.setItem(this.storageKey(), JSON.stringify(pending));
-      return true;
-    } catch {
-      return false;
-    }
+    return writePendingPrint(() => sessionStorage, this.storageKey(), pending);
   }
 
   private loadLocations(generation: number): void {
@@ -627,19 +637,6 @@ export class IssuedActions {
       permission,
     );
   }
-}
-
-/**
- * Only a 4xx says the request was refused. No answer, a server error, or a reply that could
- * not be read (even with status 200) leaves the outcome unknown.
- */
-function unknownOutcome(error: unknown): boolean {
-  return !(error instanceof HttpErrorResponse) || error.status < 400 || error.status >= 500;
-}
-
-function keyOf(body: Record<string, unknown> | undefined): string | null {
-  const key = body?.['requestKey'];
-  return typeof key === 'string' ? key : null;
 }
 
 function queuedJob(response: unknown): { copies: number; simulationLabel: string | null } | null {

@@ -263,7 +263,14 @@
       "reprintTitle": "Reprint",
       "provider": "Provider",
       "reprintFlag": "Reprint",
-      "back": "Back"
+      "back": "Back",
+      "uncertain": "Not sure whether it reached the print queue. Send the same request again: it cannot print twice.",
+      "retry": "Send the same request again",
+      "discardHelp": "The new attempt was refused, but the first one may still have been queued. Check the print history first: discard this request only if the print is not there.",
+      "discard": "Discard this request",
+      "storage": "Nothing was sent: this browser would not keep a note of the request, so a lost answer could not be checked. Allow site storage for this page and try again.",
+      "unreadable": "Cannot check an earlier print request for this order and document, so no new print or reprint will be sent. Look at the print history, then check again.",
+      "checkAgain": "Check again"
     },
     "printStatus": {
       "queued": "Queued",
@@ -622,7 +629,9 @@
       "queued": "Sent to the printer queue: {{copies}} copies.",
       "retry": "Send the same request again",
       "discardHelp": "The new attempt was refused, but the first one may still have been queued. Check the history above: discard this request only if the print is not there.",
-      "discard": "Discard this request"
+      "discard": "Discard this request",
+      "unreadable": "Cannot check an earlier print request for this invoice, so no new print or reprint will be sent. Look at the print history, then check again.",
+      "checkAgain": "Check again"
     },
     "datesAtIssue": "An invoice gets its issue date when it is issued, and its due date from the client's or the company's payment terms. The due date shown here is a preview.",
     "credit": {

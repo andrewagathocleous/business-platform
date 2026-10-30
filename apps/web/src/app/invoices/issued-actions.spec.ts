@@ -11,6 +11,7 @@ import { AppTranslocoLoader } from '../i18n/transloco-loader';
 import { IssuedActions } from './issued-actions';
 
 const FULL = ['invoice.view', 'invoice.issue', 'print.submit', 'print.reprint'];
+const INVOICE_KEY = 'bp.invoicePrint.company-1.invoice-1';
 
 describe('IssuedActions', () => {
   afterEach(() => {
@@ -340,7 +341,154 @@ describe('IssuedActions', () => {
     expect(http.match(() => true)).toHaveLength(0);
     http.verify();
   });
+
+  it('does not replace a saved reprint when a reload cannot read it', async () => {
+    const { fixture, http, component } = await setup(
+      FULL,
+      [job('job-1', 'done_reported', false)],
+      'job-1',
+    );
+    component.setReason(textEvent('Client lost it'));
+    component.print(true);
+    const lost = http.expectOne('/api/c/company-1/print-requests');
+    const body = record(lost.request.body);
+    lost.flush(null, { status: 503, statusText: 'Service Unavailable' });
+    fixture.detectChanges();
+    const saved = sessionStorage.getItem(INVOICE_KEY);
+    expect(saved).toContain(String(body['requestKey']));
+    fixture.destroy();
+
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    });
+    const back = TestBed.createComponent(IssuedActions);
+    try {
+      mountIssued(back, [job('job-1', 'done_reported', false)], 'job-1');
+      const panel = back.componentInstance;
+      expect(panel.cannotCheck()).toBe(true);
+      expect(panel.pending()).toBeNull();
+      expect(panel.canReprint()).toBe(false);
+      expect(panel.canFirstPrint()).toBe(false);
+      expect(textOf(back)).toContain('Look at the print history');
+      expect(exactButton(back, 'Check again')).toBeInstanceOf(HTMLButtonElement);
+      expect(textOf(back)).not.toContain('Print invoice');
+      expect(textOf(back)).not.toContain('Reprint');
+    } finally {
+      getItem.mockRestore();
+    }
+
+    const panel = back.componentInstance;
+    panel.setReason(textEvent('Client lost it'));
+    panel.print(true);
+    panel.print(false);
+    expect(http.match('/api/c/company-1/print-requests')).toHaveLength(0);
+    expect(sessionStorage.getItem(INVOICE_KEY)).toBe(saved);
+    const check = exactButton(back, 'Check again');
+    expect(check).toBeInstanceOf(HTMLButtonElement);
+    check?.click();
+    back.detectChanges();
+    expect(panel.cannotCheck()).toBe(false);
+    expect(panel.pending()?.lost).toBe(true);
+    expect(panel.pending()?.body).toEqual(body);
+    expect(sessionStorage.getItem(INVOICE_KEY)).toBe(saved);
+    const retry = exactButton(back, 'Send the same request again');
+    expect(retry).toBeInstanceOf(HTMLButtonElement);
+    retry?.click();
+    const again = http.expectOne('/api/c/company-1/print-requests');
+    expect(record(again.request.body)).toEqual(body);
+    again.flush({ printJob: { copies: 1 } });
+    expect(sessionStorage.getItem(INVOICE_KEY)).toBeNull();
+    http.verify();
+  });
+
+  it('does not replace a saved request that cannot be parsed', async () => {
+    const { fixture, http } = await setup(FULL);
+    fixture.destroy();
+    sessionStorage.setItem(INVOICE_KEY, '{');
+    const setItem = vi.spyOn(Storage.prototype, 'setItem');
+    const back = TestBed.createComponent(IssuedActions);
+    mountIssued(back);
+    const panel = back.componentInstance;
+    expect(panel.cannotCheck()).toBe(true);
+    expect(panel.canFirstPrint()).toBe(false);
+    expect(textOf(back)).toContain('Look at the print history');
+    expect(textOf(back)).not.toContain('Print invoice');
+    panel.print(false);
+    expect(http.match(() => true)).toHaveLength(0);
+    expect(setItem).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(INVOICE_KEY)).toBe('{');
+    const body = {
+      documentType: 'invoice',
+      sourceType: 'invoice',
+      sourceId: 'invoice-1',
+      requestKey: '11111111-1111-4111-8111-111111111111',
+    };
+    const repaired = JSON.stringify({ body });
+    sessionStorage.setItem(INVOICE_KEY, repaired);
+    exactButton(back, 'Check again')?.click();
+    back.detectChanges();
+    expect(panel.cannotCheck()).toBe(false);
+    expect(panel.pending()?.body).toEqual(body);
+    expect(panel.pending()?.lost).toBe(true);
+    expect(sessionStorage.getItem(INVOICE_KEY)).toBe(repaired);
+    http.verify();
+  });
+
+  it('shows the storage error and sends nothing when site storage is blocked', async () => {
+    const { fixture, http, component } = await setup(FULL);
+    const restore = blockSiteStorage();
+    try {
+      component.print(false);
+      fixture.detectChanges();
+      expect(http.match(() => true)).toHaveLength(0);
+      expect(component.pending()).toBeNull();
+      expect(component.cannotCheck()).toBe(false);
+      expect(textOf(fixture)).toContain('Nothing was sent');
+      expect(textOf(fixture)).not.toContain('Cannot check an earlier print request');
+    } finally {
+      restore();
+    }
+    http.verify();
+  });
 });
+
+function mountIssued(
+  fixture: ComponentFixture<IssuedActions>,
+  printJobs: ReturnType<typeof job>[] = [],
+  firstPrintJobId: string | null = null,
+): void {
+  fixture.componentRef.setInput('companyId', 'company-1');
+  fixture.componentRef.setInput('invoiceId', 'invoice-1');
+  fixture.componentRef.setInput('deliveries', []);
+  fixture.componentRef.setInput('printJobs', printJobs);
+  fixture.componentRef.setInput('firstPrintJobId', firstPrintJobId);
+  fixture.detectChanges();
+}
+
+function exactButton(
+  fixture: ComponentFixture<IssuedActions>,
+  name: string,
+): HTMLButtonElement | undefined {
+  const element = fixture.nativeElement as HTMLElement;
+  return [...element.querySelectorAll('button')].find((item) => item.textContent.trim() === name);
+}
+
+/** Site storage blocked: reading the storage object itself throws. */
+function blockSiteStorage(): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+  if (!descriptor) {
+    throw new Error('sessionStorage cannot be blocked in this environment');
+  }
+  Object.defineProperty(globalThis, 'sessionStorage', {
+    configurable: true,
+    get() {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    },
+  });
+  return () => {
+    Object.defineProperty(globalThis, 'sessionStorage', descriptor);
+  };
+}
 
 function record(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null) {
