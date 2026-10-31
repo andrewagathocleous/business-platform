@@ -23,6 +23,7 @@ import { AppModule } from './app.module';
 import { AuditService } from './audit/audit.service';
 import { InboxProcessor } from './automation/inbox.processor';
 import { JobRunner } from './automation/jobs/job-runner';
+import { cancelQueuedJobs } from './test/cancel-queued-jobs';
 import { PrismaService } from './database/prisma.service';
 import { configureHttp } from './http/configure-http';
 import { caseSensitiveAdapter } from './http/express-adapter';
@@ -148,15 +149,14 @@ describe('printing with the mock provider', () => {
       printersB.find((row) => stringField(row, 'id') === onlineB) ?? {},
       'locationId',
     );
-    await started()
-      .get(PrismaService)
-      .client.job.deleteMany({ where: { status: 'queued', type: 'inbox.process' } });
+    await cancelQueuedJobs(app, [companyA, companyB]);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     provider.beforeSubmit = null;
     if (app) {
       app.get(PrintProcessor).hooks = null;
+      await cancelQueuedJobs(app, [companyA, companyB]);
     }
   });
 
@@ -164,6 +164,7 @@ describe('printing with the mock provider', () => {
     await restorePrinting();
     await restoreFulfil();
     if (app) {
+      await cancelQueuedJobs(app, [companyA, companyB]);
       await app.close();
     }
     if (storageRoot) {
@@ -171,12 +172,6 @@ describe('printing with the mock provider', () => {
     }
     if (mockRoot) {
       rmSync(mockRoot, { recursive: true, force: true });
-    }
-    if (app) {
-      await app.get(PrismaService).client.job.updateMany({
-        where: { type: { in: ['print.submit', 'print.refresh_status'] }, status: 'queued' },
-        data: { status: 'cancelled', finishedAt: new Date() },
-      });
     }
   });
 
@@ -517,7 +512,7 @@ describe('printing with the mock provider', () => {
     const queued = await requestPrint(fulfil, companyA, order.id, 'gift_message', cid('hold'));
     await setPrinting(false);
     try {
-      await jobs().drainOnce();
+      await jobs().drainOnce(1_000, { companyId: companyA });
       const held = await loadPrint(fulfil, companyA, stringField(queued, 'id'));
       expect(held.status).toBe('held');
       expect(provider.submitCount).toBe(before);
@@ -562,7 +557,7 @@ describe('printing with the mock provider', () => {
     const order = await makeOrder(companyB, shopifyStoreB, shopifyConnectionB, null);
     const before = provider.submitCount;
     const queued = await requestPrint(fulfilB, companyB, order.id, 'packing_slip', cid('hold-b'));
-    await jobs().drainOnce();
+    await jobs().drainOnce(1_000, { companyId: companyB });
     const held = await loadPrint(fulfilB, companyB, stringField(queued, 'id'));
     expect(held.status).toBe('held');
     expect(provider.submitCount).toBe(before);
@@ -585,7 +580,7 @@ describe('printing with the mock provider', () => {
       created,
     );
     expect(posted.status, text(posted.response)).toBe(202);
-    await jobs().drainOnce();
+    await jobs().drainOnce(1_000, { companyId: companyA });
     const order = await orderByNumber(adminA, companyA, name);
     const orderId = stringField(order, 'id');
     const first = await requestPrint(fulfil, companyA, orderId, 'gift_message', cid('version'));
@@ -601,7 +596,7 @@ describe('printing with the mock provider', () => {
       later,
     );
     expect(updated.status, text(updated.response)).toBe(202);
-    await jobs().drainOnce();
+    await jobs().drainOnce(1_000, { companyId: companyA });
     const after = await orderByNumber(adminA, companyA, name);
     expect(numberField(after, 'version')).toBeGreaterThan(numberField(order, 'version'));
     const second = await send(
@@ -669,7 +664,7 @@ describe('printing with the mock provider', () => {
     );
     expect(suspended.status, text(suspended)).toBe(200);
     try {
-      await jobs().drainOnce();
+      await jobs().drainOnce(1_000, { companyId: companyA });
       const failed = await loadPrint(adminA, companyA, stringField(queued, 'id'));
       expect(failed.status).toBe('failed');
       expect(failed.lastError).toBe('requester_no_longer_authorised');
@@ -732,7 +727,7 @@ describe('printing with the mock provider', () => {
       'print_job.cancelled',
       'success',
     );
-    await jobs().drainOnce();
+    await jobs().drainOnce(1_000, { companyId: companyA });
     expect(provider.submitCount).toBe(before);
     expect((await loadPrint(fulfil, companyA, stringField(early, 'id'))).status).toBe('cancelled');
 
@@ -752,7 +747,7 @@ describe('printing with the mock provider', () => {
         release = done;
       });
     };
-    const draining = jobs().drainOnce();
+    const draining = jobs().drainOnce(1_000, { companyId: companyA });
     try {
       await entered.promise;
       const late = await send(
@@ -791,7 +786,7 @@ describe('printing with the mock provider', () => {
           `/api/c/${companyA}/print-jobs/${String(queued.id)}/cancel`,
           cid(`cancel-race-do-${String(index)}`),
         ),
-        jobs().drainOnce(),
+        jobs().drainOnce(1_000, { companyId: companyA }),
       ]);
       const called = provider.submittedIds.includes(String(queued.id));
       expect(cancel.status === 200 && called).toBe(false);
@@ -810,7 +805,7 @@ describe('printing with the mock provider', () => {
         release = done;
       });
     };
-    const draining = jobs().drainOnce();
+    const draining = jobs().drainOnce(1_000, { companyId: companyA });
     try {
       await entered.promise;
       await started().get(PrismaService).client.$executeRaw`
@@ -826,7 +821,7 @@ describe('printing with the mock provider', () => {
         mode: 'external',
         run: () => Promise.resolve(),
       });
-      expect(await other.reclaimExpired()).toBeGreaterThan(0);
+      expect(await other.reclaimExpired({ companyId: companyA })).toBeGreaterThan(0);
       const mid = await loadPrint(adminA, companyA, stringField(queued, 'id'));
       expect(mid.status).toBe('uncertain');
       release();
@@ -872,7 +867,7 @@ describe('printing with the mock provider', () => {
         });
       },
     };
-    const draining = jobs().drainOnce();
+    const draining = jobs().drainOnce(1_000, { companyId: companyA });
     try {
       await claimed.promise;
       await started().get(PrismaService).client.$executeRaw`
@@ -880,7 +875,7 @@ describe('printing with the mock provider', () => {
         SET locked_until = clock_timestamp() - interval '1 second'
         WHERE id = ${String(queued.queueJobId)}::uuid
       `;
-      expect(await jobs().reclaimExpired()).toBeGreaterThan(0);
+      expect(await jobs().reclaimExpired({ companyId: companyA })).toBeGreaterThan(0);
       expect((await loadPrint(adminA, companyA, stringField(queued, 'id'))).status).toBe(
         'uncertain',
       );
@@ -912,7 +907,7 @@ describe('printing with the mock provider', () => {
     const file = await printFile(companyA, stringField(queued, 'id'));
     await tamper(file.storageKey);
     const before = provider.submitCount;
-    await jobs().drainOnce();
+    await jobs().drainOnce(1_000, { companyId: companyA });
     expect(provider.submitCount).toBe(before);
     expect((await loadPrint(fulfil, companyA, stringField(queued, 'id'))).status).toBe('failed');
     const events = await auditEvents(app, correlationId, companyA);
@@ -944,7 +939,7 @@ describe('printing with the mock provider', () => {
       },
     };
     try {
-      await jobs().drainOnce();
+      await jobs().drainOnce(1_000, { companyId: companyA });
     } finally {
       processor.hooks = null;
     }
@@ -981,7 +976,7 @@ describe('printing with the mock provider', () => {
           SET locked_until = clock_timestamp() - interval '1 second'
           WHERE id = ${String(queued.queueJobId)}::uuid
         `;
-        expect(await jobs().reclaimExpired()).toBeGreaterThan(0);
+        expect(await jobs().reclaimExpired({ companyId: companyA })).toBeGreaterThan(0);
         const cancelled = await send(
           fulfil,
           'post',
@@ -992,7 +987,7 @@ describe('printing with the mock provider', () => {
       },
     };
     try {
-      await jobs().drainOnce();
+      await jobs().drainOnce(1_000, { companyId: companyA });
     } finally {
       processor.hooks = null;
     }
@@ -1150,7 +1145,7 @@ describe('printing with the mock provider', () => {
       });
     };
     const startedAt = Date.now();
-    const draining = jobs().drainOnce();
+    const draining = jobs().drainOnce(1_000, { companyId: companyA });
     try {
       await entered.promise;
       await draining;
@@ -1207,15 +1202,19 @@ describe('printing with the mock provider', () => {
           releaseSubmit = done;
         });
       };
+      const printId = stringField(queued, 'id');
       processor.hooks = {
-        duringRecord: () => {
+        duringRecord: (recordingId) => {
+          if (recordingId !== printId) {
+            return Promise.resolve();
+          }
           recording.resolve();
           return new Promise((done) => {
             releaseRecord = done;
           });
         },
       };
-      const draining = jobs().drainOnce();
+      const draining = jobs().drainOnce(1_000, { companyId: companyA });
       try {
         await entered.promise;
         await started().get(PrismaService).client.$executeRaw`
@@ -1223,7 +1222,8 @@ describe('printing with the mock provider', () => {
           SET locked_until = clock_timestamp() - interval '1 second'
           WHERE id = ${String(queued.queueJobId)}::uuid
         `;
-        expect(await jobs().reclaimExpired()).toBeGreaterThan(0);
+        expect(await jobs().reclaimExpired({ companyId: companyA })).toBeGreaterThan(0);
+        expect((await loadPrint(adminA, companyA, printId)).status).toBe('uncertain');
         releaseSubmit();
         await recording.promise;
         const cancelling = send(
@@ -1292,7 +1292,7 @@ describe('printing with the mock provider', () => {
     const client = started().get(PrismaService).client;
     for (let index = 0; index < 25; index += 1) {
       runner.drainDeadlineMs = 5_000;
-      await runner.drainOnce();
+      await runner.drainOnce(1_000, { companyId: companyA });
       runner.drainDeadlineMs = 1_500;
       const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
       const queued = await requestPrint(
@@ -1302,7 +1302,7 @@ describe('printing with the mock provider', () => {
         'gift_message',
         cid(`refresh-lock-${String(index)}`),
       );
-      await runner.drainOnce();
+      await runner.drainOnce(1_000, { companyId: companyA });
       runner.drainDeadlineMs = 5_000;
       const printId = stringField(queued, 'id');
       const refresh = await client.$queryRaw<{ id: string; status: string }[]>`
@@ -1321,7 +1321,10 @@ describe('printing with the mock provider', () => {
       const recording = deferred();
       let releaseRecord = (): void => undefined;
       processor.hooks = {
-        duringRecord: () => {
+        duringRecord: (recordingId) => {
+          if (recordingId !== printId) {
+            return Promise.resolve();
+          }
           recording.resolve();
           return new Promise((done) => {
             releaseRecord = done;
@@ -1333,7 +1336,7 @@ describe('printing with the mock provider', () => {
         SET run_after = clock_timestamp()
         WHERE id = ${refreshId}::uuid
       `;
-      const draining = runner.drainOnce();
+      const draining = runner.drainOnce(1_000, { companyId: companyA });
       let reclaiming: Promise<number> | undefined;
       try {
         await recording.promise;
@@ -1351,7 +1354,7 @@ describe('printing with the mock provider', () => {
           WHERE id = ${refreshId}::uuid
             AND status = 'running'::"job_status"
         `;
-        reclaiming = runner.reclaimExpired();
+        reclaiming = runner.reclaimExpired({ companyId: companyA });
         expect(await waitForUngrantedLock()).toBe(true);
         processor.hooks = null;
         releaseRecord();
@@ -1385,7 +1388,7 @@ describe('printing with the mock provider', () => {
       created,
     );
     expect(posted.status, text(posted.response)).toBe(202);
-    await jobs().drainOnce();
+    await jobs().drainOnce(1_000, { companyId: companyA });
     const order = await orderByNumber(adminA, companyA, name);
     const orderId = stringField(order, 'id');
     const queued = await requestPrint(
@@ -1406,7 +1409,7 @@ describe('printing with the mock provider', () => {
         });
       },
     };
-    const draining = jobs().drainOnce();
+    const draining = jobs().drainOnce(1_000, { companyId: companyA });
     try {
       await held.promise;
       const mid = await withCompany(companyA, (tx) =>
@@ -1435,7 +1438,7 @@ describe('printing with the mock provider', () => {
         retryable: true,
         run: (job, tx, signal) => inbox.run(job, tx, signal),
       });
-      await other.drainOnce();
+      await other.drainOnce(1_000, { companyId: companyA });
       const flagged = await orderByNumber(adminA, companyA, name);
       expect(flagged.fulfilmentStatus).toBe('review_required');
       expect(flagged.reviewReason).toBe('gift_message_changed_after_print');
@@ -2044,14 +2047,14 @@ async function finishPrint(
   companyId: string,
   printJobId: string,
 ): Promise<PrintView> {
-  await jobs().drainOnce();
+  await jobs().drainOnce(1_000, { companyId });
   await started().get(PrismaService).client.$executeRaw`
     UPDATE job
     SET run_after = clock_timestamp()
     WHERE type = 'print.refresh_status'
       AND payload->>'printJobId' = ${printJobId}
   `;
-  await jobs().drainOnce();
+  await jobs().drainOnce(1_000, { companyId });
   return loadPrint(session, companyId, printJobId);
 }
 

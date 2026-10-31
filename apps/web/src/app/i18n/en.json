@@ -895,7 +895,7 @@
     "error": "The stores could not be loaded",
     "brands": "Brands",
     "locations": "Locations",
-    "stores": "Stores",
+    "stores": "Store list",
     "addBrand": "Add brand",
     "saveBrand": "Save brand",
     "rename": "Rename",

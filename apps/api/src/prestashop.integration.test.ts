@@ -21,6 +21,7 @@ import {
 } from '../../../tools/test-db-guard.mjs';
 import { AppModule } from './app.module';
 import { JobRunner, type ExternalJobHandler } from './automation/jobs/job-runner';
+import { cancelQueuedJobs } from './test/cancel-queued-jobs';
 import { PrestashopPoller } from './automation/prestashop-poller';
 import { prestashopPollIdempotencyKey } from './automation/store-sync.service';
 import { correlationStorage } from './correlation/correlation';
@@ -245,6 +246,7 @@ describe('PrestaShop reader', () => {
       });
     }
     if (app) {
+      await cancelQueuedJobs(app, [companyA, companyB]);
       await app.close();
       app = undefined;
     }
@@ -603,9 +605,7 @@ describe('PrestaShop reader', () => {
     const checkpoint = '2026-06-15 12:10:00';
     const overlapStart = '2026-06-15 12:00:00';
     const marker = new Date('2026-04-01T00:00:00.000Z');
-    shop.orders = datedOrders(5_001, (index) =>
-      addSeconds(overlapStart, Math.floor(index / 9)),
-    );
+    shop.orders = datedOrders(5_001, (index) => addSeconds(overlapStart, Math.floor(index / 9)));
     await withCompany(companyA, (tx) =>
       tx.storeConnection.update({
         where: { id: connectionId },
@@ -914,17 +914,73 @@ async function drainQueued(): Promise<void> {
   const runner = started().get(JobRunner);
   const previous = runner.drainDeadlineMs;
   runner.drainDeadlineMs = 180_000;
+  const deadline = Date.now() + 180_000;
   try {
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      const result = await runner.drainOnce();
-      if (result.processed === 0) {
+    for (;;) {
+      await runner.drainOnce(1_000, { companyId: companyA });
+      const pending = await connectionJobs();
+      if (pending.queued === 0 && pending.running === 0) {
         return;
       }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        break;
+      }
+      // A failed attempt is queued again after backoffMs(1), which is 1s. The drain
+      // only waits 300ms for a job that is not yet due, so wait until this
+      // connection's next run_after and drain again. Permanently failed jobs are
+      // not queued, and the caller's count assertion still fails.
+      const nextAt = pending.nextRun?.getTime() ?? Date.now();
+      const waitMs = Math.min(Math.max(25, nextAt - Date.now() + 25), remaining);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
     }
   } finally {
     runner.drainDeadlineMs = previous;
   }
   throw new Error('drain did not finish');
+}
+
+async function connectionJobs(): Promise<{
+  queued: number;
+  running: number;
+  nextRun: Date | null;
+}> {
+  const rows = await withCompany(
+    companyA,
+    (tx) => tx.$queryRaw<{ queued: number; running: number; nextRun: Date | null }[]>`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'queued'::"job_status")::int AS queued,
+        COUNT(*) FILTER (WHERE status = 'running'::"job_status")::int AS running,
+        MIN(run_after) FILTER (WHERE status = 'queued'::"job_status") AS "nextRun"
+      FROM job
+      WHERE (
+          type = 'prestashop.poll' AND payload->>'connectionId' = ${connectionId}
+        )
+        OR (
+          type = 'inbox.process'
+          AND payload->>'inboxId' IN (
+            SELECT id::text FROM integration_inbox WHERE connection_id = ${connectionId}::uuid
+          )
+        )
+    `,
+  );
+  const row = rows[0];
+  return {
+    queued: row?.queued ?? 0,
+    running: row?.running ?? 0,
+    nextRun: asDate(row?.nextRun),
+  };
+}
+
+function asDate(value: unknown): Date | null {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  return null;
 }
 
 async function cancelForeignQueued(): Promise<void> {

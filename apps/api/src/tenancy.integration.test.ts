@@ -15,6 +15,7 @@ import {
   assertTestDatabaseUrls,
 } from '../../../tools/test-db-guard.mjs';
 import { AppModule } from './app.module';
+import { cancelQueuedJobs } from './test/cancel-queued-jobs';
 import { resolvePermission } from './authz/resolve-permission';
 import { PrismaService } from './database/prisma.service';
 import { configureHttp } from './http/configure-http';
@@ -72,6 +73,7 @@ describe('authorisation and tenancy', () => {
   }, 120_000);
 
   afterAll(async () => {
+    await cancelQueuedJobs(app, [companyA, companyB]);
     await app?.close();
   });
 
@@ -965,6 +967,7 @@ describe('privileged MFA withholding', () => {
   }, 120_000);
 
   afterAll(async () => {
+    await cancelQueuedJobs(app, [companyA]);
     await app?.close();
     await oauth?.stop();
   });

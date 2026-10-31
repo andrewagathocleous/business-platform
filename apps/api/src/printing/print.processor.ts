@@ -47,8 +47,8 @@ export type PrintProcessorHooks = {
   afterClaim?: () => Promise<void>;
   /** Inside the recording transaction, before either row is locked. */
   beforeRecord?: () => Promise<void>;
-  /** After `print_job` is locked and before `job` is locked. */
-  duringRecord?: () => Promise<void>;
+  /** After `print_job` is locked and before `job` is locked. The id is that print job. */
+  duringRecord?: (printJobId: string) => Promise<void>;
 };
 
 type SubmitPayload = {
@@ -185,7 +185,7 @@ export class PrintProcessor {
         WHERE company_id = ${companyId}::uuid AND id = ${target.printJobId}::uuid
         FOR UPDATE
       `;
-      await this.hooks?.duringRecord?.();
+      await this.hooks?.duringRecord?.(target.printJobId);
       await tx.$queryRaw`SELECT id FROM job WHERE id = ${job.id}::uuid FOR UPDATE`;
       await this.applyRefresh(tx, companyId, target, ready.provider, state, job.correlationId);
       await external.finish(tx, 'succeeded', null);
@@ -726,7 +726,7 @@ export class PrintProcessor {
         WHERE company_id = ${companyId}::uuid AND id = ${printJobId}::uuid
         FOR UPDATE
       `;
-      await this.hooks?.duringRecord?.();
+      await this.hooks?.duringRecord?.(printJobId);
       await tx.$queryRaw`SELECT id FROM job WHERE id = ${job.id}::uuid FOR UPDATE`;
       const current = locked[0]?.status ?? null;
       let applied = false;

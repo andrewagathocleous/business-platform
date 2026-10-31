@@ -21,6 +21,7 @@ import {
 import type { MockPrintProvider } from '@bp/integrations';
 import { AppModule } from './app.module';
 import { JobRunner } from './automation/jobs/job-runner';
+import { cancelQueuedJobs } from './test/cancel-queued-jobs';
 import { PrismaService } from './database/prisma.service';
 import { configureHttp } from './http/configure-http';
 import { caseSensitiveAdapter } from './http/express-adapter';
@@ -120,15 +121,9 @@ describe('issuing invoices', () => {
   afterAll(async () => {
     try {
       // Print status refreshes come due later. Cancel (not delete: print_job points at its
-      // submit job) whatever this run left queued, so the files that follow see nothing due
-      // (orders.integration.test.ts counts the jobs one drain runs; BACKLOG H-02).
+      // submit job) whatever this run left queued, so a later file's drain does not run them.
       if (app && company) {
-        await inCompany(company, (tx) =>
-          tx.job.updateMany({
-            where: { companyId: company, status: 'queued' },
-            data: { status: 'cancelled' },
-          }),
-        );
+        await cancelQueuedJobs(app, [company]);
       }
     } finally {
       await app?.close();
@@ -708,7 +703,7 @@ describe('issuing invoices', () => {
     expect(again.status).toBe(409);
     expect(errorCode(again.body)).toBe('already_printed');
 
-    await started().get(JobRunner).drainOnce();
+    await started().get(JobRunner).drainOnce(1_000, { companyId: company });
     expect(provider.submitCount).toBe(before + 1);
     const jobId = stringField(job, 'id');
     const printed = await readFile(join(mockRoot, company.toLowerCase(), `${jobId}.pdf`));
@@ -844,7 +839,7 @@ describe('issuing invoices', () => {
   it('fails a queued invoice print, without sending it, when the requester can no longer view invoices', async () => {
     await invoicePrinter();
     // Settle anything earlier tests queued, so only this job is due.
-    await started().get(JobRunner).drainOnce();
+    await started().get(JobRunner).drainOnce(1_000, { companyId: company });
     const draft = await createDraft();
     const issued = await issue(draft.id, draft.version, cid('recheck-issue'));
     expect(issued.status, text(issued)).toBe(200);
@@ -879,7 +874,7 @@ describe('issuing invoices', () => {
     );
     const provider = started().get<MockPrintProvider>(MOCK_PRINT_PROVIDER);
     const before = provider.submitCount;
-    await started().get(JobRunner).drainOnce();
+    await started().get(JobRunner).drainOnce(1_000, { companyId: company });
     expect(provider.submittedIds).not.toContain(jobId);
     expect(provider.submitCount).toBe(before);
     const job = await send(
@@ -896,7 +891,7 @@ describe('issuing invoices', () => {
 
   it('prints an invoice the platform owner queued, without a membership', async () => {
     await invoicePrinter();
-    await started().get(JobRunner).drainOnce();
+    await started().get(JobRunner).drainOnce(1_000, { companyId: company });
     const draft = await createDraft();
     const issued = await issue(draft.id, draft.version, cid('owner-print-issue'));
     expect(issued.status, text(issued)).toBe(200);
@@ -914,7 +909,7 @@ describe('issuing invoices', () => {
     expect(queued.status, text(queued)).toBe(200);
     const jobId = stringField(record(record(queued.body).printJob), 'id');
     const provider = started().get<MockPrintProvider>(MOCK_PRINT_PROVIDER);
-    await started().get(JobRunner).drainOnce();
+    await started().get(JobRunner).drainOnce(1_000, { companyId: company });
     expect(provider.submittedIds).toContain(jobId);
     const job = await send(
       admin,

@@ -20,6 +20,7 @@ import {
   assertTestDatabaseUrls,
 } from '../../../tools/test-db-guard.mjs';
 import { AppModule } from './app.module';
+import { cancelQueuedJobs } from './test/cancel-queued-jobs';
 import { APP_CONFIG, type AppConfig } from './config/env';
 import { PrismaService } from './database/prisma.service';
 import { configureHttp } from './http/configure-http';
@@ -351,6 +352,7 @@ describe('accountant export (real Postgres and local stored PDFs)', () => {
 
   afterAll(async () => {
     vi.useRealTimers();
+    await cancelQueuedJobs(app, [company]);
     await app?.close();
     for (const root of [storageRoot, mockRoot])
       if (root) rmSync(root, { recursive: true, force: true });

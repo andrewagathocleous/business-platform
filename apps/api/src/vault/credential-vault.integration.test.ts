@@ -12,6 +12,7 @@ import {
   assertTestDatabaseUrls,
 } from '../../../../tools/test-db-guard.mjs';
 import { AppModule } from '../app.module';
+import { cancelQueuedJobs } from '../test/cancel-queued-jobs';
 import { AuditService } from '../audit/audit.service';
 import { correlationStorage } from '../correlation/correlation';
 import { PrismaService } from '../database/prisma.service';
@@ -66,6 +67,7 @@ describe('credential vault', () => {
   }, 120_000);
 
   afterAll(async () => {
+    await cancelQueuedJobs(app, [companyA, companyB]);
     await app.close();
   });
 

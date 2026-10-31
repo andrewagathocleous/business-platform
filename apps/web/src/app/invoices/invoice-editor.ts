@@ -757,18 +757,29 @@ export class InvoiceEditorPage {
   }
 
   open(companyId: string, invoiceId: string | null): void {
-    const changed = companyId !== this.companyId() || invoiceId !== this.invoiceId();
-    this.companyId.set(companyId);
-    this.invoiceId.set(invoiceId);
-    if (companyId.length === 0) {
-      this.loading.set(false);
+    const id = companyId.toLowerCase();
+    // A route emission with no company yet must not clear a draft the user has started.
+    if (id.length === 0) {
       return;
     }
-    if (changed) {
+    const changed = id !== this.companyId() || invoiceId !== this.invoiceId();
+    // The same company and invoice again, including a case-only company id, must not
+    // fetch or reset. A second fetch can arrive after the user has typed.
+    if (!changed) {
+      return;
+    }
+    const keepDraft =
+      this.companyId().length === 0 &&
+      this.invoiceId() === null &&
+      invoiceId === null &&
+      this.dirty();
+    this.companyId.set(id);
+    this.invoiceId.set(invoiceId);
+    if (!keepDraft) {
       this.generation += 1;
       this.resetDraft();
     }
-    this.loadCatalog(companyId);
+    this.loadCatalog(id);
     if (!invoiceId) {
       if (this.lines().length === 0) {
         this.lines.set([emptyLine(this.nextKey())]);
@@ -1091,6 +1102,7 @@ export class InvoiceEditorPage {
     }
     this.touch();
     this.clientLoad += 1;
+    this.clientSeq += 1;
     this.client.set(null);
     this.clientQuery.set('');
     this.clientMatches.set([]);
@@ -1099,6 +1111,8 @@ export class InvoiceEditorPage {
   chooseClient(client: ClientOption): void {
     this.touch();
     this.clientLoad += 1;
+    // A search already in flight must not put its matches back after the choice.
+    this.clientSeq += 1;
     this.client.set(client);
     this.clientQuery.set('');
     this.clientMatches.set([]);

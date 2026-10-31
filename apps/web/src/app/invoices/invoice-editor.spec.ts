@@ -992,6 +992,96 @@ describe('InvoiceEditorPage', () => {
     );
     http.verify();
   });
+
+  it('keeps a new invoice the user has started when the route emits again', async () => {
+    vi.useFakeTimers();
+    const { fixture, http } = await setup();
+    const component = fixture.componentInstance;
+    component.open('company-1', null);
+    flushCatalog(http);
+    fillLine(component, 0, { description: 'Demo nuts', quantity: '2', unitPrice: '10.00' });
+    component.chooseClient({
+      id: 'client-1',
+      displayName: 'Acme Demo',
+      defaultLanguage: 'en',
+      defaultCurrency: 'EUR',
+    });
+    component.open('company-1', null);
+    component.open('COMPANY-1', null);
+    expect(component.client()?.displayName).toBe('Acme Demo');
+    expect(component.lines()[0]?.description).toBe('Demo nuts');
+    expect(component.lines()[0]?.quantity).toBe('2');
+    http.verify();
+  });
+
+  it('keeps notes typed before the company id arrives', async () => {
+    vi.useFakeTimers();
+    const { fixture, http } = await setup();
+    const component = fixture.componentInstance;
+    component.setNotes(inputEvent('keep the note'));
+    component.open('', null);
+    component.open('company-1', null);
+    flushCatalog(http);
+    expect(component.notes()).toBe('keep the note');
+    expect(component.lines()).toHaveLength(1);
+    http.verify();
+  });
+
+  it('does not let a late client search clear the chosen client or the line', async () => {
+    const { fixture, http } = await setup();
+    vi.useFakeTimers();
+    const component = fixture.componentInstance;
+    component.open('company-1', null);
+    flushCatalog(http);
+    component.onClientQuery(inputEvent('Acme'));
+    await vi.advanceTimersByTimeAsync(300);
+    const pending = http.expectOne(
+      (request) => request.url === '/api/c/company-1/clients' && request.params.get('q') === 'Acme',
+    );
+    component.chooseClient({
+      id: 'client-1',
+      displayName: 'Acme Demo',
+      defaultLanguage: 'en',
+      defaultCurrency: 'EUR',
+    });
+    fillLine(component, 0, { description: 'Demo nuts' });
+    pending.flush({
+      clients: [
+        {
+          id: 'client-1',
+          displayName: 'Acme Demo',
+          defaultLanguage: 'en',
+          defaultCurrency: 'EUR',
+        },
+      ],
+    });
+    expect(component.client()?.id).toBe('client-1');
+    expect(component.clientMatches()).toEqual([]);
+    expect(component.lines()[0]?.description).toBe('Demo nuts');
+    http.verify();
+  });
+
+  it('does not replace a dirty saved invoice when the route emits the same id', async () => {
+    vi.useFakeTimers();
+    const { fixture, http } = await setup();
+    const component = fixture.componentInstance;
+    component.open('company-1', 'invoice-1');
+    http.expectOne('/api/c/company-1/invoices/invoice-1').flush({ invoice: invoice('Original') });
+    flushCatalog(http);
+    http.expectOne('/api/c/company-1/clients/client-1').flush({
+      client: {
+        id: 'client-1',
+        displayName: 'Acme Demo',
+        defaultLanguage: 'en',
+        defaultCurrency: 'EUR',
+      },
+    });
+    fillLine(component, 0, { description: 'Changed nuts' });
+    component.open('company-1', 'invoice-1');
+    expect(http.match((request) => request.url.includes('/invoices/invoice-1'))).toHaveLength(0);
+    expect(component.lines()[0]?.description).toBe('Changed nuts');
+    http.verify();
+  });
 });
 
 const ISSUER = ['invoice.draft', 'invoice.view', 'invoice.issue'];

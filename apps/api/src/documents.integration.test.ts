@@ -19,6 +19,7 @@ import {
   assertTestDatabaseUrls,
 } from '../../../tools/test-db-guard.mjs';
 import { AppModule } from './app.module';
+import { cancelQueuedJobs } from './test/cancel-queued-jobs';
 import { CompanyAutomationService } from './automation/company-automation.service';
 import { PrismaService } from './database/prisma.service';
 import { DocumentService } from './documents/document.service';
@@ -325,6 +326,7 @@ describe('documents, files and company switches', () => {
           await tx.salesOrder.deleteMany({ where: { id: { in: orderIds } } });
         }
       });
+      await cancelQueuedJobs(app, [companyA, companyB]);
       await app.close();
     }
     delete process.env.STORAGE_ROOT;

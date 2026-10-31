@@ -18,6 +18,7 @@ import {
   assertTestDatabaseUrls,
 } from '../../../tools/test-db-guard.mjs';
 import { AppModule } from './app.module';
+import { cancelQueuedJobs } from './test/cancel-queued-jobs';
 import { PrismaService } from './database/prisma.service';
 import { configureHttp } from './http/configure-http';
 import { caseSensitiveAdapter } from './http/express-adapter';
@@ -172,6 +173,7 @@ describe('company isolation sweep', () => {
 
   afterAll(async () => {
     if (app) {
+      await cancelQueuedJobs(app, [companyA, companyB]);
       await app.close();
     }
     if (storageRoot) {

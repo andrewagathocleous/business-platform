@@ -18,6 +18,7 @@ import {
   assertTestDatabaseUrls,
 } from '../../../tools/test-db-guard.mjs';
 import { AppModule } from './app.module';
+import { cancelQueuedJobs } from './test/cancel-queued-jobs';
 import {
   CLIENT_CSV_COLUMNS,
   parseCsv,
@@ -138,6 +139,7 @@ describe('client CSV imports and exports (real Postgres)', () => {
   }, 120_000);
 
   afterAll(async () => {
+    await cancelQueuedJobs(app, [company]);
     await app.close();
     if (storageRoot) rmSync(storageRoot, { recursive: true, force: true });
     if (mockRoot) rmSync(mockRoot, { recursive: true, force: true });
