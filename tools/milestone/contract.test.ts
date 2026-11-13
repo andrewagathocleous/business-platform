@@ -170,6 +170,30 @@ describe('stack contract', () => {
     expect(ca).not.toContain('if (!existsSync(caPath))');
   });
 
+  it('gives only POST client import previews 4 MiB before the general 1 MiB body limit', () => {
+    const app = read('infra/caddy/app.caddy');
+    const matchers = [
+      app.match(/@clientImport\s*\{\s*([\s\S]*?)\n\t\}/)?.[1],
+      app.match(/@standardBody\s*\{\s*not\s*\{\s*([\s\S]*?)\n\t\t\}\s*\}/)?.[1],
+    ];
+    for (const matcher of matchers) {
+      expect(matcher?.trim().split(/\n\s*/)).toEqual([
+        'method POST',
+        "expression {http.request.orig_uri}.matches('^/api/c/[^/?]+/clients/imports/?([?].*)?$')",
+      ]);
+    }
+    // Anchors, one company segment and case sensitivity agree with Express; req.path excludes queries.
+    const express = read('apps/api/src/http/configure-http.ts');
+    expect(express).toContain("req.method === 'POST'");
+    expect(express).toContain(String.raw`/^\/api\/c\/[^/]+\/clients\/imports\/?$/.test(req.path)`);
+    expect(app).toMatch(/request_body @clientImport\s*\{\s*max_size 4MiB\s*\}/);
+    expect(app).toMatch(/request_body @standardBody\s*\{\s*max_size 1MiB\s*\}/);
+    expect(app.match(/request_body\s/g)).toHaveLength(2);
+    expect(app.indexOf('request_body @clientImport')).toBeLessThan(
+      app.indexOf('request_body @standardBody'),
+    );
+  });
+
   it('uses the same fictional PrestaShop number in the import and the milestone', () => {
     expect(read('apps/api/src/demo-import-args.ts')).toContain('#P-1001');
     expect(read('tools/milestone/verify.ts')).toContain('#P-1001');

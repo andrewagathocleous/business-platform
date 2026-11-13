@@ -30,6 +30,14 @@ export function configureHttp(app: INestApplication): void {
     correlation.use(req, res, next);
   });
   app.use(apiHelmet(config));
+  const importJson = json({ limit: '4mb', verify: captureRawBody });
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.method === 'POST' && /^\/api\/c\/[^/]+\/clients\/imports\/?$/.test(req.path)) {
+      importJson(req, res, next);
+      return;
+    }
+    next();
+  });
   app.use(json({ limit: BODY_LIMIT, verify: captureRawBody }));
   app.use(urlencoded({ extended: true, limit: BODY_LIMIT, verify: captureRawBody }));
   app.use((error: unknown, _req: Request, res: Response, next: NextFunction) => {

@@ -18,6 +18,14 @@ export const PRIVILEGED_PERMISSIONS = [
   'service_identity.manage',
   'store.manage',
   'integration.manage',
+  'invoice.issue',
+  'invoice.credit',
+  'invoice.series.manage',
+  'tax.manage',
+  'payment.record',
+  'invoice.export',
+  'client.import',
+  'client.export',
 ] as const;
 
 const PRIVILEGED = new Set<string>(PRIVILEGED_PERMISSIONS);

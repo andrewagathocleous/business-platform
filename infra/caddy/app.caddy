@@ -3,12 +3,27 @@
 # script-src stays 'self'. The production build sets styles.inlineCritical to false so Angular
 # does not add an inline onload handler, which this CSP would block.
 # 1MiB is 1,048,576 bytes, the same limit as Express json({ limit: '1mb' }).
+# Client CSV previews alone use 4MiB, matching their route-specific Express parser.
+# Match the original URI to preserve Express' case and escaping; the query is optional.
 # Hashed names are the production build in dist/apps/web/browser: main-*.js, chunk-*.js,
 # styles-*.css and media/*. This build does not emit polyfills-*.js (it is inside main).
 # The matcher still names it. A missing hashed file is served by file_server and stays 404.
 (app) {
 	encode gzip
-	request_body {
+	@clientImport {
+		method POST
+		expression {http.request.orig_uri}.matches('^/api/c/[^/?]+/clients/imports/?([?].*)?$')
+	}
+	@standardBody {
+		not {
+			method POST
+			expression {http.request.orig_uri}.matches('^/api/c/[^/?]+/clients/imports/?([?].*)?$')
+		}
+	}
+	request_body @clientImport {
+		max_size 4MiB
+	}
+	request_body @standardBody {
 		max_size 1MiB
 	}
 	header {

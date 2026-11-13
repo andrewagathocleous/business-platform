@@ -118,6 +118,27 @@ describe('MFA policy', () => {
     expect(PRIVILEGED_PERMISSIONS).toContain('member.manage');
   });
 
+  it('withholds every finance permission from a session without MFA', () => {
+    const finance = [
+      'invoice.issue',
+      'invoice.credit',
+      'invoice.series.manage',
+      'tax.manage',
+      'payment.record',
+      'invoice.export',
+      'client.import',
+      'client.export',
+    ];
+    const result = applyMfaPolicy({
+      grants: finance.map((permission) => ({ ...ordinary, permission })),
+      isPlatformOwner: false,
+      mfaSatisfied: false,
+      requireMfaForPrivileged: true,
+    });
+    expect(result.grants).toEqual([]);
+    expect([...result.withheldPermissions].sort()).toEqual([...finance].sort());
+  });
+
   it('keeps privileges when MFA is satisfied or the requirement is off', () => {
     const satisfied = applyMfaPolicy({
       grants: [grant],

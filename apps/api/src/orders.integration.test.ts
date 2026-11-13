@@ -20,6 +20,7 @@ import { AppModule } from './app.module';
 import { InboxProcessor } from './automation/inbox.processor';
 import { InboxService } from './automation/inbox.service';
 import { type ClaimedJob, JobRunner } from './automation/jobs/job-runner';
+import { cancelQueuedJobs } from './test/cancel-queued-jobs';
 import { correlationStorage } from './correlation/correlation';
 import { PrismaService } from './database/prisma.service';
 import { PRESTASHOP_MILESTONE_EXTERNAL_ID } from './demo-import-args';
@@ -173,6 +174,7 @@ describe('orders import and API', () => {
     if (app) {
       app.get(InboxService).hooks = null;
       app.get(InboxProcessor).hooks = null;
+      await cancelQueuedJobs(app, [companyA, companyB]);
       await app.close();
     }
   });
@@ -201,7 +203,7 @@ describe('orders import and API', () => {
     ]);
     expect((await inbox(companyA, inboxId)).duplicateCount).toBe(1);
     expect(await jobCount(inboxId)).toBe(1);
-    expect(await drain()).toBe(1);
+    expect(await drain(companyA)).toBe(1);
     const order = await orderByNumber(adminA, companyA, '#1001');
     order1001 = stringField(order, 'id');
     expect(order.version).toBe(1);
@@ -234,7 +236,7 @@ describe('orders import and API', () => {
     const laterId = cid('import-1001-later');
     const later = await postEvent(tokenA, companyA, shopifyA, `c2a-${runId}-1001-later`, 'orders/updated', laterFixture, laterId);
     expect(later.status, text(later.response)).toBe(202);
-    expect(await drain()).toBe(1);
+    expect(await drain(companyA)).toBe(1);
     const updated = await orderByNumber(fulfil, companyA, '#1001');
     expect(updated.version).toBe(2);
     expect(record(updated.recipient).phone).toBe('+35799001002');
@@ -253,7 +255,7 @@ describe('orders import and API', () => {
     );
     expect(stale.status, text(stale.response)).toBe(202);
     const staleInbox = stringField(record(bodyOf(stale.response)), 'inboxId');
-    expect(await drain()).toBe(1);
+    expect(await drain(companyA)).toBe(1);
     expect((await inbox(companyA, staleInbox)).status).toBe('stale');
     const untouched = await orderByNumber(adminA, companyA, '#1001');
     expect(untouched.version).toBe(2);
@@ -277,7 +279,7 @@ describe('orders import and API', () => {
     expect((await postEvent(tokenA, companyA, shopifyA, `c2a-${runId}-1002`, 'orders/create', pendingFixture)).status).toBe(202);
     expect((await postEvent(tokenA, companyA, shopifyA, `c2a-${runId}-1003`, 'orders/create', emojiFixture)).status).toBe(202);
     expect((await postEvent(tokenB, companyB, shopifyB, `c2a-${runId}-2001`, 'orders/create', companyBFixture)).status).toBe(202);
-    expect(await drain()).toBe(3);
+    expect((await drain(companyA)) + (await drain(companyB))).toBe(3);
     const emoji = await orderByNumber(adminA, companyA, '#1003');
     expect(emoji.fulfilmentStatus).toBe('review_required');
     expect(emoji.reviewReason).toBe('unsupported_glyphs');
@@ -614,7 +616,7 @@ describe('orders import and API', () => {
       expect(newest?.status).toBe('processed');
       const processed = rows.filter((item) => item.status === 'processed').length;
       expect(row.version).toBe(processed);
-      expect(await drain()).toBe(3);
+      expect(await drain(companyA)).toBe(3);
     }
   }, 60_000);
 
@@ -670,7 +672,7 @@ describe('orders import and API', () => {
         tx.integrationInbox.findMany({ where: { companyId: companyA, externalObjectId: externalId } }),
       );
       expect(rows.find((item) => item.externalEventId.endsWith('-cancel'))?.status).toBe('processed');
-      expect(await drain()).toBe(2);
+      expect(await drain(companyA)).toBe(2);
     }
   });
 
@@ -691,7 +693,7 @@ describe('orders import and API', () => {
     );
     expect(posted.status, text(posted.response)).toBe(202);
     const inboxId = stringField(record(bodyOf(posted.response)), 'inboxId');
-    expect(await drain()).toBe(1);
+    expect(await drain(companyA)).toBe(1);
     expect((await inbox(companyA, inboxId)).status).toBe('failed');
     const events = await auditEvents(app, correlationId, companyA);
     expect(events).toEqual([
@@ -729,7 +731,7 @@ describe('orders import and API', () => {
     const again = await postEvent(tokenA, companyA, shopifyA, eventId, 'orders/create', payload, cid('atomic-retry'));
     expect(again.status, text(again.response)).toBe(202);
     expect(record(bodyOf(again.response)).status).toBe('accepted');
-    expect(await drain()).toBe(1);
+    expect(await drain(companyA)).toBe(1);
     expect((await orderByNumber(adminA, companyA, '#ATOMIC')).externalId).toBe(`gid://shopify/Order/atomic-${runId}`);
   });
 
@@ -756,7 +758,7 @@ describe('orders import and API', () => {
     expect((await postEvent(tokenA, companyA, shopifyA, `c2a-${runId}-done-cancel`, 'orders/updated', cancelPayload)).status).toBe(
       202,
     );
-    expect(await drain()).toBe(1);
+    expect(await drain(companyA)).toBe(1);
     const closed = await orderByNumber(adminA, companyA, '#DONE');
     expect(closed.fulfilmentStatus).toBe('completed');
     expect(stringList(closed.attentionReasons)).toContain('cancelled_at_source');
@@ -797,7 +799,7 @@ describe('orders import and API', () => {
     changed.updatedAt = '2026-04-14T10:00:00.000Z';
     setGift(changed, 'A different fictional gift.');
     expect((await postEvent(tokenA, companyA, shopifyA, `c2a-${runId}-stop-gift`, 'orders/updated', changed)).status).toBe(202);
-    expect(await drain()).toBe(1);
+    expect(await drain(companyA)).toBe(1);
     const stoppedOrder = await orderByNumber(adminA, companyA, '#STOP');
     expect(stoppedOrder.fulfilmentStatus).toBe('cancelled');
     expect(stringList(stoppedOrder.attentionReasons)).toContain('gift_message_changed_after_print');
@@ -835,7 +837,7 @@ describe('orders import and API', () => {
     review.updatedAt = '2026-04-16T10:00:00.000Z';
     setGift(review, 'Printed, then changed.');
     expect((await postEvent(tokenA, companyA, shopifyA, `c2a-${runId}-open-gift`, 'orders/updated', review)).status).toBe(202);
-    expect(await drain()).toBe(1);
+    expect(await drain(companyA)).toBe(1);
     const flagged = await orderByNumber(adminA, companyA, '#OPEN');
     expect(flagged.fulfilmentStatus).toBe('review_required');
     expect(flagged.reviewReason).toBe('gift_message_changed_after_print');
@@ -846,7 +848,7 @@ describe('orders import and API', () => {
     unknown.updatedAt = '2026-04-17T10:00:00.000Z';
     setShippingCode(unknown, 'teleport');
     expect((await postEvent(tokenA, companyA, shopifyA, `c2a-${runId}-unknown`, 'orders/create', unknown)).status).toBe(202);
-    expect(await drain()).toBe(1);
+    expect(await drain(companyA)).toBe(1);
     const unknownOrder = await orderByNumber(adminA, companyA, '#UNKNOWN');
     expect(unknownOrder.fulfilmentStatus).toBe('review_required');
     expect(unknownOrder.deliveryMethod).toBe('unknown');
@@ -865,7 +867,7 @@ describe('orders import and API', () => {
     expect((await postEvent(tokenA, companyA, shopifyA, `c2a-${runId}-src-cancel`, 'orders/updated', sourcePayload)).status).toBe(
       202,
     );
-    expect(await drain()).toBe(1);
+    expect(await drain(companyA)).toBe(1);
     const reviewed = await orderByNumber(adminA, companyA, '#SRC-CANCEL');
     expect(reviewed.fulfilmentStatus).toBe('review_required');
     expect(reviewed.reviewReason).toBe('cancelled_at_source');
@@ -1111,7 +1113,7 @@ describe('orders import and API', () => {
     }
     const posted = await postEvent(tokenA, companyA, shopifyA, `c2a-${runId}-${input.name}`, 'orders/create', payload);
     expect(posted.status, text(posted.response)).toBe(202);
-    expect(await drain()).toBe(1);
+    expect(await drain(companyA)).toBe(1);
     return orderByNumber(adminA, companyA, input.name);
   }
 
@@ -1619,8 +1621,8 @@ async function postEvent(
   return { status: response.status, response };
 }
 
-async function drain(): Promise<number> {
-  const result = await started().get(JobRunner).drainOnce();
+async function drain(companyId: string): Promise<number> {
+  const result = await started().get(JobRunner).drainOnce(1_000, { companyId });
   return result.processed;
 }
 

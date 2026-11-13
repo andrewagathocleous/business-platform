@@ -1,0 +1,263 @@
+<section class="screen" data-testid="reports">
+  <h1>{{ 'reports.title' | transloco }}</h1>
+  <form class="filters" (submit)="$event.preventDefault(); load()">
+    <label>
+      {{ 'reports.view' | transloco }}
+      <select (change)="selectView($event)">
+        @for (item of views; track item) {
+        <option [value]="item" [selected]="view() === item">
+          {{ 'reports.views.' + item | transloco }}
+        </option>
+        }
+      </select>
+    </label>
+    @if (view() === 'ageing') {
+    <label
+      >{{ 'reports.asOf' | transloco }}<input
+        type="date"
+        [max]="today()"
+        [value]="asOf()"
+        (input)="asOf.set(field($event))"
+    /></label>
+    } @else {
+    <label
+      >{{ 'reports.from' | transloco }}<input
+        type="date"
+        [value]="from()"
+        (input)="from.set(field($event))"
+    /></label>
+    <label
+      >{{ 'reports.to' | transloco }}<input
+        type="date"
+        [value]="to()"
+        (input)="to.set(field($event))"
+    /></label>
+    }
+    <p-button type="submit" [label]="'reports.show' | transloco" />
+  </form>
+  @if (loading()) {
+  <p role="status">{{ 'reports.loading' | transloco }}</p>
+  } @if (failure(); as error) {
+  <p role="alert">{{ error.key | transloco }}</p>
+  @if (error.correlationId) {
+  <p>{{ 'errors.correlation' | transloco }}: {{ error.correlationId }}</p>
+  } } @if (invoiced(); as report) {
+  <h2>{{ 'reports.views.invoiced' | transloco }}: {{ report.from }} – {{ report.to }}</h2>
+  @if (report.currencies.length === 0) {
+  <p>{{ 'reports.empty' | transloco }}</p>
+  } @for (group of report.currencies; track group.currency) {
+  <section class="card" data-testid="invoiced-currency">
+    <h3>{{ group.currency }}</h3>
+    <div class="table-scroll" tabindex="0" [attr.aria-label]="'reports.views.invoiced' | transloco">
+      <table class="items">
+        <thead>
+          <tr>
+            <th>{{ 'reports.figure' | transloco }}</th>
+            <th>{{ 'reports.count' | transloco }}</th>
+            <th>{{ 'reports.net' | transloco }}</th>
+            <th>{{ 'reports.tax' | transloco }}</th>
+            <th>{{ 'reports.gross' | transloco }}</th>
+            <th>{{ 'reports.basis' | transloco }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">{{ 'reports.invoiced' | transloco }}</th>
+            <td>{{ group.invoiced.count }}</td>
+            <td>{{ group.invoiced.net }}</td>
+            <td>{{ group.invoiced.tax }}</td>
+            <td>{{ group.invoiced.gross }}</td>
+            <td>{{ group.invoiced.basis }}</td>
+          </tr>
+          <tr>
+            <th scope="row">{{ 'reports.credited' | transloco }}</th>
+            <td>{{ group.credited.count }}</td>
+            <td>{{ group.credited.net }}</td>
+            <td>{{ group.credited.tax }}</td>
+            <td>{{ group.credited.gross }}</td>
+            <td>{{ group.credited.basis }}</td>
+          </tr>
+          <tr>
+            <th scope="row">{{ 'reports.totals' | transloco }}</th>
+            <td>—</td>
+            <td>{{ group.totals.net }}</td>
+            <td>{{ group.totals.tax }}</td>
+            <td>{{ group.totals.gross }}</td>
+            <td>{{ group.totals.basis }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="table-scroll" tabindex="0" [attr.aria-label]="'reports.taxCodes' | transloco">
+      <table class="items" data-testid="tax-code-totals">
+        <caption>
+          {{ 'reports.taxCodes' | transloco }}
+        </caption>
+        <thead>
+          <tr>
+            <th>{{ 'reports.taxCode' | transloco }}</th>
+            <th>{{ 'reports.figure' | transloco }}</th>
+            <th>{{ 'reports.net' | transloco }}</th>
+            <th>{{ 'reports.tax' | transloco }}</th>
+            <th>{{ 'reports.gross' | transloco }}</th>
+            <th>{{ 'reports.basis' | transloco }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (code of group.taxCodes; track code.taxCodeId) { @for (kind of taxSets; track kind) {
+          <tr>
+            <th scope="row">{{ code.code }} — {{ code.name }}</th>
+            <td>{{ 'reports.' + kind | transloco }}</td>
+            <td>{{ code[kind].net }}</td>
+            <td>{{ code[kind].tax }}</td>
+            <td>{{ code[kind].gross }}</td>
+            <td>{{ code[kind].basis }}</td>
+          </tr>
+          } }
+        </tbody>
+      </table>
+    </div>
+  </section>
+  } } @if (collected(); as report) {
+  <h2>{{ 'reports.views.collected' | transloco }}: {{ report.from }} – {{ report.to }}</h2>
+  @if (report.currencies.length === 0) {
+  <p>{{ 'reports.empty' | transloco }}</p>
+  } @for (group of report.currencies; track group.currency) {
+  <section class="card" data-testid="collected-currency">
+    <h3>{{ group.currency }}</h3>
+    <div
+      class="table-scroll"
+      tabindex="0"
+      [attr.aria-label]="'reports.views.collected' | transloco"
+    >
+      <table class="items">
+        <thead>
+          <tr>
+            <th>{{ 'reports.method' | transloco }}</th>
+            <th>{{ 'reports.figure' | transloco }}</th>
+            <th>{{ 'reports.records' | transloco }}</th>
+            <th>{{ 'reports.amount' | transloco }}</th>
+            <th>{{ 'reports.basis' | transloco }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (method of group.methods; track method.method) { @for (kind of collectionSets; track
+          kind) {
+          <tr>
+            <th scope="row">{{ 'payments.methods.' + method.method | transloco }}</th>
+            <td>{{ 'reports.' + kind | transloco }}</td>
+            <td>{{ kind === 'total' ? '—' : method[kind].count }}</td>
+            <td>{{ method[kind].amount }}</td>
+            <td>{{ method[kind].basis }}</td>
+          </tr>
+          } }
+        </tbody>
+        <tfoot>
+          @for (kind of collectionSets; track kind) {
+          <tr>
+            <th scope="row">{{ 'reports.totals' | transloco }}</th>
+            <td>{{ 'reports.' + kind | transloco }}</td>
+            <td>{{ kind === 'total' ? '—' : group[kind].count }}</td>
+            <td>{{ group[kind].amount }}</td>
+            <td>{{ group[kind].basis }}</td>
+          </tr>
+          }
+        </tfoot>
+      </table>
+    </div>
+  </section>
+  } } @if (ageing(); as report) {
+  <h2>{{ 'reports.views.ageing' | transloco }}: {{ report.asOf }}</h2>
+  @if (report.currencies.length === 0) {
+  <p>{{ 'reports.empty' | transloco }}</p>
+  } @for (group of report.currencies; track group.currency) {
+  <section class="card" data-testid="ageing-currency">
+    <h3>{{ group.currency }}</h3>
+    <div class="table-scroll" tabindex="0" [attr.aria-label]="'reports.views.ageing' | transloco">
+      <table class="items" data-testid="ageing-totals">
+        <thead>
+          <tr>
+            <th>{{ 'reports.client' | transloco }}</th>
+            @for (bucket of buckets; track bucket) {
+            <th>{{ 'reports.buckets.' + bucket | transloco }}</th>
+            }
+            <th>{{ 'reports.openTotal' | transloco }}</th>
+            <th>{{ 'reports.creditTotal' | transloco }}</th>
+            <th>{{ 'reports.basis' | transloco }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (client of group.clients; track client.clientId) {
+          <tr>
+            <th scope="row">
+              <a [routerLink]="['/c', companyId(), 'clients', client.clientId]"
+                >{{ client.clientName }}</a
+              >
+            </th>
+            @for (bucket of buckets; track bucket) {
+            <td>{{ client.buckets[bucket].amount }}</td>
+            }
+            <td>{{ client.openTotal.amount }}</td>
+            <td>
+              {{ client.creditTotal.amount }}
+              <p>{{ client.creditTotal.basis }}</p>
+            </td>
+            <td>{{ client.openTotal.basis }}</td>
+          </tr>
+          }
+        </tbody>
+        <tfoot>
+          <tr>
+            <th scope="row">{{ 'reports.totals' | transloco }}</th>
+            @for (bucket of buckets; track bucket) {
+            <td>{{ group.buckets[bucket].amount }}</td>
+            }
+            <td>{{ group.openTotal.amount }}</td>
+            <td>
+              {{ group.creditTotal.amount }}
+              <p>{{ group.creditTotal.basis }}</p>
+            </td>
+            <td>{{ group.openTotal.basis }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    @for (client of group.clients; track client.clientId) { @if (client.invoices.length > 0) {
+    <div class="table-scroll" tabindex="0" [attr.aria-label]="client.clientName">
+      <table class="items">
+        <caption>
+          <a [routerLink]="['/c', companyId(), 'clients', client.clientId]"
+            >{{ client.clientName }}</a
+          >
+        </caption>
+        <thead>
+          <tr>
+            <th>{{ 'reports.invoice' | transloco }}</th>
+            <th>{{ 'reports.dueDate' | transloco }}</th>
+            <th>{{ 'reports.bucket' | transloco }}</th>
+            <th>{{ 'reports.openTotal' | transloco }}</th>
+            <th>{{ 'reports.basis' | transloco }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (invoice of client.invoices; track invoice.id) {
+          <tr>
+            <th scope="row">
+              <a [routerLink]="['/c', companyId(), 'invoices', invoice.id]"
+                >{{ invoice.number || invoice.id }}</a
+              >
+            </th>
+            <td>{{ invoice.dueDate }}</td>
+            <td>{{ 'reports.buckets.' + invoice.bucket | transloco }}</td>
+            <td>{{ invoice.openBalance.amount }}</td>
+            <td>{{ invoice.openBalance.basis }}</td>
+          </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+    } }
+  </section>
+  } }
+  <bp-accountant-export [companyId]="companyId()" />
+</section>

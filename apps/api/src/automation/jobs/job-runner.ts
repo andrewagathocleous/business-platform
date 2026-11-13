@@ -67,7 +67,7 @@
  * or handler error fails that queued print instead.
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { TenantDb, type TenantTransaction } from '@bp/db';
+import { Prisma, TenantDb, type TenantTransaction } from '@bp/db';
 import { AuditService } from '../../audit/audit.service';
 import { correlationStorage, uuidv7 } from '../../correlation/correlation';
 import { PrismaService } from '../../database/prisma.service';
@@ -318,18 +318,24 @@ export class JobRunner {
    * Runs due jobs of registered types until none are due within 300ms,
    * or `drainDeadlineMs` passes. A job that is only slightly ahead of the
    * database clock is waited for, instead of stopping after a miss count.
+   * `scope` limits the claim, the wait and reclaim to one company. The worker
+   * and every production caller omit it and still drain every company.
    */
-  async drainOnce(limit = 1_000): Promise<{ processed: number }> {
+  async drainOnce(
+    limit = 1_000,
+    scope?: { readonly companyId: string },
+  ): Promise<{ processed: number }> {
+    const companyId = scope?.companyId ?? null;
     const deadline = Date.now() + this.drainDeadlineMs;
     let processed = 0;
     for (;;) {
       if (Date.now() >= deadline) {
         return { processed };
       }
-      await this.reclaimExpired();
-      const job = await this.claimOne();
+      await this.reclaimExpired(scope);
+      const job = await this.claimOne(this.workerId, companyId);
       if (!job) {
-        const waitMs = await this.nextDelayMs();
+        const waitMs = await this.nextDelayMs(companyId);
         if (waitMs === null) {
           return { processed };
         }
@@ -352,7 +358,10 @@ export class JobRunner {
     }
   }
 
-  async claimOne(workerId = this.workerId): Promise<ClaimedJob | null> {
+  async claimOne(
+    workerId = this.workerId,
+    companyId: string | null = null,
+  ): Promise<ClaimedJob | null> {
     const types = [...this.handlers.keys()];
     if (types.length === 0) {
       return null;
@@ -367,12 +376,14 @@ export class JobRunner {
       if (locked[0]?.locked !== true) {
         return [];
       }
+      const companyMatch = this.companyMatch(companyId);
       const running = await tx.$queryRaw<{ type: string; n: unknown }[]>`
         SELECT type, count(*)::int AS n
         FROM job
         WHERE status = 'running'::"job_status"
           AND locked_until > clock_timestamp()
           AND type = ANY(string_to_array(${typeList}, ','))
+          AND ${companyMatch}
         GROUP BY type
       `;
       const runningCount = new Map(running.map((row) => [row.type, asNumber(row.n)]));
@@ -391,6 +402,7 @@ export class JobRunner {
           AND run_after <= clock_timestamp()
           AND attempts < max_attempts
           AND type = ANY(string_to_array(${eligibleList}, ','))
+          AND ${companyMatch}
         ORDER BY run_after, created_at
         FOR UPDATE SKIP LOCKED
         LIMIT 1
@@ -432,18 +444,27 @@ export class JobRunner {
     return job;
   }
 
+  /** Unscoped drains match every company. A test scope matches one. */
+  private companyMatch(companyId: string | null): Prisma.Sql {
+    if (!companyId) {
+      return Prisma.sql`TRUE`;
+    }
+    return Prisma.sql`company_id = ${companyId}::uuid`;
+  }
+
   /**
    * Milliseconds to wait before claiming again.
    * 15 when a registered job is already due. The soonest wait, capped at 300ms,
    * when the next job is only slightly ahead of the database clock. Null when
    * nothing claimable is due inside that window.
    */
-  private async nextDelayMs(): Promise<number | null> {
+  private async nextDelayMs(companyId: string | null = null): Promise<number | null> {
     const types = [...this.handlers.keys()];
     if (types.length === 0) {
       return null;
     }
     const typeList = types.join(',');
+    const companyMatch = this.companyMatch(companyId);
     const rows = await this.prisma.$queryRaw<{ due: unknown; soon: unknown; waitMs: unknown }[]>`
       SELECT
         count(*) FILTER (WHERE run_after <= clock_timestamp())::int AS due,
@@ -454,6 +475,7 @@ export class JobRunner {
         AND attempts < max_attempts
         AND type = ANY(string_to_array(${typeList}, ','))
         AND run_after <= clock_timestamp() + interval '300 milliseconds'
+        AND ${companyMatch}
     `;
     const row = rows[0];
     if (!row || asNumber(row.soon) === 0) {
@@ -484,13 +506,15 @@ export class JobRunner {
     };
   }
 
-  async reclaimExpired(): Promise<number> {
+  async reclaimExpired(scope?: { readonly companyId: string }): Promise<number> {
     const types = [...this.handlers.keys()];
     if (types.length === 0) {
       return 0;
     }
+    const companyId = scope?.companyId ?? null;
     const typeList = types.join(',');
-    const generic = await this.reclaimGeneric(typeList);
+    const generic = await this.reclaimGeneric(typeList, companyId);
+    const companyMatch = this.companyMatch(companyId);
     const prints = await this.prisma.$queryRaw<ExpiredPrintJob[]>`
       SELECT id,
              company_id AS "companyId",
@@ -506,6 +530,7 @@ export class JobRunner {
         AND company_id IS NOT NULL
         AND type IN ('print.submit', 'print.refresh_status')
         AND type = ANY(string_to_array(${typeList}, ','))
+        AND ${companyMatch}
     `;
     let reclaimed = 0;
     for (const row of prints) {
@@ -517,7 +542,8 @@ export class JobRunner {
   }
 
   /** Expired jobs that are not print handlers. One transaction, queue row first. */
-  private async reclaimGeneric(typeList: string): Promise<number> {
+  private async reclaimGeneric(typeList: string, companyId: string | null): Promise<number> {
+    const companyMatch = this.companyMatch(companyId);
     return this.prisma.$transaction(async (tx) => {
       await this.setRunnerTimeouts(tx);
       const expired = await tx.$queryRaw<
@@ -541,6 +567,7 @@ export class JobRunner {
             type NOT IN ('print.submit', 'print.refresh_status')
             OR company_id IS NULL
           )
+          AND ${companyMatch}
         FOR UPDATE SKIP LOCKED
       `;
       for (const row of expired) {

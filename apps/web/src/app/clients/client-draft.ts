@@ -38,6 +38,7 @@ export type ClientDraft = {
   defaultCurrency: string;
   defaultLanguage: 'en' | 'el';
   paymentTermsDays: string;
+  acceptsEInvoices: boolean;
   contacts: ContactDraft[];
   addresses: AddressDraft[];
 };
@@ -55,6 +56,7 @@ export type ClientWrite = {
   defaultCurrency: string | null;
   defaultLanguage: 'en' | 'el';
   paymentTermsDays: number | null;
+  acceptsEInvoices: boolean;
   contacts: {
     id?: string;
     name: string;
@@ -91,6 +93,7 @@ export function emptyClientDraft(): ClientDraft {
     defaultCurrency: 'EUR',
     defaultLanguage: 'en',
     paymentTermsDays: '',
+    acceptsEInvoices: false,
     contacts: [],
     addresses: [],
   };
@@ -249,6 +252,7 @@ export function clientWrite(draft: ClientDraft): ClientWrite | null {
     defaultCurrency: currency.length > 0 ? currency.toUpperCase() : null,
     defaultLanguage: draft.defaultLanguage,
     paymentTermsDays: termsValue(draft.paymentTermsDays) ?? null,
+    acceptsEInvoices: draft.acceptsEInvoices,
     contacts: draft.contacts.map((contact) => ({
       ...(contact.id.length > 0 ? { id: contact.id } : {}),
       name: contact.name,

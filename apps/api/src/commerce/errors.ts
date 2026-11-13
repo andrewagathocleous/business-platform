@@ -10,6 +10,48 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestContext } from '../authz/request-context';
 import type { RequestMeta } from '../identity/request-meta';
 
+/** 409 reasons the client tells apart, so they keep their code in the error body. */
+const CODED_CONFLICTS = new Set([
+  'already_applied',
+  'preview_expired',
+  'preview_changed',
+  'name_taken',
+  'location_in_use',
+  'code_taken',
+  'tax_code_in_use',
+  'series_in_use',
+  'series_is_default',
+  'currency_locked',
+  'authority_locked',
+  'document_type_locked',
+  'credit_note_draft',
+  'file_integrity_failed',
+  'issuance_disabled',
+  'not_issuable',
+  'not_draft',
+  'number_taken',
+  'tax_code_changed',
+  'not_issued',
+  'e_invoice_not_accepted',
+  'request_key_reused',
+  'over_credit',
+  'not_creditable',
+  'nothing_to_credit',
+  'not_a_quote',
+  'already_converted',
+  'credit_changed',
+  'not_allocatable',
+  'over_allocation',
+  'already_reversed',
+  'payment_refunded',
+  'not_recorded',
+  'idempotency_key_reused',
+  'possible_duplicate',
+]);
+
+/** 409 reasons that are refusals by a switch, so they are audited as denials. */
+const DENIED_CONFLICTS = new Set(['issuance_disabled']);
+
 export class CommerceError extends Error {
   override readonly name = 'CommerceError';
 
@@ -54,7 +96,7 @@ export async function settleCommerceError(
     }
     throw new NotFoundException('Not found');
   }
-  if (error.status === 409 || error.status === 422) {
+  if (error.status === 409 || error.status === 422 || error.action) {
     await prisma.client.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT set_config('app.company_id', ${ctx.companyId}, true)`;
       await audit.record(tx, {
@@ -65,14 +107,22 @@ export async function settleCommerceError(
         action: error.action ?? `${error.objectType}.update`,
         objectType: error.objectType,
         objectId: error.objectId,
-        outcome: 'failure',
+        outcome: DENIED_CONFLICTS.has(error.reason) ? 'denied' : 'failure',
         ip: meta.ip,
         userAgent: meta.userAgent,
         details,
       });
     });
+    if (error.status === 400) {
+      throw new BadRequestException({ code: error.reason, message: error.message });
+    }
     if (error.status === 422) {
-      throw new UnprocessableEntityException({ code: error.reason, message: error.message });
+      const fields = error.details?.fields;
+      throw new UnprocessableEntityException({
+        code: error.reason,
+        message: error.message,
+        ...(Array.isArray(fields) ? { fields } : {}),
+      });
     }
     if (error.reason === 'already_printed') {
       const printJobId = error.details?.printJobId;
@@ -88,7 +138,15 @@ export async function settleCommerceError(
         message: error.message,
       });
     }
-    if (error.reason === 'name_taken' || error.reason === 'location_in_use') {
+    if (error.reason === 'possible_duplicate') {
+      const duplicate = error.details?.duplicate;
+      throw new ConflictException({
+        code: 'possible_duplicate',
+        message: error.message,
+        ...(duplicate !== undefined ? { details: duplicate } : {}),
+      });
+    }
+    if (CODED_CONFLICTS.has(error.reason)) {
       throw new ConflictException({
         code: error.reason,
         message: error.message,

@@ -25,6 +25,7 @@ import {
 } from '../../../tools/test-db-guard.mjs';
 import { AppModule } from './app.module';
 import { JobRunner } from './automation/jobs/job-runner';
+import { cancelQueuedJobs } from './test/cancel-queued-jobs';
 import { APP_CONFIG, type AppConfig } from './config/env';
 import { correlationStorage } from './correlation/correlation';
 import { PrismaService } from './database/prisma.service';
@@ -77,6 +78,7 @@ let mockRoot = '';
 let origin = '';
 let closeFake: (() => Promise<void>) | undefined;
 let sequence = 0;
+let drainCompanyId = '';
 const savedEnv = {
   PRINTNODE_BASE_URL: process.env.PRINTNODE_BASE_URL,
   OUTBOUND_ALLOW_LOOPBACK_FOR_TESTS: process.env.OUTBOUND_ALLOW_LOOPBACK_FOR_TESTS,
@@ -129,6 +131,7 @@ describe('PrintNode provider', () => {
     expect(databases[0]?.current_user).toBe('bp_app');
     companyA = (await prisma.client.company.findFirstOrThrow({ where: { legalName: COMPANY_A } }))
       .id;
+    drainCompanyId = companyA;
     adminUserId = (
       await prisma.client.userAccount.findFirstOrThrow({ where: { email: 'admin.a@example.test' } })
     ).id;
@@ -188,12 +191,7 @@ describe('PrintNode provider', () => {
       .client.job.deleteMany({
         where: { status: 'queued', type: 'inbox.process' },
       });
-    await started()
-      .get(PrismaService)
-      .client.job.updateMany({
-        where: { type: { in: ['print.submit', 'print.refresh_status'] }, status: 'queued' },
-        data: { status: 'cancelled', finishedAt: new Date() },
-      });
+    await cancelQueuedJobs(app, [companyA]);
   }, 120_000);
 
   afterEach(async () => {
@@ -202,21 +200,13 @@ describe('PrintNode provider', () => {
     script.states = [];
     script.posts = [];
     script.stateGets = 0;
-    if (app) {
-      await app.get(PrismaService).client.job.updateMany({
-        where: { type: { in: ['print.submit', 'print.refresh_status'] }, status: 'queued' },
-        data: { status: 'cancelled', finishedAt: new Date() },
-      });
-    }
+    await cancelQueuedJobs(app, [companyA]);
   });
 
   afterAll(async () => {
     if (app && companyA && adminUserId) {
       await revokeKeys(companyA, adminUserId);
-      await app.get(PrismaService).client.job.updateMany({
-        where: { type: { in: ['print.submit', 'print.refresh_status'] }, status: 'queued' },
-        data: { status: 'cancelled', finishedAt: new Date() },
-      });
+      await cancelQueuedJobs(app, [companyA]);
     }
     if (bare) {
       await bare.close();
@@ -592,7 +582,7 @@ function withCompany<T>(
 }
 
 async function drainOnce(): Promise<void> {
-  await started().get(JobRunner).drainOnce();
+  await started().get(JobRunner).drainOnce(1_000, { companyId: drainCompanyId });
 }
 
 async function releaseRefresh(printJobId: string): Promise<void> {

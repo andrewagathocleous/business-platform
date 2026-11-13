@@ -8,7 +8,7 @@ import { orderScopes } from '../orders/order.scope';
 
 /**
  * A bad `sourceId` stays in the caller's own scopes so the service can return 400.
- * A real id that is not this company's order is not found.
+ * A real id that is not this company's order (or invoice) is not found.
  * A reprint is judged with `print.reprint`.
  */
 export const printRequestScope: ScopeResolver = async (request, ctx, tx) => {
@@ -18,6 +18,17 @@ export const printRequestScope: ScopeResolver = async (request, ctx, tx) => {
   const sourceId = typeof body.sourceId === 'string' ? body.sourceId : '';
   if (!isUuid(sourceId)) {
     return { found: true, scopes: grantScopes(ctx, permission), permission };
+  }
+  if (body.sourceType === 'invoice') {
+    // An invoice belongs to the company, not to a store, so printing it needs a company grant.
+    const invoice = await tx.invoice.findFirst({
+      where: { id: sourceId.toLowerCase(), companyId: ctx.companyId },
+      select: { id: true },
+    });
+    if (!invoice) {
+      return { found: false };
+    }
+    return { found: true, scopes: [{ type: 'company', id: null }], permission };
   }
   const order = await tx.salesOrder.findFirst({
     where: { id: sourceId.toLowerCase(), companyId: ctx.companyId },
