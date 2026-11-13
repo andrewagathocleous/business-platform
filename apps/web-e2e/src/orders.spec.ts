@@ -37,10 +37,10 @@ test('admin.a works an order from the list through a confirmed print', async ({
   await expect(row.getByTestId('payment-status')).toHaveClass(/p-tag-success/);
   await expect(row.getByTestId('fulfilment-status')).toBeVisible();
   await expect(row.getByTestId('integration-status')).toBeVisible();
-  const review = page.getByRole('row', { name: /#1003/ });
-  await expect(review.getByTestId('fulfilment-status')).toHaveClass(/p-tag-warn/);
-  await expect(review.locator('.pi-exclamation-triangle')).toBeVisible();
-  await expect(review).toContainText('Review required');
+  const emojiOrder = page.getByRole('row', { name: /#1003/ });
+  await expect(emojiOrder.getByTestId('fulfilment-status')).toHaveText('New');
+  await expect(emojiOrder.getByTestId('fulfilment-status')).toHaveClass(/p-tag-info/);
+  await expect(emojiOrder.locator('.pi-exclamation-triangle')).toHaveCount(0);
   await expect(page.getByRole('status')).toHaveCount(0);
   await shot(page, 'orders-list');
   await assertButtonContrast(page);

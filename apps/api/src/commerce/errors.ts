@@ -68,6 +68,19 @@ export class CommerceError extends Error {
   }
 }
 
+/** Code points, fit and the omitted count. The gift message itself never leaves the service. */
+function giftReviewBody(error: CommerceError): Record<string, unknown> {
+  if (error.reason !== 'gift_message_needs_review' || !error.details) {
+    return {};
+  }
+  const { fits, unsupportedChars, omittedCount } = error.details;
+  return {
+    ...(typeof fits === 'boolean' ? { fits } : {}),
+    ...(Array.isArray(unsupportedChars) ? { unsupportedChars } : {}),
+    ...(typeof omittedCount === 'number' ? { omittedCount } : {}),
+  };
+}
+
 export async function settleCommerceError(
   audit: AuditService,
   prisma: PrismaService,
@@ -122,6 +135,7 @@ export async function settleCommerceError(
         code: error.reason,
         message: error.message,
         ...(Array.isArray(fields) ? { fields } : {}),
+        ...giftReviewBody(error),
       });
     }
     if (error.reason === 'already_printed') {

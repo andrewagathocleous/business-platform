@@ -9,6 +9,7 @@ import {
   type GiftMessageTemplate,
 } from '@bp/documents';
 import {
+  giftMessageTooLong,
   ProviderRejected,
   SIMULATED_PRINTING_LABEL,
   storageKey,
@@ -72,6 +73,13 @@ export type PrintRequestInput = {
    * job it already created instead of queuing another print.
    */
   requestKey?: string;
+  /**
+   * Set together when the card has characters no bundled font can draw.
+   * The card is queued with those characters left out. A card that does not fit stays refused.
+   */
+  unprintableAcknowledged?: true;
+  /** Staff reason, at least 5 characters, not trimmed. Never the gift message. */
+  unprintableReason?: string;
 };
 
 type NewPrintJob = {
@@ -928,7 +936,7 @@ export class PrintService {
     const template =
       documentType === 'gift_message' ? await this.loadTemplate(tx, ctx.companyId) : null;
     const rendered = await this.render(documentType, order, store.name, company, lines, template);
-    if (rendered.review) {
+    if (rendered.review && !acceptedUnprintable(rendered.review, input)) {
       throw new CommerceError(
         422,
         'gift_message_needs_review',
@@ -936,7 +944,11 @@ export class PrintService {
         order.id,
         'gift_message_needs_review',
         'print_job.requested',
-        { fits: rendered.review.fits, unsupportedChars: rendered.review.unsupportedChars },
+        {
+          fits: rendered.review.fits,
+          unsupportedChars: rendered.review.unsupportedChars,
+          omittedCount: rendered.review.omittedCount,
+        },
       );
     }
     const printJobId = uuidv7();
@@ -1002,6 +1014,7 @@ export class PrintService {
         isReprint: input.reprint != null,
         reprintOfId,
         provider: printer.provider,
+        ...unprintableAudit(rendered.review, input.unprintableReason),
       },
     });
     return this.mustLoad(tx, ctx.companyId, printJobId);
@@ -1357,7 +1370,10 @@ export class PrintService {
       quantity: { toFixed(digits: number): string };
     }[],
     template: GiftMessageTemplate | null,
-  ): Promise<{ pdf: Buffer; review: { fits: boolean; unsupportedChars: string[] } | null }> {
+  ): Promise<{
+    pdf: Buffer;
+    review: { fits: boolean; unsupportedChars: string[]; omittedCount: number } | null;
+  }> {
     if (documentType === 'gift_message') {
       if (order.giftMessage === null) {
         throw new CommerceError(404, 'gift_message_missing', 'sales_order', null, 'Not found');
@@ -1371,11 +1387,22 @@ export class PrintService {
           'Not found',
         );
       }
+      // Length before the renderer. An over-long message does not fit and is not shaped.
+      if (giftMessageTooLong(order.giftMessage)) {
+        return {
+          pdf: Buffer.alloc(0),
+          review: { fits: false, unsupportedChars: [], omittedCount: 0 },
+        };
+      }
       const card = await renderGiftMessage(order.giftMessage, template);
       if (!card.fits || card.unsupportedChars.length > 0) {
         return {
           pdf: card.pdf,
-          review: { fits: card.fits, unsupportedChars: card.unsupportedChars },
+          review: {
+            fits: card.fits,
+            unsupportedChars: card.unsupportedChars,
+            omittedCount: card.omittedCount,
+          },
         };
       }
       return { pdf: card.pdf, review: null };
@@ -1783,9 +1810,55 @@ function isRequestKeyConflict(error: unknown): boolean {
   return errorText(error).includes('print_job_company_request_key');
 }
 
-/** Everything the caller asked for. A key sent again must come with exactly this request. */
+/**
+ * A card that does not fit is always refused. Characters no font can draw are
+ * queued only after the caller confirms and gives a reason of 5 to 500 characters.
+ */
+function acceptedUnprintable(
+  review: { fits: boolean; unsupportedChars: string[] },
+  input: PrintRequestInput,
+): boolean {
+  if (!review.fits) {
+    return false;
+  }
+  if (review.unsupportedChars.length === 0) {
+    return true;
+  }
+  const reason = input.unprintableReason;
+  return (
+    input.unprintableAcknowledged === true &&
+    typeof reason === 'string' &&
+    reason.length >= 5 &&
+    reason.length <= 500
+  );
+}
+
+/**
+ * Recorded only when characters were actually left off the card.
+ * The gift message is not included.
+ */
+function unprintableAudit(
+  review: { unsupportedChars: string[]; omittedCount: number } | null,
+  reason: string | undefined,
+): Record<string, unknown> {
+  if (!review || review.unsupportedChars.length === 0 || typeof reason !== 'string') {
+    return {};
+  }
+  return {
+    unprintableAcknowledged: true,
+    unsupportedChars: review.unsupportedChars,
+    omittedCount: review.omittedCount,
+    unprintableReason: reason,
+  };
+}
+
+/**
+ * Everything the caller asked for. A key sent again must come with exactly this request.
+ * The acknowledgement is appended only when the caller sent it, so a request stored
+ * before this step still hashes to the same value.
+ */
 function requestHash(input: PrintRequestInput): string {
-  const canonical = JSON.stringify([
+  const canonical: unknown[] = [
     input.sourceType,
     input.sourceId.toLowerCase(),
     input.documentType,
@@ -1794,8 +1867,11 @@ function requestHash(input: PrintRequestInput): string {
     input.locationId?.toLowerCase() ?? null,
     input.reprint?.ofPrintJobId.toLowerCase() ?? null,
     input.reprint?.reason ?? null,
-  ]);
-  return createHash('sha256').update(canonical).digest('hex');
+  ];
+  if (input.unprintableAcknowledged === true || input.unprintableReason !== undefined) {
+    canonical.push(input.unprintableAcknowledged === true, input.unprintableReason ?? null);
+  }
+  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }
 
 function requestKeyReused(): CommerceError {

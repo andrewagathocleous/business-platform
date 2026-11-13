@@ -68,6 +68,8 @@ export type {
   ProviderJobStatus,
 } from './printing/provider';
 
+export { GIFT_MESSAGE_MAX_CODE_POINTS, giftMessageTooLong } from './gift-message-length';
+
 export { isBlockedAddress } from './http/address-policy';
 export {
   BlockedDestination,

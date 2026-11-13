@@ -56,7 +56,7 @@ WORKDIR /app
 COPY --from=build /opt/runtime ./
 # @prisma/adapter-pg belongs to @bp/db and undici belongs to @bp/integrations.
 # Resolve each from that package, not from /app.
-RUN node -e "const fs=require('node:fs'); const {createRequire}=require('node:module'); require('@bp/db'); createRequire(require.resolve('@bp/db'))('@prisma/adapter-pg'); require('@bp/integrations'); createRequire(require.resolve('@bp/integrations'))('undici'); const font='/app/node_modules/@bp/documents/assets/fonts/NotoSans-Regular.ttf'; if(!fs.existsSync(font)){console.error('missing Noto Sans font'); process.exit(1)} if(fs.existsSync('/app/node_modules/prisma')||fs.existsSync('/app/node_modules/.bin/prisma')){console.error('prisma CLI must not be in the runtime image'); process.exit(1)}" \
+RUN node -e "const fs=require('node:fs'); const {createRequire}=require('node:module'); require('@bp/db'); createRequire(require.resolve('@bp/db'))('@prisma/adapter-pg'); require('@bp/integrations'); createRequire(require.resolve('@bp/integrations'))('undici'); const fonts=['/app/node_modules/@bp/documents/assets/fonts/NotoSans-Regular.ttf','/app/node_modules/@bp/documents/assets/fonts/NotoSansSymbols2-Regular.ttf','/app/node_modules/@bp/documents/assets/fonts/NotoEmoji[wght].ttf']; for (const font of fonts){ if(!fs.existsSync(font)){ console.error('missing font '+font); process.exit(1);} } if(fs.existsSync('/app/node_modules/prisma')||fs.existsSync('/app/node_modules/.bin/prisma')){console.error('prisma CLI must not be in the runtime image'); process.exit(1)}" \
   && chown -R node:node /app /var/lib/business-platform
 ENV NODE_ENV=production
 USER node
