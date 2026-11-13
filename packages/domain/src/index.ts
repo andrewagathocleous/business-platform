@@ -38,6 +38,7 @@ export type {
   TransitionDecision,
   TransitionErrorCode,
 } from './orders/state-machine';
+export { GIFT_MESSAGE_MAX_CODE_POINTS, giftMessageTooLong } from './orders/gift-message-length';
 
 export { isAutomationOnly, PERMISSIONS, permissionByKey, ROLE_KEYS } from './authz/permissions';
 export type {

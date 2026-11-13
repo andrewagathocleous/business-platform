@@ -139,7 +139,7 @@ export class DocumentController {
       requestMeta(req),
     );
     res.setHeader('X-Gift-Fits', rendered.fits ? 'true' : 'false');
-    res.setHeader('X-Gift-Unsupported', String(rendered.unsupportedChars.length));
+    res.setHeader('X-Gift-Unsupported', String(rendered.omittedCount));
     return pdfFile(res, rendered.pdf, 'gift-card-preview.pdf');
   }
 

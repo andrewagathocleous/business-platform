@@ -56,8 +56,14 @@ const requestBody = z
       })
       .strict()
       .optional(),
+    unprintableAcknowledged: z.literal(true).optional(),
+    unprintableReason: z.string().min(5).max(500).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) => (value.unprintableAcknowledged === true) === (value.unprintableReason !== undefined),
+    'unprintableAcknowledged and unprintableReason are sent together',
+  );
 
 const confirmBody = z
   .object({
@@ -104,7 +110,7 @@ export class PrintController {
   @RequirePermission('print.submit', { anyOf: ['print.reprint'], scope: printRequestScope })
   @ApiOperation({
     summary:
-      'Queue a packing slip or gift message (rendered now), or an issued invoice (its stored PDF; two copies by default for paper delivery). A second first print is 409 already_printed. The provider follows the mapped printer (mock in development and test only, otherwise printnode).',
+      'Queue a packing slip or gift message (rendered now), or an issued invoice (its stored PDF; two copies by default for paper delivery). A second first print is 409 already_printed. A gift card that does not fit is 422 gift_message_needs_review. A card with characters no font can draw is the same 422 unless unprintableAcknowledged is true with a reason; those characters are left out. The provider follows the mapped printer (mock in development and test only, otherwise printnode).',
   })
   async request(@Req() req: Request, @Param('companyId') companyId: string) {
     const parsed = requestBody.safeParse(unknownBody(req));
@@ -120,6 +126,12 @@ export class PrintController {
       ...(parsed.data.locationId !== undefined ? { locationId: parsed.data.locationId } : {}),
       ...(parsed.data.requestKey !== undefined ? { requestKey: parsed.data.requestKey } : {}),
       ...(parsed.data.reprint !== undefined ? { reprint: parsed.data.reprint } : {}),
+      ...(parsed.data.unprintableAcknowledged !== undefined
+        ? { unprintableAcknowledged: parsed.data.unprintableAcknowledged }
+        : {}),
+      ...(parsed.data.unprintableReason !== undefined
+        ? { unprintableReason: parsed.data.unprintableReason }
+        : {}),
     };
     return this.printing.request(requireContext(req, companyId), input, requestMeta(req));
   }

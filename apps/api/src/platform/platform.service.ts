@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ALL_ROLE_TEMPLATES } from '@bp/domain';
 import { AuditService } from '../audit/audit.service';
+import { DEFAULT_GIFT_TEMPLATE } from '../documents/default-gift-template';
 import { COMPANY_SWITCH_KEYS } from '../automation/company-switches';
 import { PrismaService } from '../database/prisma.service';
 import type { RequestMeta } from '../identity/request-meta';
@@ -95,6 +96,26 @@ export class PlatformService {
           reason: 'company created',
           updatedById: userId,
         })),
+      });
+      const giftTemplate = await tx.giftMessageTemplate.create({
+        data: { companyId: company.id, ...DEFAULT_GIFT_TEMPLATE },
+      });
+      await this.audit.record(tx, {
+        companyId: company.id,
+        actorType: 'user',
+        actorId: userId,
+        actorLabel,
+        action: 'gift_message_template.created',
+        objectType: 'gift_message_template',
+        objectId: giftTemplate.id,
+        outcome: 'success',
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+        details: {
+          name: DEFAULT_GIFT_TEMPLATE.name,
+          isDefault: true,
+          preset: 'zebra-100x150',
+        },
       });
       await this.audit.record(tx, {
         companyId: company.id,
