@@ -32,6 +32,40 @@ import { fieldValue } from './field-value';
 
 const noPrintPermissions = { submit: false, reprint: false, confirm: false };
 
+const CODE_POINT = /^U\+[0-9A-F]{4,6}$/;
+
+/**
+ * A 422 that names how many characters will be left off the card.
+ * `omittedCount` is that exact number. The text itself is ignored.
+ */
+function giftMessageReview(error: unknown): { fits: boolean; omittedCount: number } | null {
+  if (!(error instanceof HttpErrorResponse) || error.status !== 422) {
+    return null;
+  }
+  const body: unknown = error.error;
+  if (!isRecord(body)) {
+    return null;
+  }
+  const nested = body['error'];
+  if (!isRecord(nested) || nested['code'] !== 'gift_message_needs_review') {
+    return null;
+  }
+  const listed = nested['unsupportedChars'];
+  const codes = Array.isArray(listed)
+    ? listed.filter((item): item is string => typeof item === 'string' && CODE_POINT.test(item))
+    : [];
+  const rawCount = nested['omittedCount'];
+  const omittedCount =
+    typeof rawCount === 'number' && Number.isSafeInteger(rawCount) && rawCount >= 0
+      ? rawCount
+      : codes.length;
+  return { fits: nested['fits'] !== false, omittedCount };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 function isPollDenied(error: unknown): boolean {
   return error instanceof HttpErrorResponse && (error.status === 403 || error.status === 404);
 }
@@ -117,7 +151,7 @@ export const PRINT_POLL_LIMIT_MS = new InjectionToken<number>('PRINT_POLL_LIMIT_
             <p-button
               type="button"
               [label]="'orders.print.print' | transloco"
-              [disabled]="mutating()"
+              [disabled]="mutating() || omitOpen()"
               (onClick)="print(false)"
             />
           }
@@ -153,7 +187,7 @@ export const PRINT_POLL_LIMIT_MS = new InjectionToken<number>('PRINT_POLL_LIMIT_
               type="button"
               severity="secondary"
               [label]="'orders.print.reprint' | transloco"
-              [disabled]="mutating()"
+              [disabled]="mutating() || omitOpen()"
               (onClick)="reprintOpen.set(true)"
             />
           }
@@ -198,6 +232,40 @@ export const PRINT_POLL_LIMIT_MS = new InjectionToken<number>('PRINT_POLL_LIMIT_
           />
         </div>
       }
+      @if (fitRefused()) {
+        <p role="alert" data-testid="gift-fit">{{ 'orders.print.giftDoesNotFit' | transloco }}</p>
+      }
+      @if (omitOpen() && !pending() && !cannotCheck()) {
+        <div
+          class="dialog"
+          role="dialog"
+          data-testid="omit-dialog"
+          [attr.aria-label]="'orders.print.omitTitle' | transloco"
+        >
+          <p>{{ 'orders.print.omitCount' | transloco: { count: omittedCount() } }}</p>
+          <label>
+            {{ 'orders.print.reason' | transloco }}
+            <textarea
+              class="control"
+              data-testid="omit-reason"
+              [value]="omitReason()"
+              (input)="onOmitReason($event)"
+            ></textarea>
+          </label>
+          <p-button
+            type="button"
+            [label]="'orders.print.omitPrint' | transloco"
+            [disabled]="mutating() || omitReason().length < 5"
+            (onClick)="confirmOmit()"
+          />
+          <p-button
+            type="button"
+            severity="secondary"
+            [label]="'orders.print.back' | transloco"
+            (onClick)="omitOpen.set(false)"
+          />
+        </div>
+      }
     </article>
   `,
 })
@@ -227,6 +295,12 @@ export class PrintPanelComponent {
   readonly mutating = signal(false);
   readonly reprintOpen = signal(false);
   readonly reprintReason = signal('');
+  readonly omitOpen = signal(false);
+  readonly omitReason = signal('');
+  readonly omittedCount = signal(0);
+  readonly fitRefused = signal(false);
+  /** The refused gift-card request, kept so the confirmation can repeat a reprint. */
+  private omitBase: Record<string, unknown> | null = null;
   /**
    * A print request whose outcome is unknown. It keeps its request key, so sending it again
    * returns the job it may already have created. Session storage keeps it across a reload.
@@ -265,6 +339,11 @@ export class PrintPanelComponent {
       this.storageBlocked.set(false);
       this.reprintOpen.set(false);
       this.reprintReason.set('');
+      this.omitOpen.set(false);
+      this.omitReason.set('');
+      this.omittedCount.set(0);
+      this.fitRefused.set(false);
+      this.omitBase = null;
       untracked(() => {
         this.loadStored(storageKey);
       });
@@ -378,11 +457,16 @@ export class PrintPanelComponent {
     this.reprintReason.set(fieldValue(event));
   }
 
+  onOmitReason(event: Event): void {
+    this.omitReason.set(fieldValue(event));
+  }
+
   print(reprint: boolean): void {
     const current = this.shown();
-    if (this.mutating() || this.pending() || this.cannotCheck()) {
+    if (this.mutating() || this.pending() || this.cannotCheck() || this.omitOpen()) {
       return;
     }
+    this.fitRefused.set(false);
     if (reprint && (this.reprintReason().length < 5 || !current)) {
       return;
     }
@@ -395,7 +479,35 @@ export class PrintPanelComponent {
         ? { reprint: { ofPrintJobId: current.id, reason: this.reprintReason() } }
         : {}),
     };
+    this.omitBase = this.documentType() === 'gift_message' ? body : null;
     // Remembered before it is sent. Without a saved copy a lost answer could not be recovered.
+    if (!this.remember({ body, lost: false })) {
+      this.storageBlocked.set(true);
+      return;
+    }
+    this.storageBlocked.set(false);
+    this.send(body);
+  }
+
+  /** Queues the card with the undrawable characters left out. A new key: the refusal created no job. */
+  confirmOmit(): void {
+    const base = this.omitBase;
+    if (
+      !base ||
+      this.omitReason().length < 5 ||
+      this.mutating() ||
+      this.pending() ||
+      this.cannotCheck()
+    ) {
+      return;
+    }
+    const body: Record<string, unknown> = {
+      ...base,
+      requestKey: crypto.randomUUID(),
+      unprintableAcknowledged: true,
+      unprintableReason: this.omitReason(),
+    };
+    this.omitOpen.set(false);
     if (!this.remember({ body, lost: false })) {
       this.storageBlocked.set(true);
       return;
@@ -459,6 +571,10 @@ export class PrintPanelComponent {
           this.live.set(job);
           this.reprintOpen.set(false);
           this.reprintReason.set('');
+          this.omitOpen.set(false);
+          this.omitReason.set('');
+          this.omitBase = null;
+          this.fitRefused.set(false);
           this.changed.emit(true);
         },
         error: (error: unknown) => {
@@ -482,6 +598,19 @@ export class PrintPanelComponent {
           this.clearPending(key);
           if (isAlreadyPrinted(error)) {
             this.changed.emit(true);
+          }
+          const review = this.documentType() === 'gift_message' ? giftMessageReview(error) : null;
+          if (review?.fits === false) {
+            this.fitRefused.set(true);
+            this.omitOpen.set(false);
+            return;
+          }
+          if (review && review.omittedCount > 0 && this.omitBase) {
+            this.fitRefused.set(false);
+            this.omittedCount.set(review.omittedCount);
+            this.omitReason.set('');
+            this.reprintOpen.set(false);
+            this.omitOpen.set(true);
           }
         },
       });

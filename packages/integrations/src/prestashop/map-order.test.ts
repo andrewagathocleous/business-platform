@@ -4,6 +4,7 @@ import { type Socket } from 'node:net';
 import { resolve } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { money, parseAmount } from '@bp/domain';
+import { GIFT_MESSAGE_MAX_CODE_POINTS } from '../gift-message-length';
 import { createSafeFetch } from '../http/safe-fetch';
 import { createPrestashopClient } from './client';
 import {
@@ -233,6 +234,21 @@ describe('mapPrestashopOrder', () => {
     const error = mapError(missing);
     expect(error).toBeInstanceOf(PrestashopMapError);
     expect((error as PrestashopMapError).message).toBe('prestashop_currency_missing');
+  });
+
+  it('keeps a gift message that is longer than the card', () => {
+    const fitting = clone(paidOrder());
+    fitting.order.gift_message = 'i'.repeat(GIFT_MESSAGE_MAX_CODE_POINTS);
+    expect(mapPrestashopOrder(fitting, CONFIG).giftMessage).toBe(
+      'i'.repeat(GIFT_MESSAGE_MAX_CODE_POINTS),
+    );
+    const smiles = clone(paidOrder());
+    smiles.order.gift_message = '\u{1F60A}'.repeat(5000);
+    expect(mapPrestashopOrder(smiles, CONFIG).giftMessage).toBe('\u{1F60A}'.repeat(5000));
+    const overText = `${'i'.repeat(GIFT_MESSAGE_MAX_CODE_POINTS)}SENTINEL`;
+    const over = clone(paidOrder());
+    over.order.gift_message = overText;
+    expect(mapPrestashopOrder(over, CONFIG).giftMessage).toBe(overText);
   });
 
   it('reads the event identity from the shop clock', () => {

@@ -645,7 +645,157 @@ describe('PrintPanelComponent', () => {
     }
     http.verify();
   });
+
+  it('asks how many characters will be left out and sends the acknowledgement with a new key', async () => {
+    const { fixture, http } = await setup(60_000);
+    fixture.componentRef.setInput('documentType', 'gift_message');
+    fixture.detectChanges();
+    await fixture.whenStable();
+    button(fixture, 'Print').click();
+    const first = http.expectOne('/api/c/company-1/print-requests');
+    const firstKey = record(first.request.body)['requestKey'];
+    first.flush(giftReviewBody({ fits: true, omittedCount: 2 }), {
+      status: 422,
+      statusText: 'Unprocessable Entity',
+    });
+    fixture.detectChanges();
+    const dialog = omitDialog(fixture);
+    expect(dialog.textContent).toContain('2 character');
+    expect(dialog.textContent).not.toContain('U+0378');
+    expect(dialog.textContent).not.toContain('SENTINEL-GIFT');
+    const area = omitReason(dialog);
+    area.value = 'nope';
+    area.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(dialogButton(fixture).disabled).toBe(true);
+    area.value = 'leave them out';
+    area.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(dialogButton(fixture).disabled).toBe(false);
+    dialogButton(fixture).click();
+    const second = http.expectOne('/api/c/company-1/print-requests');
+    const body = record(second.request.body);
+    expect(body['unprintableAcknowledged']).toBe(true);
+    expect(body['unprintableReason']).toBe('leave them out');
+    expect(body['requestKey']).not.toBe(firstKey);
+    expect(JSON.stringify(body)).not.toContain('SENTINEL-GIFT');
+    second.flush({ printJob: { ...slot('queued'), documentType: 'gift_message' } });
+    fixture.detectChanges();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="omit-dialog"]'),
+    ).toBeNull();
+    http.verify();
+  });
+
+  it('keeps a reprint when the confirmation leaves characters out', async () => {
+    const { fixture, http } = await setup(60_000);
+    fixture.componentRef.setInput('documentType', 'gift_message');
+    fixture.componentRef.setInput('canSubmit', false);
+    fixture.componentRef.setInput('canReprint', true);
+    fixture.componentRef.setInput('firstPrintAvailable', false);
+    fixture.componentRef.setInput('job', {
+      ...slot('confirmed_printed'),
+      documentType: 'gift_message',
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    submitReprint(fixture, 'Client lost it');
+    const first = http.expectOne('/api/c/company-1/print-requests');
+    first.flush(giftReviewBody({ fits: true, omittedCount: 1 }), {
+      status: 422,
+      statusText: 'Unprocessable Entity',
+    });
+    fixture.detectChanges();
+    const area = omitReason(omitDialog(fixture));
+    area.value = 'leave them out';
+    area.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    dialogButton(fixture).click();
+    const second = http.expectOne('/api/c/company-1/print-requests');
+    expect(record(second.request.body)).toMatchObject({
+      unprintableAcknowledged: true,
+      unprintableReason: 'leave them out',
+      reprint: { ofPrintJobId: 'job-1', reason: 'Client lost it' },
+    });
+    second.flush({ printJob: { ...slot('queued'), documentType: 'gift_message' } });
+    http.verify();
+  });
+
+  it('does not offer the confirmation when the message does not fit', async () => {
+    const { fixture, http } = await setup(60_000);
+    fixture.componentRef.setInput('documentType', 'gift_message');
+    fixture.detectChanges();
+    await fixture.whenStable();
+    button(fixture, 'Print').click();
+    http
+      .expectOne('/api/c/company-1/print-requests')
+      .flush(giftReviewBody({ fits: false, omittedCount: 0 }), {
+        status: 422,
+        statusText: 'Unprocessable Entity',
+      });
+    fixture.detectChanges();
+    expect(textOf(fixture)).toContain('does not fit');
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="omit-dialog"]'),
+    ).toBeNull();
+    expect(http.match('/api/c/company-1/print-requests')).toHaveLength(0);
+    http.verify();
+  });
+
+  it('shows the exact omitted count when more than 10000 characters are left out', async () => {
+    const { fixture, http, component } = await setup(60_000);
+    fixture.componentRef.setInput('documentType', 'gift_message');
+    fixture.detectChanges();
+    await fixture.whenStable();
+    button(fixture, 'Print').click();
+    http
+      .expectOne('/api/c/company-1/print-requests')
+      .flush(giftReviewBody({ fits: true, omittedCount: 10_001 }), {
+        status: 422,
+        statusText: 'Unprocessable Entity',
+      });
+    fixture.detectChanges();
+    expect(component.omittedCount()).toBe(10_001);
+    const dialog = omitDialog(fixture);
+    expect(dialog.textContent).toContain('10001 character');
+    expect(dialog.textContent).not.toContain('SENTINEL-GIFT');
+    http.verify();
+  });
 });
+
+function giftReviewBody(review: { fits: boolean; omittedCount: number }): {
+  error: Record<string, unknown>;
+} {
+  return {
+    error: {
+      code: 'gift_message_needs_review',
+      message: 'gift_message_needs_review',
+      correlationId: 'corr-gift',
+      fits: review.fits,
+      unsupportedChars: review.omittedCount > 0 ? ['U+0378'] : [],
+      omittedCount: review.omittedCount,
+      giftMessage: 'SENTINEL-GIFT',
+    },
+  };
+}
+
+function omitDialog(fixture: ComponentFixture<PrintPanelComponent>): HTMLElement {
+  const dialog: unknown = (fixture.nativeElement as HTMLElement).querySelector(
+    '[data-testid="omit-dialog"]',
+  );
+  if (!(dialog instanceof HTMLElement)) {
+    throw new Error('missing omit dialog');
+  }
+  return dialog;
+}
+
+function omitReason(dialog: HTMLElement): HTMLTextAreaElement {
+  const area: unknown = dialog.querySelector('[data-testid="omit-reason"]');
+  if (!(area instanceof HTMLTextAreaElement)) {
+    throw new Error('missing omit reason');
+  }
+  return area;
+}
 
 async function setup(
   pollMs = 30,

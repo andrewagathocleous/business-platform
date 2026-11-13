@@ -424,6 +424,9 @@ importers:
 
   packages/documents:
     dependencies:
+      '@bp/domain':
+        specifier: workspace:*
+        version: link:../domain
       fontkit:
         specifier: 2.0.4
         version: 2.0.4

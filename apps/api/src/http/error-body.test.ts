@@ -112,4 +112,75 @@ describe('errorBody', () => {
     expect(other.body.error.details).toBeUndefined();
     expect(JSON.stringify(other)).not.toContain('PRIVATE-NOTE-SENTINEL');
   });
+
+  it('passes gift-card code points and drops the message text', () => {
+    const rendered = errorBody(
+      new UnprocessableEntityException({
+        code: 'gift_message_needs_review',
+        message: 'gift_message_needs_review',
+        fits: false,
+        unsupportedChars: ['U+0378', 'SENTINEL-GIFT', 'u+0378', 'U+37', 12],
+        omittedCount: 2,
+        giftMessage: 'SENTINEL-GIFT',
+      }),
+      'corr-12345678',
+    );
+    expect(rendered.status).toBe(422);
+    expect(rendered.body.error.fits).toBe(false);
+    expect(rendered.body.error.unsupportedChars).toEqual(['U+0378']);
+    expect(rendered.body.error.omittedCount).toBe(2);
+    expect(JSON.stringify(rendered)).not.toContain('SENTINEL-GIFT');
+    const other = errorBody(
+      new UnprocessableEntityException({
+        code: 'invoice_incomplete',
+        message: 'missing',
+        unsupportedChars: ['U+0378'],
+        fits: false,
+        omittedCount: 1,
+        giftMessage: 'SENTINEL-GIFT',
+      }),
+      'corr-12345678',
+    );
+    expect(other.body.error.unsupportedChars).toBeUndefined();
+    expect(other.body.error.fits).toBeUndefined();
+    expect(other.body.error.omittedCount).toBeUndefined();
+    expect(JSON.stringify(other)).not.toContain('SENTINEL-GIFT');
+  });
+
+  it('keeps an omitted count above 10000 and counts code points past the cap', () => {
+    const many = Array.from({ length: 520 }, (_, index) => {
+      return `U+${(0xe000 + index).toString(16).toUpperCase()}`;
+    });
+    const rendered = errorBody(
+      new UnprocessableEntityException({
+        code: 'gift_message_needs_review',
+        message: 'gift_message_needs_review',
+        fits: true,
+        unsupportedChars: ['U+0378', 'U+0378', 'SENTINEL-GIFT', ...many],
+        omittedCount: 10_001,
+        giftMessage: 'SENTINEL-GIFT',
+      }),
+      'corr-12345678',
+    );
+    expect(rendered.body.error.omittedCount).toBe(10_001);
+    expect(rendered.body.error.unsupportedChars).toHaveLength(500);
+    expect(rendered.body.error.unsupportedChars?.[0]).toBe('U+0378');
+    expect(rendered.body.error.unsupportedCharsMore).toBe(21);
+    expect(JSON.stringify(rendered)).not.toContain('SENTINEL-GIFT');
+    const same = errorBody(
+      new UnprocessableEntityException({
+        code: 'gift_message_needs_review',
+        message: 'gift_message_needs_review',
+        fits: true,
+        unsupportedChars: ['U+0378'],
+        omittedCount: 10_001,
+        giftMessage: 'SENTINEL-GIFT',
+      }),
+      'corr-12345678',
+    );
+    expect(same.body.error.omittedCount).toBe(10_001);
+    expect(same.body.error.unsupportedChars).toEqual(['U+0378']);
+    expect(same.body.error.unsupportedCharsMore).toBeUndefined();
+    expect(JSON.stringify(same)).not.toContain('SENTINEL-GIFT');
+  });
 });

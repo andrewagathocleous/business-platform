@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { GIFT_MESSAGE_MAX_CODE_POINTS } from '../gift-message-length';
 import {
   FINANCIAL_STATUS_MAP,
   SHOPIFY_ORDER_API_VERSION,
@@ -40,7 +41,9 @@ describe('mapShopifyOrder', () => {
       REFUNDED: 'refunded',
       VOIDED: 'voided',
     });
-    expect(mapShopifyOrder(load('order-1001-paid-greek-gift.json'), STORE).paymentStatus).toBe('paid');
+    expect(mapShopifyOrder(load('order-1001-paid-greek-gift.json'), STORE).paymentStatus).toBe(
+      'paid',
+    );
     const unknown = load('order-1001-paid-greek-gift.json');
     unknown.displayFinancialStatus = 'EXPIRED';
     expect(mapShopifyOrder(unknown, STORE).paymentStatus).toBe('unknown');
@@ -53,7 +56,9 @@ describe('mapShopifyOrder', () => {
       throw new Error('fixture gift message missing');
     }
     const mapped = mapShopifyOrder(payload, STORE);
-    expect(Buffer.from(mapped.giftMessage ?? '', 'utf8').equals(Buffer.from(gift, 'utf8'))).toBe(true);
+    expect(Buffer.from(mapped.giftMessage ?? '', 'utf8').equals(Buffer.from(gift, 'utf8'))).toBe(
+      true,
+    );
     expect(mapped.giftMessage?.includes('Με αγάπη, \n')).toBe(true);
     expect(mapped.customerNote).toBe('Παρακαλώ μετά τις 17:00.');
     expect(mapped.lines).toHaveLength(3);
@@ -77,6 +82,21 @@ describe('mapShopifyOrder', () => {
     const emoji = mapShopifyOrder(load('order-1003-emoji-gift.json'), STORE);
     expect(emoji.giftMessage).toBe('Many happy returns 🎁');
     expect(mapShopifyOrder(load('order-2001-company-b.json'), STORE).externalNumber).toBe('#2001');
+  });
+
+  it('keeps a gift message that is longer than the card', () => {
+    const fitting = load('order-1001-paid-greek-gift.json');
+    setGift(fitting, 'i'.repeat(GIFT_MESSAGE_MAX_CODE_POINTS));
+    expect(mapShopifyOrder(fitting, STORE).giftMessage).toBe(
+      'i'.repeat(GIFT_MESSAGE_MAX_CODE_POINTS),
+    );
+    const smiles = load('order-1001-paid-greek-gift.json');
+    setGift(smiles, '\u{1F60A}'.repeat(5000));
+    expect(mapShopifyOrder(smiles, STORE).giftMessage).toBe('\u{1F60A}'.repeat(5000));
+    const overText = `${'i'.repeat(GIFT_MESSAGE_MAX_CODE_POINTS)}SENTINEL`;
+    const over = load('order-1001-paid-greek-gift.json');
+    setGift(over, overText);
+    expect(mapShopifyOrder(over, STORE).giftMessage).toBe(overText);
   });
 
   it('falls back to unknown delivery and rejects a JSON number in a money field', () => {
@@ -103,7 +123,9 @@ describe('mapShopifyOrder', () => {
 });
 
 function load(name: (typeof FIXTURES)[number]): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(readFileSync(resolve(shopifyFixturesDirectory(), name), 'utf8'));
+  const parsed: unknown = JSON.parse(
+    readFileSync(resolve(shopifyFixturesDirectory(), name), 'utf8'),
+  );
   if (!isRecord(parsed)) {
     throw new Error(`${name} is not an object`);
   }
@@ -116,6 +138,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isUnknownArray(value: unknown): value is unknown[] {
   return Array.isArray(value);
+}
+
+function setGift(payload: Record<string, unknown>, gift: string): void {
+  const attributes = payload['customAttributes'];
+  if (!isUnknownArray(attributes)) {
+    throw new Error('attributes missing');
+  }
+  for (const entry of attributes) {
+    if (isRecord(entry) && entry['key'] === 'Gift Message') {
+      entry['value'] = gift;
+      return;
+    }
+  }
+  throw new Error('gift missing');
 }
 
 function giftValue(payload: Record<string, unknown>): string | undefined {

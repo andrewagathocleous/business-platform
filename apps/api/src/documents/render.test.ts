@@ -89,10 +89,12 @@ describe('gift message and packing slip PDFs', () => {
     }
   });
 
-  it('reports the emoji as unsupported', async () => {
+  it('draws the emoji fixture', async () => {
     const text = 'Many happy returns 🎁';
     const rendered = await renderGiftMessage(text, CARD);
-    expect(rendered.unsupportedChars).toEqual(['🎁']);
+    expect(rendered.fits).toBe(true);
+    expect(rendered.unsupportedChars).toEqual([]);
+    expect(rendered.omittedCount).toBe(0);
   });
 
   it('shows the order, recipient, items and gift flag, and no prices', async () => {

@@ -8,8 +8,12 @@ export type {
   GiftMessagePdf,
   GiftMessageTemplate,
   GiftVerticalAlign,
+  PlacedGlyph,
+  PlacedLine,
+  PlacedRun,
 } from './gift-message';
-export { unsupportedGlyphs } from './glyphs';
+export { giftMessageGlyphs, unsupportedGlyphs } from './glyphs';
+export type { GiftMessageGlyphs } from './glyphs';
 export { DRAFT_WATERMARK, renderInvoiceDraft } from './invoice-draft';
 export type {
   InvoiceDraftLine,

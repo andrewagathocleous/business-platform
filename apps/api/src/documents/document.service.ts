@@ -144,7 +144,7 @@ export class DocumentService {
     templateId: string,
     text: string,
     meta: RequestMeta,
-  ): Promise<{ pdf: Buffer; fits: boolean; unsupportedChars: string[] }> {
+  ): Promise<{ pdf: Buffer; fits: boolean; unsupportedChars: string[]; omittedCount: number }> {
     try {
       if (!isUuid(templateId)) {
         throw new CommerceError(404, 'not_found', 'gift_message_template', null, 'Not found');
