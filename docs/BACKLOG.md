@@ -44,6 +44,8 @@ Each release is done when its code is reviewed and tested, it is deployed to pro
 | R0-05 | Laptop host: `compose.laptop.yml` (production mode, loopback only), image export and deploy scripts, first deploy by image tag | — |
 | P5-03 | Moving to a server: VPS provision, firewall and exposure test, SSH hardening. Later, when staff or Shopify webhooks need it | U8 |
 | R0-04 | Go-live scans: dependency audit, image secret scan, loopback-only listener check, recorded in `docs/releases/r0-report.md` | R0-05 |
+| R0-06 | "Create company" screen for the platform owner. Found at the laptop install (2026-10-27): the only way to create the first company is `POST /api/platform/companies`, so it was done from the browser console. A signed-in owner with no company lands on "Not found" | — |
+| R0-07 | "Automation tokens" screen (`service_identity.manage`): create with permissions and expiry, show the token once, list and revoke. Found at the laptop install (2026-10-28): the n8n poll token was created from the browser console | — |
 
 ## R1: PrestaShop orders and printing
 
@@ -56,6 +58,10 @@ Each release is done when its code is reviewed and tested, it is deployed to pro
 | P2-09 | Integration health (R1 part): last sync, last error, failed imports, PrintNode computer online or offline | P2-04 |
 | P2-11 | Gift-card template tuning with the real card stock and tray (U7); a physical test print needs explicit approval | P2-06, U7 |
 | R1-02 | Automatic printing of new gift orders. Deferred: the user chose manual printing on 2026-10-23 | — |
+| R1-03 | **P1.** Gift cards with emoji cannot be printed: Noto Sans lacks them, so the print is refused with no way on. Fallback fonts, skip invisible code points, print after confirming what is left out. Plan: R1-I in `docs/plan/release-1.md` | — |
+| R1-05 | **P1.** A real company has no gift-card template and nothing can create one (only the fictional seed does), so gift cards cannot be printed. Create the default with the company, and backfill existing companies. Plan: R1-I point 5 | — |
+| R1-06 | A print requested by a platform owner without a company membership is accepted by the API but always fails in the worker as `requester_no_longer_authorised` (`stillAuthorised` requires a membership). Make the two checks agree: either the worker treats an active platform owner as the API does, or the API refuses an owner's print up front with a clear message. Strict area (authorisation, printing). Found at R1-H (2026-11-13); staff accounts are not affected. **Already fixed in code by R2-C3b (`7b50f6c`, on `deploy_prod` from 2026-11-13):** `stillAuthorised` grants an active platform owner the same permissions the API did; the laptop still ran R1. Close after an owner print succeeds on the R2 deploy | — |
+| R1-04 | The orders list does not refresh itself; a new order shows only after a reload. Refresh while the page is visible, or show "new orders, refresh". Found at R1-H (2026-10-28) | — |
 
 ## R2: invoicing and receivables
 

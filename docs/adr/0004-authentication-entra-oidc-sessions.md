@@ -14,6 +14,17 @@
 - A dev login (fictional seed users) is available only when `APP_ENV` is `development` or `test` **and** `AUTH_DEV_LOGIN_ENABLED=true`. If `APP_ENV` is `uat` or `production` and dev login is enabled, the API refuses to start. A test covers this.
 - A large standalone auth server (Keycloak and similar) is not used.
 
+## Update 2026-10-28: the MFA claim with real Entra (R0-G)
+
+Checked on the live laptop. Security Defaults is on, and the owner account has Microsoft Authenticator. A fresh sign-in in a private window asked for and passed MFA, and Entra's sign-in log recorded it. All four sessions still had `mfa_satisfied = false`: the ID token this app receives does not carry `amr` containing `mfa`. Claim names beyond that were not recorded, because the code does not log them.
+
+Decision (the user, 2026-10-28): **Entra is the MFA authority.** The laptop runs with `AUTH_REQUIRE_MFA_FOR_PRIVILEGED=false`, so the app does not withhold owner or privileged permissions. MFA is enforced by Security Defaults on the tenant. This is the documented gap the decision above allows for. It is not assumed by the code, which still matches `amr` exactly.
+
+Consequences:
+- If Security Defaults is turned off, or a staff account has no second factor, the app cannot notice. Keep Security Defaults on, or replace it with a Conditional Access policy requiring MFA for this app.
+- Routes marked as needing MFA (for example invoice issue and client export) run on this setting too.
+- H-01 (invitations matching `preferred_username`) is still open. Whether `email_verified` arrives was not checked; the owner was linked by object id.
+
 ## Consequences
 
 - Staff login depends on the Entra tenant. The recovery runbook covers break-glass access: one platform-owner account with a hardware key or authenticator, stored offline.
