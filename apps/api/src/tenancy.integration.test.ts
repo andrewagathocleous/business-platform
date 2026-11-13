@@ -15,6 +15,7 @@ import {
   assertTestDatabaseUrls,
 } from '../../../tools/test-db-guard.mjs';
 import { AppModule } from './app.module';
+import { DEFAULT_GIFT_TEMPLATE } from './documents/default-gift-template';
 import { cancelQueuedJobs } from './test/cancel-queued-jobs';
 import { resolvePermission } from './authz/resolve-permission';
 import { PrismaService } from './database/prisma.service';
@@ -576,7 +577,29 @@ describe('authorisation and tenancy', () => {
       'store.write',
     ]);
     expect(switches.every((item) => !item.enabled)).toBe(true);
-    expect((await auditEvents(correlationId, createdId))[0]?.action).toBe('company.created');
+    const templates = await prisma.client.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.company_id', ${createdId}, true)`;
+      return tx.giftMessageTemplate.findMany();
+    });
+    expect(templates).toHaveLength(1);
+    const template = templates[0];
+    expect(template?.name).toBe(DEFAULT_GIFT_TEMPLATE.name);
+    expect(template?.isDefault).toBe(true);
+    expect(template?.align).toBe('center');
+    expect(template?.verticalAlign).toBe('middle');
+    expect(template?.pageWidthMm.toFixed(2)).toBe('100.00');
+    expect(template?.pageHeightMm.toFixed(2)).toBe('150.00');
+    expect(template?.marginTopMm.toFixed(2)).toBe('5.00');
+    expect(template?.marginRightMm.toFixed(2)).toBe('5.00');
+    expect(template?.marginBottomMm.toFixed(2)).toBe('5.00');
+    expect(template?.marginLeftMm.toFixed(2)).toBe('5.00');
+    expect(template?.fontSizePt.toFixed(2)).toBe('16.00');
+    expect(template?.minFontSizePt.toFixed(2)).toBe('9.00');
+    expect(template?.lineHeight.toFixed(3)).toBe('1.250');
+    expect((await auditEvents(correlationId, createdId)).map((event) => event.action).sort()).toEqual([
+      'company.created',
+      'gift_message_template.created',
+    ]);
 
     const switchCorrelation = cid('outbound-all');
     try {

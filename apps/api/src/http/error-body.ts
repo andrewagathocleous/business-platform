@@ -17,6 +17,14 @@ export type ErrorBody = {
     printJobId?: string;
     /** Field codes a 422 names, for example `seller.vatNumber`. */
     fields?: string[];
+    /** A gift card that does not fit stays refused. */
+    fits?: boolean;
+    /** Code points the card cannot draw, `U+XXXX` only. Capped; see `unsupportedCharsMore`. */
+    unsupportedChars?: string[];
+    /** Distinct code points left off `unsupportedChars` after the cap. */
+    unsupportedCharsMore?: number;
+    /** How many characters will be left off the card. The exact count, with no upper cap. */
+    omittedCount?: number;
     details?: DuplicateDetails;
   };
 };
@@ -32,11 +40,15 @@ const STATUS_CODES: Readonly<Record<number, string>> = {
   500: 'internal_error',
 };
 
-export function errorBody(exception: unknown, correlationId: string): { status: number; body: ErrorBody } {
+export function errorBody(
+  exception: unknown,
+  correlationId: string,
+): { status: number; body: ErrorBody } {
   const status = statusOf(exception);
   const printJobId = explicitPrintJobId(exception);
   const fields = explicitFields(exception, status);
   const details = explicitDuplicateDetails(exception);
+  const giftReview = explicitGiftReview(exception);
   return {
     status,
     body: {
@@ -46,6 +58,7 @@ export function errorBody(exception: unknown, correlationId: string): { status: 
         correlationId,
         ...(printJobId ? { printJobId } : {}),
         ...(fields ? { fields } : {}),
+        ...(giftReview ?? {}),
         ...(details ? { details } : {}),
       },
     },
@@ -53,6 +66,68 @@ export function errorBody(exception: unknown, correlationId: string): { status: 
 }
 
 const FIELD_CODE = /^[a-zA-Z][a-zA-Z0-9_.]{0,79}$/;
+const CODE_POINT = /^U\+[0-9A-F]{4,6}$/;
+/** Distinct code points named on a gift-card 422. The rest are counted, not dropped. */
+const MAX_UNSUPPORTED_CHARS = 500;
+
+/**
+ * A gift-card 422 may name the code points that will be left off, whether the
+ * card fits, and how many characters are omitted. The omitted count is kept
+ * in full. The code-point list is capped and the remainder is counted.
+ * Anything else, including the message text, is dropped.
+ */
+function explicitGiftReview(exception: unknown):
+  | {
+      fits?: boolean;
+      unsupportedChars?: string[];
+      unsupportedCharsMore?: number;
+      omittedCount?: number;
+    }
+  | undefined {
+  if (!(exception instanceof HttpException)) {
+    return undefined;
+  }
+  const response = exception.getResponse();
+  if (!isRecord(response) || response.code !== 'gift_message_needs_review') {
+    return undefined;
+  }
+  const review: {
+    fits?: boolean;
+    unsupportedChars?: string[];
+    unsupportedCharsMore?: number;
+    omittedCount?: number;
+  } = {};
+  if (typeof response.fits === 'boolean') {
+    review.fits = response.fits;
+  }
+  if (Array.isArray(response.unsupportedChars)) {
+    const chars: string[] = [];
+    const seen = new Set<string>();
+    for (const item of response.unsupportedChars) {
+      if (typeof item !== 'string' || !CODE_POINT.test(item) || seen.has(item)) {
+        continue;
+      }
+      seen.add(item);
+      chars.push(item);
+    }
+    if (chars.length > 0) {
+      const listed = chars.slice(0, MAX_UNSUPPORTED_CHARS);
+      review.unsupportedChars = listed;
+      const more = chars.length - listed.length;
+      if (more > 0) {
+        review.unsupportedCharsMore = more;
+      }
+    }
+  }
+  if (
+    typeof response.omittedCount === 'number' &&
+    Number.isSafeInteger(response.omittedCount) &&
+    response.omittedCount >= 0
+  ) {
+    review.omittedCount = response.omittedCount;
+  }
+  return Object.keys(review).length > 0 ? review : undefined;
+}
 
 /** A 422 may name the fields that failed. Only short, plain field codes pass through. */
 function explicitFields(exception: unknown, status: number): string[] | undefined {
@@ -126,7 +201,11 @@ function explicitPrintJobId(exception: unknown): string | undefined {
     return undefined;
   }
   const response = exception.getResponse();
-  if (!isRecord(response) || response.code !== 'already_printed' || typeof response.printJobId !== 'string') {
+  if (
+    !isRecord(response) ||
+    response.code !== 'already_printed' ||
+    typeof response.printJobId !== 'string'
+  ) {
     return undefined;
   }
   if (!PRINT_JOB_ID.test(response.printJobId)) {
@@ -167,7 +246,9 @@ function publicMessage(exception: unknown, status: number): string {
         return response.message;
       }
       if (Array.isArray(response.message)) {
-        const messages = response.message.filter((item): item is string => typeof item === 'string');
+        const messages = response.message.filter(
+          (item): item is string => typeof item === 'string',
+        );
         if (messages.length > 0) {
           return messages.join(', ');
         }

@@ -89,6 +89,9 @@ const SAMPLE = 'Χρόνια πολλά, Μαρία!\n\nΜε αγάπη,\nΓιώ
       @if (notice()) {
         <p role="status">{{ notice() }}</p>
       }
+      @if (loaded() && templates().length === 0 && !error()) {
+        <p role="status" data-testid="no-template">{{ 'giftCards.empty' | transloco }}</p>
+      }
       @if (templates().length > 1) {
         <label>
           {{ 'giftCards.template' | transloco }}
@@ -197,6 +200,8 @@ export class GiftCardsPage {
   readonly busy = signal(false);
   readonly error = signal('');
   readonly notice = signal('');
+  /** True once the template list for this company has come back. */
+  readonly loaded = signal(false);
   /** Characters in the last preview that the card font cannot draw. */
   readonly unsupported = signal(0);
   /** A blob URL for the last preview PDF, opened by the user from a link. */
@@ -394,6 +399,7 @@ export class GiftCardsPage {
     this.busy.set(false);
     this.error.set('');
     this.notice.set('');
+    this.loaded.set(false);
     if (!companyId) {
       return;
     }
@@ -407,6 +413,7 @@ export class GiftCardsPage {
             return;
           }
           this.boundCompanyId = companyId;
+          this.loaded.set(true);
           this.templates.set(response.templates);
           const first = response.templates.find((item) => item.isDefault) ?? response.templates[0];
           if (first) {

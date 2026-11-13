@@ -118,6 +118,17 @@ describe('GiftCardsPage', () => {
     http.verify();
   });
 
+  it('says when the company has no gift-card template', async () => {
+    const { fixture, http } = await setup();
+    expect(element(fixture).querySelector('[data-testid="no-template"]')).toBeNull();
+    http.expectOne(TEMPLATES_URL).flush({ templates: [] });
+    fixture.detectChanges();
+    expect(element(fixture).querySelector('[data-testid="no-template"]')?.textContent).toContain(
+      'no gift-card template',
+    );
+    http.verify();
+  });
+
   it('drops a template list that arrives after the company changed', async () => {
     const companies = new BehaviorSubject(convertToParamMap({ companyId: 'company-1' }));
     const { fixture, http } = await setup(companies);

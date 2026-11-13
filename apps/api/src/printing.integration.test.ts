@@ -1,7 +1,11 @@
 import { type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { TenantDb, type TenantTransaction } from '@bp/db';
-import { MockPrintProvider, shopifyFixturesDirectory } from '@bp/integrations';
+import {
+  GIFT_MESSAGE_MAX_CODE_POINTS,
+  MockPrintProvider,
+  shopifyFixturesDirectory,
+} from '@bp/integrations';
 import { Logger } from 'nestjs-pino';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -1629,28 +1633,425 @@ describe('printing with the mock provider', () => {
     expect(foreign.status, text(foreign)).toBe(404);
   });
 
-  it('refuses a gift message that the template cannot print', async () => {
-    const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, '🎉');
+  it('imports a gift message ending in a heart and queues its card', async () => {
+    const token = await createToken(adminA, companyA, 'heart');
+    const externalId = `print-${runId}-heart`;
+    const name = `#H${runId}`;
+    const message = `Fictional wish ${runId} \u2764\uFE0F`;
+    const created = cloneOrder(loadFixture('order-1001-paid-greek-gift.json'));
+    created.id = externalId;
+    created.name = name;
+    created.updatedAt = '2026-03-01T10:15:00.000Z';
+    setGift(created, message);
+    const posted = await postEvent(
+      token.token,
+      companyA,
+      shopifyConnectionA,
+      `print-heart-${runId}`,
+      'orders/create',
+      created,
+    );
+    expect(posted.status, text(posted.response)).toBe(202);
+    await jobs().drainOnce(1_000, { companyId: companyA });
+    const order = await orderByNumber(adminA, companyA, name);
+    expect(order.fulfilmentStatus).toBe('new');
+    expect(order.reviewReason).toBeNull();
+    expect(Buffer.from(stringField(order, 'giftMessage'), 'utf8')).toEqual(
+      Buffer.from(message, 'utf8'),
+    );
+    const queued = await requestPrint(
+      fulfil,
+      companyA,
+      stringField(order, 'id'),
+      'gift_message',
+      cid('heart'),
+    );
+    expect(queued.status).toBe('queued');
+  }, 60_000);
+
+  it('refuses an undrawable character until it is confirmed, then holds the job while printing is off', async () => {
+    const token = `FictionalGlyph${runId}`;
+    const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, `${token}\u0378`);
+    clearCapturedLogs();
     const before = provider.submitCount;
-    const response = await send(fulfil, 'post', `/api/c/${companyA}/print-requests`, cid('emoji'), {
-      documentType: 'gift_message',
-      sourceType: 'order',
-      sourceId: order.id,
-    });
-    expect(response.status, text(response)).toBe(422);
-    expect(record(record(response.body).error).code).toBe('gift_message_needs_review');
+    const refused = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('glyph-no'),
+      {
+        documentType: 'gift_message',
+        sourceType: 'order',
+        sourceId: order.id,
+      },
+    );
+    expect(refused.status, text(refused)).toBe(422);
+    const error = record(record(refused.body).error);
+    expect(error.code).toBe('gift_message_needs_review');
+    expect(error.fits).toBe(true);
+    expect(error.unsupportedChars).toEqual(['U+0378']);
+    expect(error.omittedCount).toBe(1);
+    expect(text(refused)).not.toContain(token);
     expect(provider.submitCount).toBe(before);
-    const audited = await auditEvents(app, cid('emoji'), companyA);
-    const failure = audited.find(
+    const failureAudit = await auditEvents(app, cid('glyph-no'), companyA);
+    const failure = failureAudit.find(
       (event) => event.action === 'print_job.requested' && event.outcome === 'failure',
     );
-    expect(failure).toBeTruthy();
-    const details = record(failure?.details);
-    expect(details.reason).toBe('gift_message_needs_review');
-    expect(details.fits).toBe(true);
-    expect(details.unsupportedChars).toEqual(['🎉']);
-    expect(details.message).toBeUndefined();
-  });
+    expect(JSON.stringify(failure?.details)).not.toContain(token);
+    expect(record(failure?.details)).toMatchObject({
+      reason: 'gift_message_needs_review',
+      fits: true,
+      unsupportedChars: ['U+0378'],
+      omittedCount: 1,
+    });
+    const short = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('glyph-short'),
+      {
+        documentType: 'gift_message',
+        sourceType: 'order',
+        sourceId: order.id,
+        unprintableAcknowledged: true,
+        unprintableReason: 'nope',
+      },
+    );
+    expect(short.status, text(short)).toBe(400);
+    const reasonOnly = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('glyph-reason'),
+      {
+        documentType: 'gift_message',
+        sourceType: 'order',
+        sourceId: order.id,
+        unprintableReason: 'leave them out',
+      },
+    );
+    expect(reasonOnly.status, text(reasonOnly)).toBe(400);
+    await setPrinting(false);
+    try {
+      const reason = 'Leave that character off the card';
+      const queued = await send(
+        fulfil,
+        'post',
+        `/api/c/${companyA}/print-requests`,
+        cid('glyph-yes'),
+        {
+          documentType: 'gift_message',
+          sourceType: 'order',
+          sourceId: order.id,
+          unprintableAcknowledged: true,
+          unprintableReason: reason,
+        },
+      );
+      expect(queued.status, text(queued)).toBe(200);
+      const printJobId = stringField(record(record(queued.body).printJob), 'id');
+      await jobs().drainOnce(1_000, { companyId: companyA });
+      const held = await loadPrint(fulfil, companyA, printJobId);
+      expect(held.status).toBe('held');
+      expect(provider.submitCount).toBe(before);
+      const successAudit = await auditEvents(app, cid('glyph-yes'), companyA);
+      const success = successAudit.find(
+        (event) => event.action === 'print_job.requested' && event.outcome === 'success',
+      );
+      expect(JSON.stringify(success?.details)).not.toContain(token);
+      expect(record(success?.details)).toMatchObject({
+        unprintableAcknowledged: true,
+        unsupportedChars: ['U+0378'],
+        omittedCount: 1,
+        unprintableReason: reason,
+      });
+      expect(capturedLogText()).not.toContain(token);
+    } finally {
+      await restorePrinting();
+    }
+  }, 60_000);
+
+  it('still refuses a gift message that does not fit on the card', async () => {
+    const order = await makeOrder(
+      companyA,
+      shopifyStoreA,
+      shopifyConnectionA,
+      `${'ω'.repeat(40)}\n`.repeat(40),
+    );
+    const before = provider.submitCount;
+    const response = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('glyph-fit'),
+      {
+        documentType: 'gift_message',
+        sourceType: 'order',
+        sourceId: order.id,
+        unprintableAcknowledged: true,
+        unprintableReason: 'It still does not fit',
+      },
+    );
+    expect(response.status, text(response)).toBe(422);
+    expect(record(record(response.body).error).code).toBe('gift_message_needs_review');
+    expect(record(record(response.body).error).fits).toBe(false);
+    expect(provider.submitCount).toBe(before);
+  }, 60_000);
+
+  it('imports an over-long gift message into review and refuses the card', async () => {
+    const token = await createToken(adminA, companyA, 'long-gift');
+    const externalId = `print-${runId}-long`;
+    const name = `#L${runId}`;
+    const message = `${'i'.repeat(GIFT_MESSAGE_MAX_CODE_POINTS)}SENTINEL`;
+    const created = cloneOrder(loadFixture('order-1001-paid-greek-gift.json'));
+    created.id = externalId;
+    created.name = name;
+    created.updatedAt = '2026-03-01T10:15:00.000Z';
+    setGift(created, message);
+    const posted = await postEvent(
+      token.token,
+      companyA,
+      shopifyConnectionA,
+      `print-long-${runId}`,
+      'orders/create',
+      created,
+    );
+    expect(posted.status, text(posted.response)).toBe(202);
+    await jobs().drainOnce(1_000, { companyId: companyA });
+    const order = await orderByNumber(adminA, companyA, name);
+    expect(order.fulfilmentStatus).toBe('review_required');
+    expect(order.reviewReason).toBe('gift_message_too_long');
+    const stored = stringField(order, 'giftMessage');
+    expect(stored.startsWith('i'.repeat(32))).toBe(true);
+    expect(stored.endsWith('SENTINEL')).toBe(true);
+    expect(Buffer.from(stored, 'utf8').equals(Buffer.from(message, 'utf8'))).toBe(true);
+    const before = provider.submitCount;
+    const refused = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('long-no'),
+      {
+        documentType: 'gift_message',
+        sourceType: 'order',
+        sourceId: stringField(order, 'id'),
+      },
+    );
+    expect(refused.status, text(refused)).toBe(422);
+    expect(record(record(refused.body).error).code).toBe('gift_message_needs_review');
+    expect(record(record(refused.body).error).fits).toBe(false);
+    expect(text(refused)).not.toContain('SENTINEL');
+    const acknowledged = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('long-yes'),
+      {
+        documentType: 'gift_message',
+        sourceType: 'order',
+        sourceId: stringField(order, 'id'),
+        unprintableAcknowledged: true,
+        unprintableReason: 'It is too long for the card',
+      },
+    );
+    expect(acknowledged.status, text(acknowledged)).toBe(422);
+    expect(record(record(acknowledged.body).error).fits).toBe(false);
+    expect(text(acknowledged)).not.toContain('SENTINEL');
+    expect(provider.submitCount).toBe(before);
+  }, 60_000);
+
+  it('imports a million-character gift message into review and refuses the card', async () => {
+    clearCapturedLogs();
+    const token = await createToken(adminA, companyA, 'million-gift');
+    const externalId = `print-${runId}-million`;
+    const name = `#M${runId}`;
+    const message = 'i'.repeat(1_000_000);
+    expect(message.length).toBeGreaterThan(GIFT_MESSAGE_MAX_CODE_POINTS);
+    const created = cloneOrder(loadFixture('order-1001-paid-greek-gift.json'));
+    created.id = externalId;
+    created.name = name;
+    created.updatedAt = '2026-03-01T10:15:00.000Z';
+    setGift(created, message);
+    const started = Date.now();
+    const posted = await postEvent(
+      token.token,
+      companyA,
+      shopifyConnectionA,
+      `print-million-${runId}`,
+      'orders/create',
+      created,
+    );
+    expect(posted.status, text(posted.response)).toBe(202);
+    const beforeHeap = process.memoryUsage().heapUsed;
+    await jobs().drainOnce(1_000, { companyId: companyA });
+    const order = await orderByNumber(adminA, companyA, name);
+    expect(order.fulfilmentStatus).toBe('review_required');
+    expect(order.reviewReason).toBe('gift_message_too_long');
+    const stored = stringField(order, 'giftMessage');
+    expect(sameBytes(stored, message)).toBe(true);
+    const before = provider.submitCount;
+    const refused = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('million-no'),
+      {
+        documentType: 'gift_message',
+        sourceType: 'order',
+        sourceId: stringField(order, 'id'),
+      },
+    );
+    expect(refused.status, text(refused)).toBe(422);
+    expect(record(record(refused.body).error).code).toBe('gift_message_needs_review');
+    expect(record(record(refused.body).error).fits).toBe(false);
+    expect(text(refused).includes('i'.repeat(200))).toBe(false);
+    const acknowledged = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('million-yes'),
+      {
+        documentType: 'gift_message',
+        sourceType: 'order',
+        sourceId: stringField(order, 'id'),
+        unprintableAcknowledged: true,
+        unprintableReason: 'It is too long for the card',
+      },
+    );
+    expect(acknowledged.status, text(acknowledged)).toBe(422);
+    expect(record(record(acknowledged.body).error).fits).toBe(false);
+    expect(text(acknowledged).includes('i'.repeat(200))).toBe(false);
+    expect(capturedLogText().includes('i'.repeat(200))).toBe(false);
+    expect(provider.submitCount).toBe(before);
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(process.memoryUsage().heapUsed - beforeHeap).toBeLessThan(96 * 1024 * 1024);
+  }, 60_000);
+
+  it('puts an order in review when a source update makes the gift message a million characters', async () => {
+    const token = await createToken(adminA, companyA, 'million-update');
+    const externalId = `print-${runId}-million-update`;
+    const name = `#MU${runId}`;
+    const created = cloneOrder(loadFixture('order-1001-paid-greek-gift.json'));
+    created.id = externalId;
+    created.name = name;
+    created.updatedAt = '2026-03-01T10:15:00.000Z';
+    setGift(created, 'Hello');
+    const posted = await postEvent(
+      token.token,
+      companyA,
+      shopifyConnectionA,
+      `print-million-update-${runId}`,
+      'orders/create',
+      created,
+    );
+    expect(posted.status, text(posted.response)).toBe(202);
+    await jobs().drainOnce(1_000, { companyId: companyA });
+    const imported = await orderByNumber(adminA, companyA, name);
+    expect(imported.fulfilmentStatus).toBe('new');
+    expect(imported.reviewReason).toBeNull();
+    expect(imported.giftMessage).toBe('Hello');
+
+    const message = 'i'.repeat(1_000_000);
+    const updated = cloneOrder(created);
+    updated.updatedAt = '2026-03-02T10:15:00.000Z';
+    setGift(updated, message);
+    const started = Date.now();
+    const changed = await postEvent(
+      token.token,
+      companyA,
+      shopifyConnectionA,
+      `print-million-update-2-${runId}`,
+      'orders/updated',
+      updated,
+    );
+    expect(changed.status, text(changed.response)).toBe(202);
+    const beforeHeap = process.memoryUsage().heapUsed;
+    await jobs().drainOnce(1_000, { companyId: companyA });
+    const reviewed = await orderByNumber(adminA, companyA, name);
+    expect(reviewed.fulfilmentStatus).toBe('review_required');
+    expect(reviewed.reviewReason).toBe('gift_message_too_long');
+    expect(sameBytes(stringField(reviewed, 'giftMessage'), message)).toBe(true);
+    const before = provider.submitCount;
+    const refused = await send(
+      fulfil,
+      'post',
+      `/api/c/${companyA}/print-requests`,
+      cid('million-update-no'),
+      {
+        documentType: 'gift_message',
+        sourceType: 'order',
+        sourceId: stringField(reviewed, 'id'),
+      },
+    );
+    expect(refused.status, text(refused)).toBe(422);
+    expect(record(record(refused.body).error).fits).toBe(false);
+    expect(text(refused).includes('i'.repeat(200))).toBe(false);
+    expect(provider.submitCount).toBe(before);
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(process.memoryUsage().heapUsed - beforeHeap).toBeLessThan(96 * 1024 * 1024);
+  }, 60_000);
+
+  it('puts an order in review when a source update makes the gift message too long', async () => {
+    const token = await createToken(adminA, companyA, 'long-update');
+    const externalId = `print-${runId}-long-update`;
+    const name = `#LU${runId}`;
+    const created = cloneOrder(loadFixture('order-1001-paid-greek-gift.json'));
+    created.id = externalId;
+    created.name = name;
+    created.updatedAt = '2026-03-01T10:15:00.000Z';
+    setGift(created, 'Hello');
+    const posted = await postEvent(
+      token.token,
+      companyA,
+      shopifyConnectionA,
+      `print-long-update-${runId}`,
+      'orders/create',
+      created,
+    );
+    expect(posted.status, text(posted.response)).toBe(202);
+    await jobs().drainOnce(1_000, { companyId: companyA });
+    const imported = await orderByNumber(adminA, companyA, name);
+    expect(imported.fulfilmentStatus).toBe('new');
+    expect(imported.reviewReason).toBeNull();
+    expect(imported.giftMessage).toBe('Hello');
+
+    const message = 'i'.repeat(9836);
+    expect(message.length).toBe(GIFT_MESSAGE_MAX_CODE_POINTS + 1);
+    const updated = cloneOrder(created);
+    updated.updatedAt = '2026-03-02T10:15:00.000Z';
+    setGift(updated, message);
+    const changed = await postEvent(
+      token.token,
+      companyA,
+      shopifyConnectionA,
+      `print-long-update-2-${runId}`,
+      'orders/updated',
+      updated,
+    );
+    expect(changed.status, text(changed.response)).toBe(202);
+    await jobs().drainOnce(1_000, { companyId: companyA });
+    const reviewed = await orderByNumber(adminA, companyA, name);
+    expect(reviewed.fulfilmentStatus).toBe('review_required');
+    expect(reviewed.reviewReason).toBe('gift_message_too_long');
+    expect(reviewed.giftMessage).toBe(message);
+
+    const shortened = cloneOrder(created);
+    shortened.updatedAt = '2026-03-03T10:15:00.000Z';
+    setGift(shortened, 'Hello');
+    const cleared = await postEvent(
+      token.token,
+      companyA,
+      shopifyConnectionA,
+      `print-long-update-3-${runId}`,
+      'orders/updated',
+      shortened,
+    );
+    expect(cleared.status, text(cleared.response)).toBe(202);
+    await jobs().drainOnce(1_000, { companyId: companyA });
+    const again = await orderByNumber(adminA, companyA, name);
+    expect(again.fulfilmentStatus).toBe('new');
+    expect(again.reviewReason).toBeNull();
+    expect(again.giftMessage).toBe('Hello');
+  }, 60_000);
 
   it('isolates print resources, documents, files, templates, switches and jobs', async () => {
     const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
@@ -2310,6 +2711,12 @@ function setPhone(payload: Record<string, unknown>, phone: string): void {
   payload.shippingAddress.phone = phone;
 }
 
+function sameBytes(left: string, right: string): boolean {
+  return (
+    left.length === right.length && Buffer.from(left, 'utf8').equals(Buffer.from(right, 'utf8'))
+  );
+}
+
 function setGift(payload: Record<string, unknown>, gift: string): void {
   if (!Array.isArray(payload.customAttributes)) {
     throw new Error('customAttributes missing');
@@ -2349,9 +2756,20 @@ function seedDatabase(): void {
   }
 }
 
+const capturedLogs: string[] = [];
+
+function clearCapturedLogs(): void {
+  capturedLogs.length = 0;
+}
+
+function capturedLogText(): string {
+  return capturedLogs.join('');
+}
+
 async function bootApp(): Promise<INestApplication> {
   const stream = new Writable({
     write(chunk: Buffer | string, _encoding, callback) {
+      capturedLogs.push(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
       callback();
     },
   });

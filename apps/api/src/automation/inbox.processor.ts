@@ -1,8 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma, type TenantTransaction } from '@bp/db';
 import type { DeliveryMethod, FulfilmentStatus, PaymentStatus } from '@bp/domain';
-import { unsupportedGlyphs } from '@bp/documents';
+import { giftMessageGlyphs } from '@bp/documents';
 import {
+  giftMessageTooLong,
   mapPrestashopOrder,
   mapShopifyOrder,
   PrestashopMapError,
@@ -10,7 +11,10 @@ import {
   type MappedShopifyOrder,
 } from '@bp/integrations';
 import { carrierMapOf } from '../integrations/prestashop-connections';
-import { parsePrestashopSettings, PrestashopSettingsInvalid } from '../integrations/prestashop-settings';
+import {
+  parsePrestashopSettings,
+  PrestashopSettingsInvalid,
+} from '../integrations/prestashop-settings';
 import { AuditService } from '../audit/audit.service';
 import { uuidv7 } from '../correlation/correlation';
 import type { ClaimedJob, JobOutcome } from './jobs/job-runner';
@@ -60,7 +64,11 @@ export class InboxProcessor {
 
   constructor(@Inject(AuditService) private readonly audit: AuditService) {}
 
-  async run(job: ClaimedJob, tx: TenantTransaction, signal: AbortSignal): Promise<JobOutcome | undefined> {
+  async run(
+    job: ClaimedJob,
+    tx: TenantTransaction,
+    signal: AbortSignal,
+  ): Promise<JobOutcome | undefined> {
     if (signalAborted(signal)) {
       throw aborted(signal);
     }
@@ -124,8 +132,21 @@ export class InboxProcessor {
       const message = mapFailure(error);
       return this.fail(tx, job.companyId, payload, loaded.id, message);
     }
-    const missing = unsupportedGlyphs(mapped.giftMessage ?? '');
-    const inserted = await insertOrder(tx, job.companyId, connection.storeId, connection.id, connection.store.platform, mapped, missing);
+    const giftText = mapped.giftMessage ?? '';
+    const tooLong = giftMessageTooLong(giftText);
+    // Length before shaping. fontkit on an unbounded message exhausts the
+    // worker heap, and the retry repeats the crash. The text is stored as
+    // received. Insert and update both go to review without a glyph check.
+    const missing = tooLong ? [] : giftMessageGlyphs(giftText).unsupportedChars;
+    const inserted = await insertOrder(
+      tx,
+      job.companyId,
+      connection.storeId,
+      connection.id,
+      connection.store.platform,
+      mapped,
+      missing,
+    );
     const locked = await lockOrder(tx, job.companyId, connection.id, mapped.externalId);
     if (!locked) {
       return this.fail(tx, job.companyId, payload, loaded.id, 'order_missing');
@@ -150,17 +171,24 @@ export class InboxProcessor {
     }
     const giftChanged = !sameText(locked.gift_message, mapped.giftMessage);
     const printed = giftChanged ? await giftPrinted(tx, job.companyId, locked.id) : false;
-    const alreadyCancelled = reasonPresent(locked.review_reason, locked.attention_reasons ?? [], 'cancelled_at_source');
+    const alreadyCancelled = reasonPresent(
+      locked.review_reason,
+      locked.attention_reasons ?? [],
+      'cancelled_at_source',
+    );
     const signals = updateSignals(mapped, giftChanged && printed, alreadyCancelled);
     const terminal = TERMINAL.has(locked.fulfilment_status);
     const attention = appendReasons(locked.attention_reasons ?? [], terminal ? signals : []);
+    const review = terminal
+      ? {}
+      : giftLengthOnUpdate(locked.review_reason, locked.fulfilment_status, signals, tooLong);
     const changed = await tx.salesOrder.updateMany({
       where: {
         id: locked.id,
         companyId: job.companyId,
         OR: [{ sourceUpdatedAt: null }, { sourceUpdatedAt: { lt: mapped.sourceUpdatedAt } }],
       },
-      data: sourceUpdate(mapped, connection.store.platform, missing, terminal, signals, attention),
+      data: sourceUpdate(mapped, connection.store.platform, missing, terminal, attention, review),
     });
     if (changed.count !== 1) {
       await this.finish(tx, job.companyId, payload, loaded.id, 'stale');
@@ -211,7 +239,9 @@ export class InboxProcessor {
       data: { status, processedAt: new Date(), error: null },
     });
     if (status === 'stale') {
-      await this.auditInbox(tx, companyId, actor, inboxId, 'inbox.stale', 'success', { status: 'stale' });
+      await this.auditInbox(tx, companyId, actor, inboxId, 'inbox.stale', 'success', {
+        status: 'stale',
+      });
     }
   }
 
@@ -275,7 +305,8 @@ function readJobPayload(payload: unknown): ({ inboxId: string } & JobActor) | nu
     'serviceIdentityId' in payload && typeof payload.serviceIdentityId === 'string'
       ? payload.serviceIdentityId
       : null;
-  const actorLabel = 'actorLabel' in payload && typeof payload.actorLabel === 'string' ? payload.actorLabel : null;
+  const actorLabel =
+    'actorLabel' in payload && typeof payload.actorLabel === 'string' ? payload.actorLabel : null;
   return { inboxId: payload.inboxId, serviceIdentityId, actorLabel };
 }
 
@@ -303,6 +334,9 @@ function createReview(
   if (missing.length > 0) {
     reasons.push('unsupported_glyphs');
   }
+  if (giftMessageTooLong(mapped.giftMessage ?? '')) {
+    reasons.push('gift_message_too_long');
+  }
   if (mapped.sourceStatus.cancelledAt) {
     reasons.push('cancelled_at_source');
   }
@@ -310,6 +344,56 @@ function createReview(
     return { fulfilment: 'new', reason: null };
   }
   return { fulfilment: 'review_required', reason: reasons.join(',') };
+}
+
+const GIFT_TOO_LONG = 'gift_message_too_long';
+
+/**
+ * `gift_message_too_long` follows the message on every non-terminal update.
+ * It is added when the new text is over the limit and removed when the text
+ * fits. `unsupported_glyphs` is not touched here: a later event leaves that
+ * reason in place, which is the existing rule for glyphs. A signal still
+ * replaces the previous reason list, and the length reason is then applied
+ * on top of that list.
+ */
+function giftLengthOnUpdate(
+  existing: string | null,
+  status: string,
+  signals: readonly string[],
+  tooLong: boolean,
+): { fulfilmentStatus?: FulfilmentStatus; reviewReason?: string | null } {
+  const reason = withGiftLength(existing, signals, tooLong);
+  if (signals.length > 0 || tooLong) {
+    return { fulfilmentStatus: 'review_required', reviewReason: reason };
+  }
+  const current = existing && existing.length > 0 ? existing : null;
+  if (reason === current) {
+    return {};
+  }
+  if (status === 'review_required' && reason === null) {
+    return { fulfilmentStatus: 'new', reviewReason: null };
+  }
+  return { reviewReason: reason };
+}
+
+function withGiftLength(
+  existing: string | null,
+  signals: readonly string[],
+  tooLong: boolean,
+): string | null {
+  const base = signals.length > 0 ? [...signals] : splitReasons(existing);
+  const reasons = base.filter((reason) => reason !== GIFT_TOO_LONG);
+  if (tooLong) {
+    reasons.push(GIFT_TOO_LONG);
+  }
+  return reasons.length === 0 ? null : reasons.join(',');
+}
+
+function splitReasons(reason: string | null): string[] {
+  if (!reason) {
+    return [];
+  }
+  return reason.split(',').filter((part) => part.length > 0);
 }
 
 function updateSignals(
@@ -327,7 +411,11 @@ function updateSignals(
   return reasons;
 }
 
-function reasonPresent(reviewReason: string | null, attention: readonly string[], reason: string): boolean {
+function reasonPresent(
+  reviewReason: string | null,
+  attention: readonly string[],
+  reason: string,
+): boolean {
   if (attention.includes(reason)) {
     return true;
   }
@@ -429,7 +517,7 @@ async function lockOrder(
   if (!row) {
     return null;
   }
-    return { ...row, attention_reasons: row.attention_reasons ?? [] };
+  return { ...row, attention_reasons: row.attention_reasons ?? [] };
 }
 
 function sourceUpdate(
@@ -437,8 +525,8 @@ function sourceUpdate(
   platform: string,
   missing: readonly string[],
   terminal: boolean,
-  signals: readonly string[],
   attention: readonly string[],
+  review: { fulfilmentStatus?: FulfilmentStatus; reviewReason?: string | null },
 ): {
   externalNumber: string;
   sourcePlatform: 'shopify' | 'prestashop' | 'manual';
@@ -462,7 +550,7 @@ function sourceUpdate(
   integrationStatus: 'synced';
   version: { increment: number };
   fulfilmentStatus?: FulfilmentStatus;
-  reviewReason?: string;
+  reviewReason?: string | null;
   attentionReasons?: string[];
 } {
   const data = {
@@ -491,8 +579,14 @@ function sourceUpdate(
   if (terminal) {
     return { ...data, attentionReasons: [...attention] };
   }
-  if (signals.length > 0) {
-    return { ...data, fulfilmentStatus: 'review_required', reviewReason: signals.join(',') };
+  if (review.fulfilmentStatus !== undefined || review.reviewReason !== undefined) {
+    return {
+      ...data,
+      ...(review.fulfilmentStatus !== undefined
+        ? { fulfilmentStatus: review.fulfilmentStatus }
+        : {}),
+      ...(review.reviewReason !== undefined ? { reviewReason: review.reviewReason } : {}),
+    };
   }
   return data;
 }
@@ -522,7 +616,11 @@ async function replaceLines(
   });
 }
 
-async function giftPrinted(tx: TenantTransaction, companyId: string, orderId: string): Promise<boolean> {
+async function giftPrinted(
+  tx: TenantTransaction,
+  companyId: string,
+  orderId: string,
+): Promise<boolean> {
   const job = await tx.printJob.findFirst({
     where: {
       companyId,

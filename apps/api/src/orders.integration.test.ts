@@ -281,8 +281,9 @@ describe('orders import and API', () => {
     expect((await postEvent(tokenB, companyB, shopifyB, `c2a-${runId}-2001`, 'orders/create', companyBFixture)).status).toBe(202);
     expect((await drain(companyA)) + (await drain(companyB))).toBe(3);
     const emoji = await orderByNumber(adminA, companyA, '#1003');
-    expect(emoji.fulfilmentStatus).toBe('review_required');
-    expect(emoji.reviewReason).toBe('unsupported_glyphs');
+    expect(emoji.fulfilmentStatus).toBe('new');
+    expect(emoji.reviewReason).toBeNull();
+    expect(emoji.giftMessage).toBe('Many happy returns 🎁');
     const pending = await orderByNumber(adminA, companyA, '#1002');
     expect(pending.paymentStatus).toBe('pending');
     expect(pending.deliveryMethod).toBe('post_international');

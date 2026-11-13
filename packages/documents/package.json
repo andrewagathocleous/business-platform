@@ -12,6 +12,7 @@
     }
   },
   "dependencies": {
+    "@bp/domain": "workspace:*",
     "fontkit": "2.0.4",
     "pdfkit": "0.20.2",
     "pdfmake": "0.3.12"

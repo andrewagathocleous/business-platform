@@ -12,7 +12,16 @@ export const fontFiles = {
   bolditalics: resolve(fontsDir, 'NotoSans-Bold.ttf'),
 };
 
-/** pdfmake may only read the committed Noto Sans files. */
+/**
+ * Gift-card fallbacks. pdfkit subsets these. They are not registered with pdfmake:
+ * packing slips and invoices stay on Noto Sans alone.
+ */
+export const fallbackFontFiles = {
+  symbols: resolve(fontsDir, 'NotoSansSymbols2-Regular.ttf'),
+  emoji: resolve(fontsDir, 'NotoEmoji[wght].ttf'),
+};
+
+/** pdfmake may only read files in the committed fonts directory. */
 export function fontPathAllowed(candidate: string): boolean {
   const resolved = resolve(candidate);
   return resolved === fontsDir || resolved.startsWith(`${fontsDir}${sep}`);

@@ -1,9 +1,10 @@
 import { type INestApplication } from '@nestjs/common';
-import { TenantDb } from '@bp/db';
+import { createPrismaClient, TenantDb } from '@bp/db';
 import { Test } from '@nestjs/testing';
 import { Logger } from 'nestjs-pino';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Writable } from 'node:stream';
 import request from 'supertest';
@@ -15,6 +16,7 @@ import {
   assertTestDatabaseUrls,
 } from '../../../tools/test-db-guard.mjs';
 import { AppModule } from './app.module';
+import { DEFAULT_GIFT_TEMPLATE } from './documents/default-gift-template';
 import { cancelQueuedJobs } from './test/cancel-queued-jobs';
 import { PrismaService } from './database/prisma.service';
 import { configureHttp } from './http/configure-http';
@@ -851,7 +853,107 @@ describe('company setup', () => {
     expect(record(own.brand)).toEqual(record(listedStore.brand));
     expect(record(own.location)).toEqual(record(listedStore.location));
   });
+
+  it('backfills a default gift-card template as bp_owner and does nothing the second time', async () => {
+    const ownerUrl = process.env.DATABASE_URL_OWNER;
+    if (!ownerUrl) {
+      throw new Error('DATABASE_URL_OWNER is required');
+    }
+    const owner = createPrismaClient(ownerUrl);
+    try {
+      const who = await owner.$queryRaw<{ current_user: string; current_database: string }[]>`
+        SELECT current_user, current_database() AS current_database
+      `;
+      assertDatabaseNameIsTest(who[0]?.current_database, 'DATABASE_URL_OWNER');
+      expect(who[0]?.current_user).toBe('bp_owner');
+      const company = await owner.company.create({
+        data: {
+          legalName: `R1-I template ${runId} Ltd (fictional)`,
+          tradingName: `R1-I template ${runId}`,
+          isFictional: true,
+          address: { countryCode: 'CY' },
+        },
+      });
+      const before = await templateCount(owner, companyA);
+      const sql = readFileSync(defaultGiftMigrationPath(), 'utf8');
+      await owner.$executeRawUnsafe(sql);
+      await expectDefaultTemplate(owner, company.id);
+      const audits = await templateAudits(owner, company.id);
+      expect(audits).toHaveLength(1);
+      expect(audits[0]).toMatchObject({
+        actorType: 'system',
+        actorId: null,
+        actorLabel: 'bp_owner',
+        action: 'gift_message_template.created',
+        outcome: 'success',
+        correlationId: 'r1i-default-gift-template',
+        details: {
+          name: DEFAULT_GIFT_TEMPLATE.name,
+          isDefault: true,
+          preset: 'zebra-100x150',
+        },
+      });
+      expect(await templateCount(owner, companyA)).toBe(before);
+      await owner.$executeRawUnsafe(sql);
+      await expectDefaultTemplate(owner, company.id);
+      expect(await templateAudits(owner, company.id)).toHaveLength(1);
+      expect(await templateCount(owner, companyA)).toBe(before);
+    } finally {
+      await owner.$disconnect();
+    }
+  });
 });
+
+type OwnerClient = ReturnType<typeof createPrismaClient>;
+
+function defaultGiftMigrationPath(): string {
+  return resolve(
+    process.cwd(),
+    '../../packages/db/prisma/migrations/20261113160000_r1i_default_gift_template/migration.sql',
+  );
+}
+
+async function templateCount(owner: OwnerClient, companyId: string): Promise<number> {
+  return owner.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.company_id', ${companyId}, true)`;
+    return tx.giftMessageTemplate.count();
+  });
+}
+
+async function expectDefaultTemplate(owner: OwnerClient, companyId: string): Promise<void> {
+  const templates = await owner.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.company_id', ${companyId}, true)`;
+    return tx.giftMessageTemplate.findMany();
+  });
+  expect(templates).toHaveLength(1);
+  const template = templates[0];
+  expect(template?.name).toBe(DEFAULT_GIFT_TEMPLATE.name);
+  expect(template?.isDefault).toBe(true);
+  expect(template?.align).toBe('center');
+  expect(template?.verticalAlign).toBe('middle');
+  expect(template?.pageWidthMm.toFixed(2)).toBe('100.00');
+  expect(template?.pageHeightMm.toFixed(2)).toBe('150.00');
+  expect(template?.marginTopMm.toFixed(2)).toBe('5.00');
+  expect(template?.marginRightMm.toFixed(2)).toBe('5.00');
+  expect(template?.marginBottomMm.toFixed(2)).toBe('5.00');
+  expect(template?.marginLeftMm.toFixed(2)).toBe('5.00');
+  expect(template?.fontSizePt.toFixed(2)).toBe('16.00');
+  expect(template?.minFontSizePt.toFixed(2)).toBe('9.00');
+  expect(template?.lineHeight.toFixed(3)).toBe('1.250');
+}
+
+async function templateAudits(owner: OwnerClient, companyId: string) {
+  return owner.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.company_id', ${companyId}, true)`;
+    return tx.auditEvent.findMany({
+      where: {
+        companyId,
+        correlationId: 'r1i-default-gift-template',
+        action: 'gift_message_template.created',
+      },
+    });
+  });
+}
 
 function started(): INestApplication {
   if (!app) {

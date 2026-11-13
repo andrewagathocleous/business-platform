@@ -1,15 +1,26 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { unsupportedGlyphs } from './glyphs';
+import { giftMessageGlyphs, unsupportedGlyphs } from './glyphs';
 
 describe('unsupportedGlyphs', () => {
-  it('accepts the Greek gift fixture and flags the emoji fixture', () => {
+  it('accepts Greek, line breaks and the emoji fixture, and names a missing character by code point', () => {
     const greek = giftMessage('order-1001-paid-greek-gift.json');
     const emoji = giftMessage('order-1003-emoji-gift.json');
     expect(unsupportedGlyphs(greek)).toEqual([]);
-    expect(unsupportedGlyphs(emoji)).toEqual(['🎁']);
+    expect(unsupportedGlyphs(emoji)).toEqual([]);
     expect(unsupportedGlyphs('line\nbreak')).toEqual([]);
+    expect(unsupportedGlyphs('\uFE0E\uFE0F\u200D')).toEqual([]);
+    expect(unsupportedGlyphs('\u0378')).toEqual(['U+0378']);
+    const repeated = giftMessageGlyphs('\u0378\uFE0F\u200D\u0378');
+    expect(repeated.unsupportedChars).toEqual(['U+0378']);
+    expect(repeated.omittedCount).toBe(2);
+    expect(repeated.fits).toBe(true);
+    const crash = giftMessageGlyphs('1\u{102E0}');
+    expect(crash.unsupportedChars).toEqual(['U+0031', 'U+102E0']);
+    expect(crash.omittedCount).toBe(2);
+    expect(crash.fits).toBe(true);
+    expect(giftMessageGlyphs('\u{1F408}\u200D\u2B1B').omittedCount).toBe(0);
   });
 });
 

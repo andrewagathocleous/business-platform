@@ -234,6 +234,7 @@
       "unknown_payment": "Unknown payment status",
       "unknown_delivery": "Unknown delivery method",
       "unsupported_glyphs": "Characters the gift card cannot print",
+      "gift_message_too_long": "Gift message too long for the card",
       "cancelled_at_source": "Cancelled in the store",
       "gift_message_changed_after_print": "Gift message changed after printing"
     },
@@ -270,7 +271,11 @@
       "discard": "Discard this request",
       "storage": "Nothing was sent: this browser would not keep a note of the request, so a lost answer could not be checked. Allow site storage for this page and try again.",
       "unreadable": "Cannot check an earlier print request for this order and document, so no new print or reprint will be sent. Look at the print history, then check again.",
-      "checkAgain": "Check again"
+      "checkAgain": "Check again",
+      "omitTitle": "Characters left out",
+      "omitCount": "{{count}} character(s) cannot be drawn and will be left off the card.",
+      "omitPrint": "Print without them",
+      "giftDoesNotFit": "The message does not fit on the card. Shorten it before printing."
     },
     "printStatus": {
       "queued": "Queued",
@@ -1099,7 +1104,8 @@
     "invalid": "Check the values.",
     "error": "The gift card layout could not be loaded or saved.",
     "openPreview": "Open the preview PDF",
-    "unsupported": "{{count}} character(s) in the sample cannot be printed with the card font, for example emoji. They will not appear on the card."
+    "empty": "This company has no gift-card template yet, so a gift card cannot be printed.",
+    "unsupported": "{{count}} character(s) in the sample cannot be drawn. They will not appear on the card."
   },
   "invoicing": {
     "title": "Invoicing",

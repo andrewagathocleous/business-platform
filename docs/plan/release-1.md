@@ -291,6 +291,35 @@ On the live laptop after R0, with `printing` off. Real customer data stays on th
 5. With the user's approval, turn on `outbound.all` and `printing`, then do one physical test print each of a gift card and a packing slip.
 6. Record everything in `docs/releases/r1-report.md`, marked **live-tested** (PrestaShop read-only, PrintNode). Use no customer names or messages in the report: use order ids only.
 
+## R1-I. Gift cards with emoji (R1-03, found at R1-H)
+
+Found on the live laptop on 2026-10-28. A real order's gift message ended in ❤️ (U+2764 U+FE0F). `unsupportedGlyphs` (`packages/documents/src/glyphs.ts`) checks every code point against Noto Sans Regular only, which has neither code point, so:
+- the import set `review_required` ("Characters the gift card cannot print"), and
+- `POST /print-requests` refuses the gift card with 422 `gift_message_needs_review`, with no way to proceed (`apps/api/src/printing/print.service.ts`, the `rendered.review` check).
+
+Any gift message with an emoji therefore cannot be printed. Emoji are common in gift messages, so this is **P1**, in a strict area (printing): every finding blocks and the review runs at `xhigh`. The stored message was correct byte-for-byte; only drawing and printing are affected.
+
+1. **Fallback fonts, black only** (the Zebra prints one colour). Bundle Noto Sans Symbols 2 and Noto Emoji (monochrome), both SIL OFL, in `packages/documents/assets/fonts` with their licence. Drawing and measuring use Noto Sans first and fall back per run of characters. The fit and line-wrap calculation measures each run with the font that draws it.
+2. **Invisible code points.** U+FE0E and U+FE0F (variation selectors) and U+200D (zero-width joiner) are not unsupported: skip them in the check and do not draw them. The stored message never changes.
+3. **What still cannot be drawn: print after confirming** (the user's decision, 2026-11-13, option A).
+   - The order still goes to review on import, with the code points it cannot draw.
+   - Without confirmation, the gift-card request stays 422 `gift_message_needs_review`, now with `unsupportedChars` as code points (`U+XXXX`) in the error, never the message text.
+   - With confirmation, the request carries `unprintableAcknowledged: true` and a reason of at least 5 characters (the reprint rule). The card is drawn without those characters, and the job is queued as usual, behind the same switches and the first-print rule.
+   - Audit `print_job.requested` with `unprintableAcknowledged`, the code points and the reason. No message text in the audit or the logs.
+   - The Print dialog names the number of characters that will be left out and asks for the reason.
+   - A message that does not fit (`fits = false`) stays refused, as today. Out of scope here.
+4. The import review rule and the print check use the same function, so both follow 1 and 2.
+5. **No gift-card template on a real company (R1-05, found 2026-11-13).** There is no route that creates a template; `POST /api/platform/companies` does not create one, and only the fictional seed does. On the laptop's company the Gift cards page is empty and a gift-card print would fail with `template_not_found`. Fix:
+   - `createCompany` creates the default template in the same transaction, with the Zebra 100 × 150 mm preset values (R1-F), and audits it.
+   - A migration gives every existing company without a template that same default. It runs as `bp_owner`, writes one audit row per template, and does nothing when a company already has one.
+   - The Gift cards page shows a clear message, instead of an empty page, if a company still has no template.
+   - Tests: a new company has exactly one default template; the migration fills only companies that have none and is safe to run twice; the page's empty state.
+
+Tests:
+- Unit (`packages/documents`): ❤️, 😊, a Greek message with line breaks ending in ❤️, a ZWJ family emoji, a skin-tone emoji, and a character no bundled font has. Each reports `fits` and exactly the unsupported code points. At 100 × 150 mm the text stays inside the margins.
+- Integration: an order whose message ends in ❤️ imports **without** review, and its gift card can be queued. A message with an undrawable character is 422 without confirmation, queues with it, and audits the code points and the reason. With `printing` off the job is held.
+- Component: the Print dialog's confirmation and its reason field.
+
 ## R1 acceptance
 
 1. A new order placed in PrestaShop appears in the platform within 2 poll intervals, with an exact gift message.
