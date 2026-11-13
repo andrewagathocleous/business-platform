@@ -244,7 +244,8 @@ describe('Zebra 100 × 150 mm card', () => {
     expect(rendered.fits).toBe(false);
     expect(layoutGiftMessage(message, ZEBRA).fontSize).toBe(9);
     expect(actualTexts(rendered.pdf).join('')).toBe(message);
-  });
+    // About 0.6 s locally; a busy CI runner took 6.8 s, past the 5 s default.
+  }, 30_000);
 });
 
 describe('fallback fonts on a 100 × 150 mm card', () => {
