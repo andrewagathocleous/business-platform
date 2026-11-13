@@ -27,6 +27,7 @@ import {
 } from '../../../tools/test-db-guard.mjs';
 import { AppModule } from './app.module';
 import { JobRunner } from './automation/jobs/job-runner';
+import { cancelQueuedJobs } from './test/cancel-queued-jobs';
 import { PrismaService } from './database/prisma.service';
 import { configureHttp } from './http/configure-http';
 import { caseSensitiveAdapter } from './http/express-adapter';
@@ -185,6 +186,7 @@ describe('integration settings', () => {
     if (app) {
       started().get(PrestashopConnectionService).hooks = null;
       await removeSettingsFixtures();
+      await cancelQueuedJobs(app, [companyA, companyB]);
       await app.close();
     }
     await closeShop?.();
@@ -1050,13 +1052,58 @@ async function drain(): Promise<void> {
       )
   `);
   const runner = started().get(JobRunner);
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const result = await runner.drainOnce();
-    if (result.processed === 0) {
+  const deadline = Date.now() + 8 * runner.drainDeadlineMs;
+  for (;;) {
+    await runner.drainOnce(1_000, { companyId: companyA });
+    const pending = await settingsConnectionJobs();
+    if (pending.queued === 0 && pending.running === 0) {
       return;
     }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      break;
+    }
+    const nextAt = pending.nextRun?.getTime() ?? Date.now();
+    const waitMs = Math.min(Math.max(25, nextAt - Date.now() + 25), remaining);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
   throw new Error('drain did not finish');
+}
+
+async function settingsConnectionJobs(): Promise<{ queued: number; running: number; nextRun: Date | null }> {
+  const rows = await withCompany(companyA, (tx) => tx.$queryRaw<{ queued: number; running: number; nextRun: Date | null }[]>`
+    SELECT
+      COUNT(*) FILTER (WHERE status = 'queued'::"job_status")::int AS queued,
+      COUNT(*) FILTER (WHERE status = 'running'::"job_status")::int AS running,
+      MIN(run_after) FILTER (WHERE status = 'queued'::"job_status") AS "nextRun"
+    FROM job
+    WHERE (
+        type = 'prestashop.poll' AND payload->>'connectionId' = ${connectionId}
+      )
+      OR (
+        type = 'inbox.process'
+        AND payload->>'inboxId' IN (
+          SELECT id::text FROM integration_inbox WHERE connection_id = ${connectionId}::uuid
+        )
+      )
+  `);
+  const row = rows[0];
+  return {
+    queued: row?.queued ?? 0,
+    running: row?.running ?? 0,
+    nextRun: asDate(row?.nextRun),
+  };
+}
+
+function asDate(value: unknown): Date | null {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  return null;
 }
 
 async function loadTemplate(baseUrl: string): Promise<PrestashopOrderPayload> {

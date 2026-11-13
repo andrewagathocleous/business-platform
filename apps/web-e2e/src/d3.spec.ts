@@ -77,10 +77,12 @@ test('finance.a creates a client and an E4 draft invoice', async ({ page, reques
   await expect(page.getByRole('heading', { name: 'New invoice', exact: true })).toBeVisible();
   await page.getByLabel('Client').fill(displayName);
   await page.getByRole('button', { name: displayName, exact: true }).click();
+  await expect(page.locator('.client-chip')).toContainText(displayName);
   await expect(page.getByTestId('document-language')).toContainText('Document language:');
   await expect(page.getByLabel('Prices include tax')).not.toBeChecked();
   await expect(page.getByRole('option', { name: 'STD19', exact: true })).toBeAttached();
   await page.getByLabel('Description', { exact: true }).fill('Demo nuts');
+  await expect(page.getByLabel('Description', { exact: true })).toHaveValue('Demo nuts');
   await page.getByLabel('Quantity', { exact: true }).fill('2');
   await page.getByLabel('Unit', { exact: true }).fill('kg');
   await page.getByLabel('Unit price', { exact: true }).fill('10.00');

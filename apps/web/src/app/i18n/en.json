@@ -19,9 +19,11 @@
     "audit": "Audit",
     "printers": "Printers",
     "company": "Company",
+    "invoicing": "Invoicing",
     "stores": "Stores",
     "integrations": "Integrations",
-    "giftCards": "Gift cards"
+    "giftCards": "Gift cards",
+    "reports": "Reports"
   },
   "user": {
     "menu": "Account menu",
@@ -261,7 +263,14 @@
       "reprintTitle": "Reprint",
       "provider": "Provider",
       "reprintFlag": "Reprint",
-      "back": "Back"
+      "back": "Back",
+      "uncertain": "Not sure whether it reached the print queue. Send the same request again: it cannot print twice.",
+      "retry": "Send the same request again",
+      "discardHelp": "The new attempt was refused, but the first one may still have been queued. Check the print history first: discard this request only if the print is not there.",
+      "discard": "Discard this request",
+      "storage": "Nothing was sent: this browser would not keep a note of the request, so a lost answer could not be checked. Allow site storage for this page and try again.",
+      "unreadable": "Cannot check an earlier print request for this order and document, so no new print or reprint will be sent. Look at the print history, then check again.",
+      "checkAgain": "Check again"
     },
     "printStatus": {
       "queued": "Queued",
@@ -285,6 +294,54 @@
   },
   "clients": {
     "title": "Clients",
+    "csv": {
+      "export": "Export CSV",
+      "import": "Import CSV",
+      "sensitive": "This file contains customer data. Keep it secure.",
+      "exporting": "Preparing CSV download…",
+      "instructions": "Choose a UTF-8 .csv file up to 4 MB and 5,000 data rows. The header must include kind and display_name. Review the preview before importing. Only new clients are created; duplicates and errors are skipped. Previews expire after 24 hours.",
+      "file": "CSV file",
+      "working": "Processing client CSV…",
+      "preview": "Import preview",
+      "counts": "New: {{new}} · Duplicate: {{duplicate}} · Error: {{error}}",
+      "order": "Errors and duplicates appear first. Up to 50 rows are shown per page.",
+      "row": "Row",
+      "status": "Status",
+      "messages": "Messages and duplicate matches",
+      "statuses": {
+        "new": "New",
+        "duplicate": "Duplicate",
+        "error": "Error"
+      },
+      "previous": "Previous rows",
+      "next": "Next rows",
+      "page": "Page {{current}} of {{total}}",
+      "confirm": "Import {{count}} new clients",
+      "created": "Created {{count}} clients.",
+      "errors": {
+        "export_too_large": "The export exceeds 20,000 clients or 64 MB. Contact support for a smaller export.",
+        "export_not_found": "The client export is no longer available. Reload the page and try again.",
+        "preview_expired": "This preview has expired after 24 hours. Choose the CSV file again to create a fresh preview.",
+        "preview_changed": "The file hash no longer matches this preview. Choose the CSV file again and review a fresh preview.",
+        "already_applied": "This preview has already been imported. It cannot be applied again. Reload the client list to see the clients.",
+        "too_many_rows": "The CSV has more than 5,000 data rows. Split it into smaller files.",
+        "preview_too_large": "The preview exceeds 16 MB. Split the CSV into smaller files.",
+        "invalid_csv": "The CSV could not be parsed. Check quoting, row column counts and line endings, and remove any NUL characters.",
+        "header_required": "The CSV needs a header row with kind and display_name.",
+        "unknown_columns": "The CSV contains unknown column names. Use the documented client CSV columns or an exported CSV header.",
+        "duplicate_columns": "The CSV header repeats a column name. Give each column a unique name.",
+        "missing_columns": "The CSV header must include both kind and display_name.",
+        "invalid_body": "The import request was refused. Use a file name of 1–255 characters and choose the CSV file again.",
+        "import_not_found": "This import preview was not found in this company. Choose the CSV file again.",
+        "file_too_large": "The file or its upload exceeds 4 MB. Choose a smaller CSV file.",
+        "file_type": "Choose a file with a .csv extension.",
+        "version_conflict": "This preview has changed. Reload it and review it before confirming again.",
+        "mfa": "Two-step sign-in is required. Sign out from the account menu and sign in again with two-step verification.",
+        "permission": "You do not have permission for this action.",
+        "session": "Your session has ended. Sign in again.",
+        "failed": "The request could not be completed. Contact support with the correlation id if this continues."
+      }
+    },
     "new": "New client",
     "search": "Search",
     "includeArchived": "Include archived",
@@ -343,6 +400,7 @@
       "currency": "Default currency",
       "language": "Default language",
       "terms": "Payment terms in days",
+      "acceptsEInvoices": "Accepts electronic invoices (the client agreed to receive invoices by email or as files)",
       "contactName": "Contact name",
       "position": "Position",
       "primary": "Primary contact",
@@ -400,7 +458,8 @@
       "issueDate": "Issue date",
       "dueDate": "Due date",
       "status": "Status",
-      "total": "Total"
+      "total": "Total",
+      "deadline": "Deliver by"
     },
     "filters": {
       "status": "Status",
@@ -408,7 +467,10 @@
       "from": "From",
       "to": "To",
       "any": "Any status",
-      "anyClient": "Any client"
+      "anyClient": "Any client",
+      "delivery": "Delivery",
+      "deliveryAny": "Any",
+      "deliveryPending": "Not yet delivered"
     },
     "status": {
       "draft": "Draft",
@@ -417,7 +479,8 @@
     },
     "type": {
       "invoice": "Invoice",
-      "quote": "Quote"
+      "quote": "Quote",
+      "creditNote": "Credit note"
     },
     "kind": {
       "item": "Item",
@@ -447,7 +510,8 @@
       "unitPrice": "Unit price",
       "discount": "Discount %",
       "tax": "Tax code",
-      "kind": "Kind"
+      "kind": "Kind",
+      "supplyDate": "Supply date (empty: the issue date)"
     },
     "totals": {
       "subtotal": "Subtotal",
@@ -464,6 +528,189 @@
     "rules": {
       "client": "Choose a client",
       "lines": "Each line needs a description, quantity, unit, unit price and tax code"
+    },
+    "openIssuedPdf": "Open the issued PDF",
+    "issued": {
+      "title": "Invoice {{number}}",
+      "deadline": "Deliver to the client by {{date}}.",
+      "delivered": "Delivered on {{date}}."
+    },
+    "deadline": {
+      "soon": "Delivery deadline soon",
+      "overdue": "Delivery deadline passed"
+    },
+    "issue": {
+      "title": "Issue",
+      "action": "Issue invoice",
+      "confirm": "Issue now",
+      "cancel": "Cancel",
+      "confirmText": "Issuing gives this invoice its number, freezes every detail and stores the PDF. An issued invoice cannot be edited or deleted; corrections need a credit note.",
+      "saveFirst": "Save the draft first. Issuing uses the saved draft.",
+      "incomplete": "The invoice is missing details it must show:",
+      "warnings": {
+        "delivery_deadline_passed": "Issued after its delivery deadline. Deliver it to the client as soon as possible."
+      },
+      "errors": {
+        "disabled": "Issuing real invoices is switched off for this company (Admin → Automation).",
+        "currency": "Invoices are issued in EUR only.",
+        "numberTaken": "The next number is already used by another series. Give the series a different prefix (Admin → Invoicing).",
+        "series": "The default invoice series is not active (Admin → Invoicing).",
+        "taxCodeChanged": "A line has a VAT rate its tax code no longer has. Save the draft again.",
+        "notDraft": "This document is no longer a draft. Reload it.",
+        "failed": "The invoice was not issued."
+      },
+      "fields": {
+        "seller_legalName": "The company's legal name is missing (Admin → Company).",
+        "seller_address": "The company address needs a street and a city (Admin → Company).",
+        "seller_vatNumber": "The company's VAT number is missing (Admin → Company).",
+        "seller_vatNumber_prefix": "For a client in another EU country, the company's VAT number must start with CY.",
+        "buyer_address": "The client needs an address with a street and a city.",
+        "buyer_vatNumber": "Reverse charge needs the client's VAT number.",
+        "buyer_vatNumber_prefix": "The client's VAT number must start with its country code (EL for Greece).",
+        "lines": "Add at least one line.",
+        "total_negative": "The total cannot be negative. Use a credit note instead.",
+        "supplyDate_afterIssue": "The supply date cannot be later than today.",
+        "series_missing": "Choose a default invoice series (Admin → Invoicing).",
+        "line": {
+          "description": "Line {{position}}: add a description.",
+          "legalNote": "Line {{position}}: its tax code needs the legal note in English and Greek (Admin → Invoicing).",
+          "taxCodeInactive": "Line {{position}}: its tax code is no longer active."
+        },
+        "unknown": "Missing: {{code}}"
+      }
+    },
+    "delivery": {
+      "title": "Delivery to the client",
+      "none": "No delivery recorded yet.",
+      "method": "How",
+      "date": "Delivered on",
+      "keepCopy": "The company's paper copy is kept in the file",
+      "note": "Note",
+      "record": "Record delivery",
+      "copyKept": "copy kept",
+      "methods": {
+        "handed_over": "Handed over",
+        "posted": "Posted",
+        "emailed_outside_platform": "E-mailed (outside the platform)",
+        "other": "Other"
+      },
+      "warnings": {
+        "delivered_after_deadline": "Recorded after the delivery deadline."
+      },
+      "errors": {
+        "paperCopy": "Keep the company copy of a paper invoice, then record the delivery.",
+        "eInvoice": "This client has not accepted electronic invoices. Print it and deliver it on paper.",
+        "future": "The delivery date is in the future.",
+        "beforeIssue": "The delivery date is before the issue date.",
+        "notIssued": "Only an issued document is delivered.",
+        "failed": "The delivery was not recorded."
+      }
+    },
+    "print": {
+      "title": "Print",
+      "help": "Prints the stored PDF. For a client on paper it prints two copies: one to deliver, one for the file.",
+      "action": "Print invoice",
+      "alreadyPrinted": "This invoice was already printed. The history below is reloaded; a reprint needs a reason.",
+      "reason": "Reason for the reprint",
+      "reprint": "Reprint",
+      "errors": {
+        "notMapped": "No printer is set up for invoices (Admin → Printers).",
+        "location": "Several locations print invoices. Choose where to print, then print again.",
+        "paper": "The invoice printer does not take the mapped paper size (Admin → Printers).",
+        "notIssued": "Only an issued document is printed.",
+        "failed": "The invoice was not sent to the printer.",
+        "storage": "Nothing was sent: this browser would not keep a note of the request, so a lost answer could not be checked. Allow site storage for this page and try again."
+      },
+      "copies": "{{copies}} copies",
+      "reprinted": "reprint",
+      "uncertain": "Not sure whether it reached the print queue. Send the same request again: it cannot print twice.",
+      "location": "Print at",
+      "chooseLocation": "Choose a location",
+      "queued": "Sent to the printer queue: {{copies}} copies.",
+      "retry": "Send the same request again",
+      "discardHelp": "The new attempt was refused, but the first one may still have been queued. Check the history above: discard this request only if the print is not there.",
+      "discard": "Discard this request",
+      "unreadable": "Cannot check an earlier print request for this invoice, so no new print or reprint will be sent. Look at the print history, then check again.",
+      "checkAgain": "Check again"
+    },
+    "datesAtIssue": "An invoice gets its issue date when it is issued, and its due date from the client's or the company's payment terms. The due date shown here is a preview.",
+    "credit": {
+      "title": "Credit notes",
+      "none": "No credit notes yet.",
+      "unnumbered": "Draft",
+      "allCredited": "Everything on this invoice has been credited.",
+      "start": "Create a credit note",
+      "reason": "Reason (printed on the credit note)",
+      "what": "What to credit",
+      "full": "Everything not yet credited",
+      "someLines": "Chosen quantities",
+      "columns": {
+        "line": "Line",
+        "invoiced": "Invoiced",
+        "credited": "Credited so far",
+        "toCredit": "To credit"
+      },
+      "quantityFor": "Quantity to credit on line {{position}}",
+      "draftNote": "This makes a draft. Nothing is credited until the credit note is issued.",
+      "create": "Create draft",
+      "created": "The draft credit note was created.",
+      "openCreated": "Open it",
+      "rules": {
+        "reason": "Give a reason.",
+        "quantity": "Quantities must be numbers above zero with at most 4 decimals.",
+        "tooMuch": "A quantity is more than is left to credit on its line.",
+        "noLines": "Enter a quantity on at least one line."
+      },
+      "errors": {
+        "overCredit": "That credits more than the invoice shows, counting issued credit notes. Reload the invoice to see what is left.",
+        "nothingLeft": "Everything on this invoice has been credited.",
+        "invalidLine": "A line is not on this invoice. Reload the invoice.",
+        "notCreditable": "Only an issued invoice can be credited.",
+        "quantity": "Quantities must be numbers above zero with at most 4 decimals.",
+        "failed": "The credit note was not created."
+      }
+    },
+    "creditNote": {
+      "pageTitle": "Credit note",
+      "title": "Credit note {{number}}",
+      "draftTitle": "Credit note (draft)",
+      "credits": "Credits invoice",
+      "reason": "Reason",
+      "total": "Total credited",
+      "unsaved": "Save to see the amounts for the new quantities.",
+      "issueTitle": "Issue",
+      "issueAction": "Issue credit note",
+      "saveFirst": "Save the draft first. Issuing uses the saved draft.",
+      "confirmText": "Issuing gives this credit note its number in the credit-note series, works out its amounts again, freezes it and stores the PDF. An issued credit note cannot be edited or deleted.",
+      "incomplete": "The credit note is missing details it must show:",
+      "fields": {
+        "series_missing": "Choose a default credit-note series (Admin → Invoicing)."
+      },
+      "errors": {
+        "overCredit": "These quantities credit more than is left on the invoice, counting issued credit notes.",
+        "overCreditAtIssue": "Other credit notes of this invoice were issued after this draft was saved, and this one would now credit too much. Lower its quantities and save.",
+        "changed": "A line no longer matches the invoice line it credits. Create a new credit note instead.",
+        "series": "The default credit-note series is not active (Admin → Invoicing).",
+        "saveFailed": "The credit note was not saved.",
+        "issueFailed": "The credit note was not issued."
+      }
+    },
+    "convert": {
+      "title": "Convert to invoice",
+      "explain": "This makes a new draft invoice with the quote's lines. The quote stays as it is and converts only once.",
+      "action": "Convert to invoice",
+      "saveFirst": "Save the quote first. Converting uses the saved quote.",
+      "done": "This quote was converted to an invoice.",
+      "open": "Open the invoice",
+      "fromQuote": "Made from a quote.",
+      "openQuote": "Open the quote",
+      "errors": {
+        "already": "This quote was already converted to an invoice.",
+        "currency": "Invoices are in the company currency only, and this client uses another currency.",
+        "taxCodeInactive": "A line's tax code is no longer active. Change it on the quote and save.",
+        "notDraft": "Only a draft quote can be converted.",
+        "failed": "The quote was not converted."
+      }
     }
   },
   "members": {
@@ -648,7 +895,7 @@
     "error": "The stores could not be loaded",
     "brands": "Brands",
     "locations": "Locations",
-    "stores": "Stores",
+    "stores": "Store list",
     "addBrand": "Add brand",
     "saveBrand": "Save brand",
     "rename": "Rename",
@@ -672,6 +919,7 @@
     "forbidden": "You do not have access to this section.",
     "nameTaken": "That name is already used by an active brand.",
     "locationInUse": "This location still has an active store or a printer mapping.",
+    "authorityLocked": "The platform has already issued an invoice for this store's orders. Invoice authority cannot be changed.",
     "brandArchived": "That brand is archived.",
     "locationArchived": "That location is archived.",
     "fields": {
@@ -701,6 +949,11 @@
       "undecided": "Undecided",
       "store": "Store",
       "platform": "Platform"
+    },
+    "authorityHelp": {
+      "undecided": "Undecided: not chosen yet. The platform does not invoice this store's orders.",
+      "store": "Store: the shop keeps issuing its own invoices or receipts. The platform does not invoice this store's orders.",
+      "platform": "Platform: the platform will issue invoices for this store's orders once order-to-invoice conversion is available. This choice cannot be undone once one is issued."
     }
   },
   "integrations": {
@@ -847,5 +1100,241 @@
     "error": "The gift card layout could not be loaded or saved.",
     "openPreview": "Open the preview PDF",
     "unsupported": "{{count}} character(s) in the sample cannot be printed with the card font, for example emoji. They will not appear on the card."
+  },
+  "invoicing": {
+    "title": "Invoicing",
+    "intro": "Tax codes, invoice numbering, bank details and invoice terms. Agree these with your accountant before issuing real invoices (docs/finance/invoice-requirements.md).",
+    "loading": "Loading invoicing settings…",
+    "error": "Invoicing settings could not be loaded.",
+    "status": "Status",
+    "active": "Active",
+    "inactive": "Inactive",
+    "edit": "Edit",
+    "save": "Save",
+    "cancel": "Cancel",
+    "conflict": "Someone else changed this while you were editing. The latest values are shown; make your change again.",
+    "forbidden": "You cannot change this. Two-step sign-in may be required: sign out and sign in again.",
+    "errors": {
+      "code_taken": "This code is already used.",
+      "tax_code_in_use": "An invoice line uses this tax code, so its rate, kind and notes cannot change. Create a new code instead.",
+      "series_in_use": "A number was issued from this series, so its prefix, padding and next number cannot change.",
+      "series_is_default": "This series is a company default. Choose another default first.",
+      "next_number_lowered": "The next number can only be raised.",
+      "account_inactive": "An inactive account cannot be shown on invoices.",
+      "series_type_mismatch": "That series is for another document type.",
+      "series_inactive": "That series is not active."
+    },
+    "tax": {
+      "title": "Tax codes",
+      "add": "Add tax code",
+      "code": "Code",
+      "name": "Name",
+      "rate": "Rate %",
+      "kind": "Kind",
+      "deadline": "Invoice deadline",
+      "noteEn": "Legal note on invoices (English)",
+      "noteEl": "Legal note on invoices (Greek)",
+      "example": "Example from setup: check it with your accountant",
+      "inUse": "Used on invoices: rate, kind and notes are locked.",
+      "kinds": {
+        "standard": "Standard",
+        "reduced": "Reduced",
+        "zero": "Zero-rated",
+        "exempt": "Exempt",
+        "reverse_charge": "Reverse charge",
+        "out_of_scope": "Out of scope"
+      },
+      "deadlines": {
+        "days_30": "Within 30 days of supply",
+        "next_month_15": "By the 15th of the next month"
+      }
+    },
+    "series": {
+      "title": "Numbering series",
+      "add": "Add series",
+      "code": "Code",
+      "documentType": "Document type",
+      "prefix": "Prefix",
+      "nextNumber": "Next number",
+      "padding": "Digits",
+      "next": "Next number will be",
+      "hasIssued": "Numbers issued: prefix, digits and next number are locked.",
+      "numbersInvalid": "Next number and digits must be whole numbers (digits from 1 to 12).",
+      "types": {
+        "invoice": "Invoice",
+        "credit_note": "Credit note",
+        "quote": "Quote"
+      }
+    },
+    "bank": {
+      "title": "Bank accounts",
+      "add": "Add bank account",
+      "bankName": "Bank",
+      "accountHolder": "Account holder",
+      "iban": "IBAN",
+      "bic": "BIC (optional)",
+      "shown": "Shown on invoices"
+    },
+    "terms": {
+      "title": "Invoice terms and default series",
+      "defaultInvoice": "Default invoice series",
+      "defaultCreditNote": "Default credit-note series",
+      "defaultQuote": "Default quote series",
+      "none": "None",
+      "en": "Invoice terms (English)",
+      "el": "Invoice terms (Greek)"
+    }
+  },
+  "payments": {
+    "title": "Payments",
+    "openBalance": "Open balance",
+    "states": {
+      "unpaid": "Unpaid",
+      "partially_paid": "Partly paid",
+      "paid": "Paid"
+    },
+    "recordHelp": "Recording a payment never moves money. Record only money already received.",
+    "record": "Record a payment",
+    "recordAnother": "Record another payment",
+    "amount": "Amount",
+    "receivedOn": "Received on",
+    "refundedOn": "Refunded on",
+    "method": "Method",
+    "reference": "Reference",
+    "notes": "Notes",
+    "applyHere": "Apply it to this invoice",
+    "methods": {
+      "bank_transfer": "Bank transfer",
+      "card": "Card",
+      "cash": "Cash",
+      "store": "Store",
+      "other": "Other"
+    },
+    "effectiveOn": "Effective on",
+    "reversedOn": "Reversed on",
+    "reason": "Reason",
+    "reverse": "Reverse",
+    "pending": "This request has not been settled. Send the same request again to recover its result.",
+    "retry": "Send the same request again",
+    "discard": "Discard",
+    "discardHelp": "An earlier attempt may already have succeeded. Check the payment history or the client account before discarding this request. Discarding does not undo a recorded payment, allocation or refund.",
+    "recordedCredit": "The payment was recorded. Until an allocation succeeds, it stays as the client's credit.",
+    "saved": "Saved.",
+    "account": "Client account",
+    "openInvoices": "Open invoices",
+    "noOpenInvoices": "No open invoices.",
+    "openTotal": "Total money owing",
+    "credits": "Credits",
+    "noCredits": "No unused credit.",
+    "remaining": "Remaining amount",
+    "creditTotal": "Total unused credit",
+    "payment": "Payment",
+    "apply": "Apply to an invoice",
+    "target": "Invoice to apply to",
+    "recordRefund": "Record a refund",
+    "refundHelp": "Record money already paid back. This does not send money or instruct a bank.",
+    "paymentHistory": "Payment history",
+    "details": "Payment details",
+    "refunds": "Refunds",
+    "voidPayment": "Void payment",
+    "voidRefund": "Void refund",
+    "recordStatus": {
+      "recorded": "Recorded",
+      "voided": "Voided"
+    },
+    "applications": "Applications",
+    "notApplied": "Not yet applied",
+    "applyElsewhere": "Apply the remaining credit to another invoice on the client account.",
+    "filter": "Payment",
+    "moneyOwing": "Money owing",
+    "duplicate": {
+      "explain": "This looks like the same money. A recorded payment or refund already has this amount, date and reference.",
+      "recordedAt": "Recorded at",
+      "noReference": "No reference",
+      "recordAnyway": "Record anyway",
+      "cancel": "Cancel"
+    },
+    "errors": {
+      "refunded": "This payment has recorded refunds. Void its refunds first.",
+      "overAllocation": "The amount exceeds the available credit or invoice balance on one or more dates. Reload the account and check the amount and date.",
+      "notAllocatable": "The source or invoice can no longer be allocated. They must belong to the same client and currency, with an issued invoice and an available source. Reload and choose again.",
+      "keyReused": "This request key was already used with different details. Reload to check the records before starting another attempt.",
+      "amount": "Enter a positive amount with no more than two decimal places.",
+      "date": "The date must be a real date, no later than today and no earlier than the source.",
+      "reversed": "This allocation has already been reversed. Reload to see its current state.",
+      "notRecorded": "This payment or refund is already voided. Reload to see its current state.",
+      "version": "This record changed. Reload before trying again.",
+      "failed": "The request failed. Reload and try again.",
+      "unknown": "The answer is missing or unreadable. The outcome is unknown. Send the same request again.",
+      "storage": "The browser could not save or clear the request. Nothing further will be sent until it can keep a recoverable copy. Allow local storage, then reload.",
+      "fields": "Enter a positive amount (up to two decimal places) and a date no later than today."
+    },
+    "loading": "Loading client account"
+  },
+  "reports": {
+    "title": "Reports",
+    "view": "Report",
+    "views": {
+      "invoiced": "Invoiced",
+      "collected": "Collected",
+      "ageing": "Unpaid and ageing"
+    },
+    "from": "From",
+    "to": "To",
+    "asOf": "As of",
+    "show": "Show report",
+    "loading": "Loading report…",
+    "empty": "No figures for these dates.",
+    "figure": "Figure",
+    "count": "Documents",
+    "records": "Records",
+    "net": "Net",
+    "tax": "Tax",
+    "gross": "Gross",
+    "basis": "Basis",
+    "taxCode": "Tax code",
+    "taxCodes": "By tax code",
+    "invoiced": "Invoices",
+    "credited": "Credit notes",
+    "totals": "Grand totals",
+    "total": "Net collected",
+    "method": "Method",
+    "amount": "Amount",
+    "payments": "Payments",
+    "refunds": "Refunds",
+    "client": "Client",
+    "openTotal": "Money owing",
+    "creditTotal": "Client credit (separate)",
+    "invoice": "Invoice",
+    "dueDate": "Due date",
+    "bucket": "Ageing bucket",
+    "buckets": {
+      "current": "Current",
+      "days1To30": "1–30 days",
+      "days31To60": "31–60 days",
+      "days61To90": "61–90 days",
+      "over90": "Over 90 days"
+    },
+    "export": {
+      "title": "Accountant export",
+      "sensitive": "This export contains customer and financial data. Keep it secure.",
+      "pdfs": "Include the stored PDFs",
+      "download": "Download",
+      "loading": "Preparing download…"
+    },
+    "errors": {
+      "date": "Enter valid dates in YYYY-MM-DD format.",
+      "order": "From must be on or before To.",
+      "period": "Choose a period of at most 366 days, including both dates.",
+      "future": "As of must not be after today in the company timezone.",
+      "dates": "Check the dates: From must be on or before To, with at most 366 days including both dates.",
+      "asOf": "Enter a valid As of date, no later than today in the company timezone.",
+      "tooLarge": "The export is too large. Choose a shorter period or download without PDFs.",
+      "integrity": "A stored PDF failed its integrity check. Contact support with the correlation id.",
+      "mfa": "Two-step sign-in is required. Sign out from the account menu and sign in again with two-step verification.",
+      "permission": "You do not have permission for this action.",
+      "session": "Your session has ended. Sign in again.",
+      "failed": "The request could not be completed. Contact support with the correlation id if this continues."
+    }
   }
 }

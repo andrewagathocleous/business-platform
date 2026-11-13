@@ -118,6 +118,17 @@ describe('calculateDocumentTotals worked examples', () => {
     expect(result.lines.map((item) => item.lineNet)).toEqual(['0.84', '0.83', '0.83']);
   });
 
+  it('E13 inclusive remainders that are exactly equal go to the lower position', () => {
+    // 0.27 and 0.06 at 5 % both leave 0.0071428… of a cent; division at 40 digits used to
+    // make them unequal and give the cent to position 2.
+    const result = totals(true, [
+      line({ position: 1, unitPrice: '0.27', taxRatePercent: '5' }),
+      line({ position: 2, unitPrice: '0.06', taxRatePercent: '5' }),
+    ]);
+    expect(result.taxSummary[0]).toMatchObject({ net: '0.31', tax: '0.02', gross: '0.33' });
+    expect(result.lines.map((item) => item.lineNet)).toEqual(['0.26', '0.05']);
+  });
+
   it('E8 exclusive tax is rounded once per group', () => {
     const result = totals(false, [
       line({ position: 1, unitPrice: '0.05', taxRatePercent: '19' }),

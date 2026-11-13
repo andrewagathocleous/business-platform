@@ -11,6 +11,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { path: 'orders', permission: 'order.view', labelKey: 'nav.orders', admin: false },
   { path: 'clients', permission: 'client.view', labelKey: 'nav.clients', admin: false },
   { path: 'invoices', permission: 'invoice.view', labelKey: 'nav.invoices', admin: false },
+  { path: 'reports', permission: 'report.finance.view', labelKey: 'nav.reports', admin: false },
   { path: 'admin/members', permission: 'member.view', labelKey: 'nav.members', admin: true },
   {
     path: 'admin/automation',
@@ -21,6 +22,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { path: 'admin/audit', permission: 'audit.view', labelKey: 'nav.audit', admin: true },
   { path: 'admin/printers', permission: 'printer.manage', labelKey: 'nav.printers', admin: true },
   { path: 'admin/company', permission: 'company.view', labelKey: 'nav.company', admin: true },
+  { path: 'admin/invoicing', permission: 'invoice.view', labelKey: 'nav.invoicing', admin: true },
   { path: 'admin/stores', permission: 'store.view', labelKey: 'nav.stores', admin: true },
   { path: 'admin/gift-cards', permission: 'company.manage', labelKey: 'nav.giftCards', admin: true },
   {

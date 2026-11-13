@@ -17,6 +17,14 @@ export type {
   InvoiceDraftPdfInput,
   InvoiceDraftTaxRow,
 } from './invoice-draft';
+export { ISSUED_RENDER_VERSION, renderIssuedInvoice } from './invoice-issued';
+export type {
+  IssuedInvoiceBank,
+  IssuedInvoiceLine,
+  IssuedInvoiceParty,
+  IssuedInvoicePdfInput,
+  IssuedInvoiceTaxRow,
+} from './invoice-issued';
 export { labelsFor, packingLabels } from './labels';
 export type { DocumentLabels, DocumentLanguage, PackingLabels } from './labels';
 export { renderPackingSlip } from './packing-slip';

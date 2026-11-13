@@ -14,6 +14,7 @@ import {
   assertTestDatabaseUrls,
 } from '../../../tools/test-db-guard.mjs';
 import { AppModule } from './app.module';
+import { cancelQueuedJobs } from './test/cancel-queued-jobs';
 import { correlationStorage } from './correlation/correlation';
 import { PrismaService } from './database/prisma.service';
 import { InvitationService } from './identity/invitation.service';
@@ -169,6 +170,7 @@ describe('authentication', () => {
   });
 
   afterAll(async () => {
+    await cancelQueuedJobs(app, [companyAId]);
     await app?.close();
     await oauth?.stop();
   });

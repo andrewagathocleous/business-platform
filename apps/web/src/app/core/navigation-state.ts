@@ -15,6 +15,22 @@ export function navigationState(router: {
   return null;
 }
 
+/**
+ * True while a navigation is running, for example a company switch waiting on its guard. A
+ * late answer then must not navigate on top of it.
+ */
+export function navigationRunning(router: {
+  currentNavigation?: () => unknown;
+  getCurrentNavigation?: () => unknown;
+}): boolean {
+  if (typeof router.currentNavigation === 'function') {
+    return router.currentNavigation() !== null;
+  }
+  return (
+    typeof router.getCurrentNavigation === 'function' && router.getCurrentNavigation() !== null
+  );
+}
+
 /** Drop a carried draft so a refresh loads the stored record. */
 export function dropNavigationKey(
   state: Record<string, unknown> | null,

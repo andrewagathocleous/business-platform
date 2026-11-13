@@ -11,6 +11,7 @@ import { canAttempt } from '../core/nav';
 import { NAVIGATE_ON_DENIED } from '../core/navigate-on-denied';
 import { dropNavigationKey, navigationState } from '../core/navigation-state';
 import { fieldValue } from '../orders/field-value';
+import { ClientAccount } from '../payments/client-account';
 import {
   type AddressDraft,
   type AddressKind,
@@ -41,6 +42,7 @@ type ClientView = {
   defaultCurrency: string | null;
   defaultLanguage: string | null;
   paymentTermsDays: number | null;
+  acceptsEInvoices: boolean;
   archivedAt: string | null;
   version: number;
   contacts: {
@@ -74,7 +76,7 @@ type DuplicateMatch = {
 @Component({
   selector: 'bp-client-form',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, RouterLink, Button],
+  imports: [TranslocoPipe, RouterLink, Button, ClientAccount],
   template: `
     <section class="screen">
       @if (conflict(); as item) {
@@ -221,6 +223,16 @@ type DuplicateMatch = {
           @if (errorFor('paymentTermsDays'); as key) {
             <p class="field-error" role="alert">{{ key | transloco }}</p>
           }
+          <label class="check">
+            <input
+              type="checkbox"
+              name="acceptsEInvoices"
+              [disabled]="!canManage()"
+              [checked]="draft().acceptsEInvoices"
+              (change)="onAcceptsEInvoices($event)"
+            />
+            {{ 'clients.fields.acceptsEInvoices' | transloco }}
+          </label>
 
           <fieldset class="repeat span-all">
             <legend>{{ 'clients.contacts' | transloco }}</legend>
@@ -459,6 +471,11 @@ type DuplicateMatch = {
           }
         </form>
       }
+      @if (clientId(); as id) {
+        @if (!loading() && !error() && canViewAccount()) {
+          <bp-client-account [companyId]="companyId()" [clientId]="id" />
+        }
+      }
       @if (duplicates(); as matches) {
         <div class="modal" role="presentation">
           <div
@@ -566,6 +583,15 @@ export class ClientFormPage {
     this.fetch();
   }
 
+  canViewAccount(): boolean {
+    return canAttempt(
+      this.context.grants(),
+      this.context.withheldPermissions(),
+      this.context.mfaStepUpRequired(),
+      'invoice.view',
+    );
+  }
+
   canManage(): boolean {
     return canAttempt(
       this.context.grants(),
@@ -643,6 +669,13 @@ export class ClientFormPage {
         item === index ? { ...contact, [field]: value } : contact,
       ),
     }));
+  }
+
+  onAcceptsEInvoices(event: Event): void {
+    this.touch();
+    const target = event.target;
+    const checked = target instanceof HTMLInputElement && target.checked;
+    this.draft.update((current) => ({ ...current, acceptsEInvoices: checked }));
   }
 
   onPrimary(index: number, event: Event): void {
@@ -883,7 +916,7 @@ export class ClientFormPage {
   private consumeCarriedClient(clientId: string): CarriedClient | null {
     const state = navigationState(this.router);
     const carried = carriedClientFrom(state?.['carriedClient']);
-    if (!carried || carried.id !== clientId) {
+    if (!carried || carried.id.toLowerCase() !== clientId.toLowerCase()) {
       return null;
     }
     dropNavigationKey(state, 'carriedClient');
@@ -971,6 +1004,7 @@ export class ClientFormPage {
       defaultCurrency: view.defaultCurrency ?? '',
       defaultLanguage: language,
       paymentTermsDays: view.paymentTermsDays === null ? '' : String(view.paymentTermsDays),
+      acceptsEInvoices: view.acceptsEInvoices,
       contacts: view.contacts.map((contact) => ({
         key: this.nextKey(),
         id: contact.id,
@@ -1058,6 +1092,9 @@ function isClientDraft(value: unknown): value is ClientDraft {
     'paymentTermsDays',
   ];
   if (strings.some((field) => typeof value[field] !== 'string')) {
+    return false;
+  }
+  if (typeof value['acceptsEInvoices'] !== 'boolean') {
     return false;
   }
   return Array.isArray(value['contacts']) && Array.isArray(value['addresses']);

@@ -10,10 +10,14 @@ import { AutomationModule } from './automation/automation.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { ClientsModule } from './clients/clients.module';
 import { DocumentsModule } from './documents/documents.module';
+import { ExportModule } from './export/export.module';
+import { FinanceSettingsModule } from './finance-settings/finance-settings.module';
 import { HealthModule } from './health/health.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { InvoicesModule } from './invoices/invoices.module';
 import { OrdersModule } from './orders/orders.module';
+import { PaymentsModule } from './payments/payments.module';
+import { ReportsModule } from './reports/reports.module';
 import { OutboundModule } from './outbound/outbound.module';
 import { VaultModule } from './vault/vault.module';
 import { ApiExceptionFilter } from './http/exception.filter';
@@ -36,10 +40,14 @@ import { buildThrottlerOptions } from './throttler/throttler';
     AutomationModule,
     ClientsModule,
     DocumentsModule,
+    ExportModule,
     CatalogModule,
+    FinanceSettingsModule,
     IntegrationsModule,
     InvoicesModule,
     OrdersModule,
+    PaymentsModule,
+    ReportsModule,
     OutboundModule,
     VaultModule,
     HealthModule,

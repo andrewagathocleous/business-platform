@@ -12,6 +12,7 @@ import {
   assertTestDatabaseUrls,
 } from '../../../../tools/test-db-guard.mjs';
 import { AppModule } from '../app.module';
+import { cancelQueuedJobs } from '../test/cancel-queued-jobs';
 import { PrismaService } from '../database/prisma.service';
 import { configureHttp } from '../http/configure-http';
 import { caseSensitiveAdapter } from '../http/express-adapter';
@@ -65,6 +66,7 @@ describe('job runner', () => {
 
   afterAll(async () => {
     if (app) {
+      await cancelQueuedJobs(app, [companyA]);
       await app
         .get(PrismaService)
         .client.job.deleteMany({ where: { type: { startsWith: 'test.' } } });
@@ -702,7 +704,7 @@ describe('job runner', () => {
       for (let index = 0; index < 3; index += 1) {
         await enqueue(type, { maxAttempts: 1 });
       }
-      expect((await jobs.drainOnce()).processed).toBe(3);
+      expect((await jobs.drainOnce(1_000, { companyId: companyA })).processed).toBe(3);
     }
     const ahead = testType('ahead');
     const jobs = runner();
@@ -718,7 +720,7 @@ describe('job runner', () => {
       SET run_after = clock_timestamp() + interval '80 milliseconds'
       WHERE id = ${id}::uuid
     `;
-    expect((await jobs.drainOnce()).processed).toBe(1);
+    expect((await jobs.drainOnce(1_000, { companyId: companyA })).processed).toBe(1);
     expect((await prisma().job.findUniqueOrThrow({ where: { id } })).status).toBe('succeeded');
   });
 

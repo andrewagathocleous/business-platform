@@ -4,21 +4,27 @@ export type ApiErrorBody = {
   message: string;
   correlationId: string | null;
   code: string | null;
+  /** Field codes a 422 names, for example `seller.vatNumber`. Empty otherwise. */
+  fields: string[];
 };
 
 export function readApiError(error: HttpErrorResponse): ApiErrorBody {
   const body: unknown = error.error;
   if (!isRecord(body)) {
-    return { message: error.message, correlationId: null, code: null };
+    return { message: error.message, correlationId: null, code: null, fields: [] };
   }
   const nested = body['error'];
   if (!isRecord(nested)) {
-    return { message: error.message, correlationId: null, code: null };
+    return { message: error.message, correlationId: null, code: null, fields: [] };
   }
   const message = typeof nested['message'] === 'string' ? nested['message'] : error.message;
   const correlationId = typeof nested['correlationId'] === 'string' ? nested['correlationId'] : null;
   const code = typeof nested['code'] === 'string' ? nested['code'] : null;
-  return { message, correlationId, code };
+  const listed = nested['fields'];
+  const fields = Array.isArray(listed)
+    ? listed.filter((field): field is string => typeof field === 'string')
+    : [];
+  return { message, correlationId, code, fields };
 }
 
 export function isVersionConflict(error: unknown): boolean {
@@ -26,7 +32,12 @@ export function isVersionConflict(error: unknown): boolean {
     return false;
   }
   const body = readApiError(error);
-  return body.message === 'version_conflict' || body.code === 'version_conflict';
+  // Invoices and clients answer "version conflict"; other routes "version_conflict".
+  return (
+    body.message === 'version_conflict' ||
+    body.message === 'version conflict' ||
+    body.code === 'version_conflict'
+  );
 }
 
 export function isAlreadyPrinted(error: unknown): boolean {

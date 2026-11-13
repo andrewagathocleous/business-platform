@@ -2,6 +2,7 @@ import './money/decimal';
 
 export {
   AmountError,
+  calculateCreditTotals,
   calculateDocumentTotals,
   currencyMinorDigits,
   isKnownCurrency,
@@ -12,6 +13,9 @@ export {
 } from './money';
 export type {
   AmountRejection,
+  CreditLineRequest,
+  CreditSourceLine,
+  CreditTotalsInput,
   DocumentLineInput,
   DocumentLineTotals,
   DocumentTotals,
@@ -80,7 +84,43 @@ export type {
   ConnectionHealthReason,
 } from './integrations/connection-health';
 
-export { normalizeForDuplicateCheck } from './text/normalize';
+export { isValidBic, isValidIban, normalizeBic, normalizeIban } from './banking/iban';
+export {
+  deliveryDeadline,
+  printedUnitAmount,
+  vatExclusiveUnitPrice,
+} from './invoicing/issue-rules';
+export type { DeliveryDeadlineRule } from './invoicing/issue-rules';
+export { foldForComparison, normalizeForDuplicateCheck } from './text/normalize';
 export { addDaysToBusinessDate, businessDateInZone } from './time/business-date';
 export { isIanaTimeZone } from './time/iana-zone';
 export { instantToWallTimeInZone, wallTimeInZoneToInstant } from './time/wall-time';
+
+export {
+  allocationEffectiveOn,
+  countedOn,
+  currentTotal,
+  openBalance,
+  paymentState,
+  refundAllowed,
+  sourceRemaining,
+} from './payments/settlement';
+export type {
+  AllocationEffectiveOnInput,
+  DatedAmount,
+  DatedSettlementSource,
+  InvoicePaymentState,
+  InvoiceSettlement,
+  RefundAllowedInput,
+  SettlementSource,
+} from './payments/settlement';
+
+export { ageingBucket, ageingReport, collectedReport, invoicedReport } from './reports/finance';
+export type {
+  AgeingBucket,
+  AgeingInvoice,
+  AgeingSource,
+  CollectedMovement,
+  InvoicedDocument,
+  ReportFigure,
+} from './reports/finance';

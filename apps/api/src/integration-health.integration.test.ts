@@ -16,6 +16,7 @@ import {
   assertTestDatabaseUrls,
 } from '../../../tools/test-db-guard.mjs';
 import { AppModule } from './app.module';
+import { cancelQueuedJobs } from './test/cancel-queued-jobs';
 import { PrismaService } from './database/prisma.service';
 import { configureHttp } from './http/configure-http';
 import { caseSensitiveAdapter } from './http/express-adapter';
@@ -104,6 +105,7 @@ describe('integration health', () => {
   afterAll(async () => {
     if (app) {
       await removeFixtures();
+      await cancelQueuedJobs(app, [companyA, companyB]);
       await app.close();
     }
     if (storageRoot) {

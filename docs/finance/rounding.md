@@ -74,6 +74,8 @@ Line nets (stored and displayed) are allocated from `groupNet` by the **largest-
 
 This makes `Σ lineNet = groupNet` exactly.
 
+The net and the remainders are worked out in whole numbers (`packages/domain/src/money/exact.ts`), not with rounded division: within one group every remainder has the denominator `100 + rate`, so their numerators are compared exactly, and a tie really is a tie (E13).
+
 Document totals:
 
 ```
@@ -98,6 +100,7 @@ netTotal = total − taxTotal
 | E10 | excl | 1000000 × 9999999.9999 @19% | subtotal 9999999999900.00, tax 1899999999981.00, total 11899999999881.00 (fits `numeric(19,2)`; exact) |
 | E11 | either | quantity 0, negative price, discount 101, 5-dp quantity | validation errors |
 | E12 | excl | 1 × 0.03 with code `STD19` (19%) and 1 × 0.03 with code `ALT19` (also 19%) | two groups: tax 0.01 + 0.01 = 0.02, total 0.08 (grouping by rate would give 0.07; that's wrong under this rule) |
+| E13 | incl | 1 × 0.27 and 1 × 0.06 @5% | net 0.31, tax 0.02; both remainders are exactly 0.0071428… of a cent, so the lower position gets it: line nets 0.26, 0.05 |
 
 The tax rates in these examples are test inputs only. The seeded tax codes are labelled *example configuration — verify with accountant*.
 
@@ -106,4 +109,4 @@ The tax rates in these examples are test inputs only. The seeded tax codes are l
 - Reverse charge and exempt legal notes, intra-EU B2B, OSS, triangulation.
 - Document-level discounts, rounding lines and cash rounding.
 - Foreign-currency invoices with an exchange-rate snapshot.
-- Credit notes against partial lines, and payment allocation rules.
+- Payment allocation rules (R2-E). Credit notes, including partial lines, follow the cumulative-difference rule in `docs/plan/release-2.md` (R2-D) and `packages/domain/src/money/credit.ts`.

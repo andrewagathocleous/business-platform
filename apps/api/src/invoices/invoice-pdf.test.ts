@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderInvoiceDraft } from '@bp/documents';
+import { renderInvoiceDraft, renderIssuedInvoice, type IssuedInvoicePdfInput } from '@bp/documents';
 
 const WATERMARK = 'DRAFT – NOT A TAX INVOICE / ΠΡΟΣΧΕΔΙΟ – ΔΕΝ ΑΠΟΤΕΛΕΙ ΦΟΡΟΛΟΓΙΚΟ ΤΙΜΟΛΟΓΙΟ';
 
@@ -44,6 +44,93 @@ describe('invoice draft PDF', () => {
     expect((text.match(/W/g) ?? []).length).toBeGreaterThanOrEqual(40);
   });
 });
+
+describe('issued invoice PDF', () => {
+  it('prints the number, supply date, VAT particulars and notes, with no draft watermark', async () => {
+    const text = flatten(await extractPdfText(await renderIssuedInvoice(issued('en'))));
+    for (const expected of [
+      'InvoiceDEMO-INV-0007',
+      'Dateofsupply:2026-10-20',
+      'Issuedate:2026-10-28',
+      'VATno.:CY00000000X',
+      'Unitpriceexcl.VAT',
+      '10.00',
+      'TotalVAT',
+      '1.90EUR',
+      'Totalpayable',
+      '11.90EUR',
+      'EXEMPT:Exemptsupply(fictionalnote)',
+      'IBAN:CY17002001280000001200527600',
+      'Demo Gifts Ltd (fictional)'.replace(/\s+/g, ''),
+    ]) {
+      expect(text).toContain(expected);
+    }
+    expect(text).not.toContain(flatten('DRAFT – NOT A TAX INVOICE'));
+  });
+
+  it('prints Greek labels for a Greek document', async () => {
+    const text = flatten(await extractPdfText(await renderIssuedInvoice(issued('el'))));
+    expect(text).toContain(flatten('Τιμολόγιο DEMO-INV-0007'));
+    expect(text).toContain(flatten('Χρόνος προμήθειας: 2026-10-20'));
+    expect(text).toContain(flatten('Σύνολο ΦΠΑ'));
+  });
+});
+
+function issued(language: 'en' | 'el'): IssuedInvoicePdfInput {
+  return {
+    language,
+    documentType: 'invoice',
+    number: 'DEMO-INV-0007',
+    issueDate: '2026-10-28',
+    supplyDate: '2026-10-20',
+    dueDate: '2026-11-27',
+    currency: 'EUR',
+    pricesIncludeTax: true,
+    reference: null,
+    notes: null,
+    terms: 'Payment within 30 days (fictional terms)',
+    seller: {
+      name: 'Demo Company A Ltd (fictional)',
+      otherName: 'Nutbox (demo data)',
+      vatNumber: 'CY00000000X',
+      registrationNumber: null,
+      addressLines: ['1 Demo Street', 'Nicosia', '1010', 'CY'],
+    },
+    buyer: {
+      name: 'Demo Gifts Ltd (fictional)',
+      otherName: null,
+      vatNumber: null,
+      registrationNumber: null,
+      addressLines: ['2 Demo Warehouse', 'Limassol', 'CY'],
+    },
+    bank: {
+      bankName: 'Fictional Bank',
+      accountHolder: 'Demo Company A Ltd (fictional)',
+      iban: 'CY17002001280000001200527600',
+      bic: null,
+    },
+    lines: [
+      {
+        description: 'Mixed nuts (demo)',
+        quantity: '1',
+        unit: 'box',
+        unitPrice: '10.00',
+        discountPercent: '0.00',
+        taxRatePercent: '19.00',
+        lineNet: '10.00',
+      },
+    ],
+    taxSummary: [
+      { code: 'STD19', name: 'Standard 19%', ratePercent: '19.00', net: '10.00', tax: '1.90', gross: '11.90' },
+    ],
+    vatNotes: ['EXEMPT: Exempt supply (fictional note)'],
+    subtotal: '10.00',
+    discountTotal: '0.00',
+    netTotal: '10.00',
+    taxTotal: '1.90',
+    total: '11.90',
+  };
+}
 
 function sample(language: 'en' | 'el', clientName: string) {
   return {

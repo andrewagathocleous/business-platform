@@ -1,20 +1,22 @@
 import { HttpParams } from '@angular/common/http';
 import { ParamMap, Params } from '@angular/router';
-import { boundedText, isCanonical } from '../core/url-state';
+import { boundedText, isCanonical, uuidParam } from '../core/url-state';
 
 export type ClientQuery = {
   q: string;
   includeArchived: boolean;
+  importId: string;
 };
 
 export function defaultClientQuery(): ClientQuery {
-  return { q: '', includeArchived: false };
+  return { q: '', includeArchived: false, importId: '' };
 }
 
 export function parseClientQuery(params: ParamMap): ClientQuery {
   return {
     q: boundedText(params.get('q'), 200),
     includeArchived: params.get('includeArchived') === 'true',
+    importId: uuidParam(params.get('importId')),
   };
 }
 
@@ -26,6 +28,7 @@ export function serializeClientQuery(query: ClientQuery): Params {
   if (query.includeArchived) {
     params['includeArchived'] = 'true';
   }
+  if (query.importId) params['importId'] = query.importId;
   return params;
 }
 
@@ -43,6 +46,7 @@ export function invalidClientFilters(params: ParamMap): string[] {
   if (archived !== null && archived !== 'true' && archived !== 'false') {
     invalid.push('includeArchived');
   }
+  if (params.has('importId') && !uuidParam(params.get('importId'))) invalid.push('importId');
   return invalid;
 }
 

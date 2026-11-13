@@ -1,11 +1,11 @@
 import Decimal from './decimal';
+import { allocateInclusiveNets, inclusiveNet } from './exact';
 import { AmountError, money, parseAmount, round2 } from './parse';
 
 const MAX_QUANTITY = new Decimal('1000000');
 const MAX_UNIT_PRICE = new Decimal('10000000');
 const HUNDRED = new Decimal(100);
 const ZERO = new Decimal(0);
-const ONE_CENT = new Decimal('0.01');
 
 export class DocumentValidationError extends Error {
   readonly code: string;
@@ -240,7 +240,7 @@ function inclusiveTotals(lines: readonly ParsedLine[], groups: readonly Group[])
   }
   const taxSummary = groups.map((group) => {
     const gross = sum(group.lines, (line) => line.lineGross);
-    const net = round2(gross.mul(HUNDRED).div(group.rate.plus(HUNDRED)));
+    const net = inclusiveNet(gross, group.rate);
     allocateNets(group.lines, group.rate, net);
     return {
       taxCode: group.taxCode,
@@ -267,44 +267,22 @@ function inclusiveTotals(lines: readonly ParsedLine[], groups: readonly Group[])
 
 /**
  * Largest-remainder allocation so the stored line nets add up to groupNet.
- * Ties go to the lower line position.
+ * Ties go to the lower line position. Remainders are compared exactly (exact.ts).
  */
 function allocateNets(lines: readonly ParsedLine[], rate: Decimal, groupNet: Decimal): void {
-  const parts = lines.map((line) => {
-    const raw = line.lineGross.mul(HUNDRED).div(rate.plus(HUNDRED));
-    const truncated = raw.toDecimalPlaces(2, Decimal.ROUND_DOWN);
-    return { line, truncated, remainder: raw.minus(truncated) };
-  });
-  const truncatedSum = parts.reduce((total, part) => total.plus(part.truncated), ZERO);
-  let centsLeft = groupNet.minus(truncatedSum).div(ONE_CENT);
-  if (!centsLeft.isInteger() || centsLeft.lt(0)) {
+  const nets = allocateInclusiveNets(
+    lines.map((line) => ({ position: line.position, gross: line.lineGross })),
+    rate,
+    groupNet,
+  );
+  if (!nets) {
     throw new DocumentValidationError(
       'allocation_failed',
       'inclusive net allocation did not produce a whole number of cents',
     );
   }
-  const ordered = [...parts].sort((a, b) => {
-    const byRemainder = b.remainder.cmp(a.remainder);
-    if (byRemainder !== 0) {
-      return byRemainder;
-    }
-    return a.line.position - b.line.position;
-  });
-  const extraCents = new Map<number, Decimal>();
-  let index = 0;
-  while (centsLeft.gt(0)) {
-    const target = ordered[index % ordered.length];
-    if (!target) {
-      throw new DocumentValidationError('allocation_failed', 'no lines to allocate');
-    }
-    const current = extraCents.get(target.line.position) ?? ZERO;
-    extraCents.set(target.line.position, current.plus(1));
-    centsLeft = centsLeft.minus(1);
-    index += 1;
-  }
-  for (const part of parts) {
-    const cents = extraCents.get(part.line.position) ?? ZERO;
-    part.line.lineNet = part.truncated.plus(cents.mul(ONE_CENT));
+  for (const line of lines) {
+    line.lineNet = nets.get(line.position) ?? ZERO;
   }
 }
 

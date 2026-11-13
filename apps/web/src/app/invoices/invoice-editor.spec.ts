@@ -364,61 +364,66 @@ describe('InvoiceEditorPage', () => {
     http.verify();
   });
 
-  it('keeps a carried create draft instead of the stored invoice', async () => {
-    vi.useFakeTimers();
-    const carriedInvoice = {
-      id: 'invoice-9',
-      version: 1,
-      status: 'draft',
-      currency: 'EUR',
-      documentType: 'invoice' as const,
-      pricesIncludeTax: false,
-      issueDate: '',
-      dueDate: '',
-      reference: '',
-      notes: 'typed after save',
-      terms: '',
-      client: {
-        id: 'client-1',
-        displayName: 'Acme Demo',
-        defaultLanguage: 'el',
-        defaultCurrency: 'EUR',
-      },
-      lines: [
-        {
-          key: 'line-1',
-          productId: '',
-          description: 'Nuts',
-          quantity: '1',
-          unit: 'kg',
-          unitPrice: '10.00',
-          discountPercent: '',
-          taxCodeId: 'tax-1',
-          kind: 'item' as const,
+  it.each(['invoice-9', 'INVOICE-9'])(
+    'keeps a carried create draft instead of the stored invoice at route %s',
+    async (routeId) => {
+      vi.useFakeTimers();
+      const carriedInvoice = {
+        id: 'invoice-9',
+        version: 1,
+        status: 'draft',
+        currency: 'EUR',
+        documentType: 'invoice' as const,
+        pricesIncludeTax: false,
+        issueDate: '',
+        dueDate: '',
+        reference: '',
+        notes: 'typed after save',
+        terms: '',
+        client: {
+          id: 'client-1',
+          displayName: 'Acme Demo',
+          defaultLanguage: 'el',
+          defaultCurrency: 'EUR',
         },
-      ],
-    };
-    const { fixture, http } = await setup(['invoice.draft', 'invoice.view'], {
-      getCurrentNavigation: () => ({ extras: { state: { carriedInvoice } } }),
-    });
-    const component = fixture.componentInstance;
-    component.open('company-1', 'invoice-9');
-    flushCatalog(http);
-    const loaded = http.match((request) => request.url === '/api/c/company-1/invoices/invoice-9');
-    for (const request of loaded) {
-      request.flush({
-        invoice: { ...invoice('Nuts'), id: 'invoice-9', notes: 'server copy', version: 7 },
+        lines: [
+          {
+            key: 'line-1',
+            productId: '',
+            description: 'Nuts',
+            quantity: '1',
+            unit: 'kg',
+            unitPrice: '10.00',
+            discountPercent: '',
+            taxCodeId: 'tax-1',
+            kind: 'item' as const,
+          },
+        ],
+      };
+      const { fixture, http } = await setup(['invoice.draft', 'invoice.view'], {
+        getCurrentNavigation: () => ({ extras: { state: { carriedInvoice } } }),
       });
-    }
-    expect(component.notes()).toBe('typed after save');
-    component.save();
-    const patch = http.expectOne('/api/c/company-1/invoices/invoice-9');
-    expect(patch.request.body).toMatchObject({ expectedVersion: 1, notes: 'typed after save' });
-    patch.flush({
-      invoice: { ...invoice('Nuts'), id: 'invoice-9', notes: 'typed after save', version: 2 },
-    });
-    http.verify();
-  });
+      const component = fixture.componentInstance;
+      component.open('company-1', routeId);
+      flushCatalog(http);
+      const loaded = http.match(
+        (request) => request.url === `/api/c/company-1/invoices/${routeId}`,
+      );
+      for (const request of loaded) {
+        request.flush({
+          invoice: { ...invoice('Nuts'), id: 'invoice-9', notes: 'server copy', version: 7 },
+        });
+      }
+      expect(component.notes()).toBe('typed after save');
+      component.save();
+      const patch = http.expectOne(`/api/c/company-1/invoices/${routeId}`);
+      expect(patch.request.body).toMatchObject({ expectedVersion: 1, notes: 'typed after save' });
+      patch.flush({
+        invoice: { ...invoice('Nuts'), id: 'invoice-9', notes: 'typed after save', version: 2 },
+      });
+      http.verify();
+    },
+  );
 
   it('keeps a note typed after save is clicked', async () => {
     vi.useFakeTimers();
@@ -625,7 +630,525 @@ describe('InvoiceEditorPage', () => {
     expect(inclusive).not.toContain('excl. tax');
     http.verify();
   });
+
+  it('issues the saved draft after confirmation and shows its number and deadline', async () => {
+    const { fixture, http, component } = await openSaved(ISSUER);
+    expect(component.canIssue()).toBe(true);
+    expect(textOf(fixture)).toContain('Issue invoice');
+    component.startIssue();
+    fixture.detectChanges();
+    expect(textOf(fixture)).toContain('cannot be edited or deleted');
+    component.confirmIssue();
+    const issue = http.expectOne('/api/c/company-1/invoices/invoice-1/issue');
+    expect(issue.request.method).toBe('POST');
+    expect(issue.request.body).toEqual({ expectedVersion: 4 });
+    // While the request is in flight the draft cannot be edited.
+    expect(component.readOnly()).toBe(true);
+    fixture.detectChanges();
+    expect(rootOf(fixture).querySelector('textarea')?.disabled).toBe(true);
+    issue.flush({
+      invoice: {
+        ...invoice('Nuts'),
+        status: 'issued',
+        number: 'INV-0001',
+        issueDate: '2026-10-28',
+        supplyDate: '2026-10-28',
+        dueDate: '2026-11-27',
+        deliveryDeadline: '2099-11-27',
+        lastDeliveredOn: null,
+        version: 5,
+      },
+      warnings: ['delivery_deadline_passed'],
+    });
+    fixture.detectChanges();
+    expect(component.status()).toBe('issued');
+    expect(component.readOnly()).toBe(true);
+    expect(component.canIssue()).toBe(false);
+    const text = textOf(fixture);
+    expect(text).toContain('Invoice INV-0001');
+    expect(text).toContain('Deliver to the client by 27/11/2099');
+    expect(text).toContain('Issued after its delivery deadline');
+    expect(text).toContain('Open the issued PDF');
+    expect(text).not.toContain('DRAFT — not a tax invoice');
+    http.verify();
+  });
+
+  it('waits for a save before issuing', async () => {
+    const { fixture, http, component } = await openSaved(ISSUER);
+    fillLine(component, 0, { description: 'Edited, not saved' });
+    fixture.detectChanges();
+    expect(component.dirty()).toBe(true);
+    expect(textOf(fixture)).toContain('Save the draft first');
+    component.startIssue();
+    component.confirmIssue();
+    expect(component.confirmingIssue()).toBe(false);
+    expect(http.match((request) => request.url.endsWith('/issue'))).toHaveLength(0);
+    vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS);
+    http.expectOne('/api/c/company-1/invoices/preview-totals').flush(totals('10.00'));
+    http.verify();
+  });
+
+  it('lists the missing particulars the API names', async () => {
+    const { fixture, http, component } = await openSaved(ISSUER);
+    component.startIssue();
+    component.confirmIssue();
+    http.expectOne('/api/c/company-1/invoices/invoice-1/issue').flush(
+      {
+        error: {
+          code: 'invoice_incomplete',
+          message: 'The invoice is missing details it must show.',
+          correlationId: 'corr-9',
+          fields: ['seller.vatNumber', 'lines.2.legalNote', 'something.new'],
+        },
+      },
+      { status: 422, statusText: 'Unprocessable Entity' },
+    );
+    fixture.detectChanges();
+    const text = textOf(fixture);
+    expect(text).toContain("The company's VAT number is missing");
+    expect(text).toContain('Line 2: its tax code needs the legal note');
+    expect(text).toContain('Missing: something.new');
+    expect(component.status()).toBe('draft');
+    expect(component.busy()).toBe(false);
+    http.verify();
+  });
+
+  it('says when issuing is switched off', async () => {
+    const { fixture, http, component } = await openSaved(ISSUER);
+    component.startIssue();
+    component.confirmIssue();
+    http.expectOne('/api/c/company-1/invoices/invoice-1/issue').flush(
+      {
+        error: {
+          code: 'issuance_disabled',
+          message: 'Issuing real invoices is switched off.',
+          correlationId: 'corr-10',
+        },
+      },
+      { status: 409, statusText: 'Conflict' },
+    );
+    fixture.detectChanges();
+    expect(textOf(fixture)).toContain('Issuing real invoices is switched off for this company');
+    expect(textOf(fixture)).toContain('corr-10');
+    http.verify();
+  });
+
+  it('offers no issue action without invoice.issue', async () => {
+    const { fixture, http, component } = await openSaved(['invoice.draft', 'invoice.view']);
+    expect(component.canIssue()).toBe(false);
+    expect(textOf(fixture)).not.toContain('Issue invoice');
+    http.verify();
+  });
+
+  it('shows a credit note in its own view instead of the invoice form', async () => {
+    const { fixture, http, component } = await openDocument(CREDITOR, {
+      ...invoice('Gift box (demo)'),
+      id: 'credit-1',
+      documentType: 'credit_note',
+      creditReason: 'One box damaged',
+      creditedInvoice: { id: 'invoice-1', number: 'INV-0007', issueDate: '2026-10-20' },
+      netTotal: '10.00',
+      taxTotal: '1.90',
+      total: '11.90',
+    });
+    expect(component.creditNote()?.creditReason).toBe('One box damaged');
+    expect(component.readOnly()).toBe(true);
+    expect(component.canIssue()).toBe(false);
+    const root = rootOf(fixture);
+    expect(root.querySelector('h1')?.textContent).toContain('Credit note');
+    expect(root.querySelector('bp-credit-note')).not.toBeNull();
+    expect(root.querySelector('form')).toBeNull();
+    expect(textOf(fixture)).toContain('INV-0007');
+    expect(textOf(fixture)).not.toContain('Issue invoice');
+    http.verify();
+  });
+
+  it('lists the credit notes of an issued invoice with what each line has credited', async () => {
+    const { fixture, http, component } = await openDocument(CREDITOR, {
+      ...invoice('Gift box (demo)'),
+      status: 'issued',
+      number: 'INV-0007',
+      issueDate: '2026-10-20',
+      deliveryDeadline: '2099-11-19',
+      lines: [
+        {
+          id: 'line-1',
+          position: 1,
+          kind: 'item',
+          productId: null,
+          description: 'Gift box (demo)',
+          quantity: '2.0000',
+          unit: 'pc',
+          unitPrice: '10.0000',
+          discountPercent: '0.00',
+          taxCodeId: 'tax-1',
+          creditedQuantity: '0.5000',
+        },
+      ],
+      creditNotes: [
+        { id: 'credit-1', number: 'CN-0001', status: 'issued', total: '5.95', issueDate: null },
+      ],
+    });
+    expect(component.creditableLines()).toEqual([
+      {
+        id: 'line-1',
+        position: 1,
+        description: 'Gift box (demo)',
+        quantity: '2.0000',
+        unit: 'pc',
+        creditedQuantity: '0.5000',
+      },
+    ]);
+    expect(rootOf(fixture).querySelector('bp-credit-panel')).not.toBeNull();
+    expect(textOf(fixture)).toContain('CN-0001');
+    expect(textOf(fixture)).toContain('Create a credit note');
+    http.verify();
+  });
+
+  it('converts a saved quote once and opens the new invoice', async () => {
+    const navigate = vi.fn(() => Promise.resolve(true));
+    const { fixture, http, component } = await openDocument(
+      ['invoice.draft', 'invoice.view'],
+      { ...invoice('Nuts'), documentType: 'quote' },
+      navigate,
+    );
+    expect(textOf(fixture)).toContain('Convert to invoice');
+    fillLine(component, 0, { description: 'Edited, not saved' });
+    component.convert();
+    expect(http.match((request) => request.url.endsWith('/convert'))).toHaveLength(0);
+    component.reload();
+    http.expectOne('/api/c/company-1/invoices/invoice-1').flush({
+      invoice: { ...invoice('Nuts'), documentType: 'quote' },
+    });
+    vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS);
+    for (const preview of http.match('/api/c/company-1/invoices/preview-totals')) {
+      preview.flush(totals('10.00'));
+    }
+
+    component.convert();
+    const refused = http.expectOne('/api/c/company-1/quotes/invoice-1/convert');
+    expect(refused.request.body).toEqual({});
+    refused.flush(
+      { error: { code: 'already_converted', message: 'x', correlationId: 'corr-8' } },
+      { status: 409, statusText: 'Conflict' },
+    );
+    // The quote is loaded again and now names its invoice.
+    http.expectOne('/api/c/company-1/invoices/invoice-1').flush({
+      invoice: { ...invoice('Nuts'), documentType: 'quote', convertedInvoiceId: 'invoice-2' },
+    });
+    vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS);
+    for (const preview of http.match('/api/c/company-1/invoices/preview-totals')) {
+      preview.flush(totals('10.00'));
+    }
+    fixture.detectChanges();
+    expect(textOf(fixture)).toContain('This quote was already converted to an invoice.');
+    expect(textOf(fixture)).toContain('Open the invoice');
+    expect(navigate).not.toHaveBeenCalled();
+    // Each reload also refreshes the client.
+    for (const load of http.match('/api/c/company-1/clients/client-1')) {
+      load.flush({ client: { id: 'client-1', displayName: 'Acme Demo' } });
+    }
+    http.verify();
+  });
+
+  it('opens the new invoice after a conversion, and keeps the quote frozen meanwhile', async () => {
+    const navigate = vi.fn(() => Promise.resolve(true));
+    const { fixture, http, component } = await openDocument(
+      ['invoice.draft', 'invoice.view'],
+      { ...invoice('Nuts'), documentType: 'quote' },
+      navigate,
+    );
+    component.convert();
+    const failed = http.expectOne('/api/c/company-1/quotes/invoice-1/convert');
+    expect(component.readOnly()).toBe(true);
+    fixture.detectChanges();
+    expect(rootOf(fixture).querySelector('textarea')?.disabled).toBe(true);
+    failed.flush(
+      { error: { code: 'tax_code_inactive', message: 'x', correlationId: 'corr-11' } },
+      { status: 422, statusText: 'Unprocessable Entity' },
+    );
+    fixture.detectChanges();
+    expect(component.readOnly()).toBe(false);
+    expect(textOf(fixture)).toContain("A line's tax code is no longer active.");
+
+    component.convert();
+    http
+      .expectOne('/api/c/company-1/quotes/invoice-1/convert')
+      .flush({ invoice: { id: 'invoice-2' } });
+    expect(navigate).toHaveBeenCalledWith(['/c', 'company-1', 'invoices', 'invoice-2']);
+    http.verify();
+  });
+
+  it('converts once at a time, also while a refused conversion reloads the quote', async () => {
+    const { http, component } = await openDocument(['invoice.draft', 'invoice.view'], {
+      ...invoice('Nuts'),
+      documentType: 'quote',
+    });
+    component.convert();
+    component.convert();
+    http
+      .expectOne('/api/c/company-1/quotes/invoice-1/convert')
+      .flush(
+        { error: { code: 'already_converted', message: 'x', correlationId: 'corr-12' } },
+        { status: 409, statusText: 'Conflict' },
+      );
+    const reload = http.expectOne('/api/c/company-1/invoices/invoice-1');
+    // Still frozen until the reload lands, so no second conversion is sent.
+    expect(component.readOnly()).toBe(true);
+    component.convert();
+    expect(http.match((request) => request.url.endsWith('/convert'))).toHaveLength(0);
+    reload.flush({
+      invoice: { ...invoice('Nuts'), documentType: 'quote', convertedInvoiceId: 'invoice-2' },
+    });
+    expect(component.readOnly()).toBe(false);
+    for (const load of http.match('/api/c/company-1/clients/client-1')) {
+      load.flush({ client: { id: 'client-1', displayName: 'Acme Demo' } });
+    }
+    vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS);
+    for (const preview of http.match('/api/c/company-1/invoices/preview-totals')) {
+      preview.flush(totals('10.00'));
+    }
+    http.verify();
+  });
+
+  it('does not navigate over another navigation when the conversion answer arrives', async () => {
+    const navigate = vi.fn(() => Promise.resolve(true));
+    let running: unknown = null;
+    const { http, component } = await openDocument(
+      ['invoice.draft', 'invoice.view'],
+      { ...invoice('Nuts'), documentType: 'quote' },
+      navigate,
+      () => running,
+    );
+    component.convert();
+    // A company switch starts and waits on its guard.
+    running = { id: 7 };
+    http
+      .expectOne('/api/c/company-1/quotes/invoice-1/convert')
+      .flush({ invoice: { id: 'invoice-2' } });
+    expect(navigate).not.toHaveBeenCalled();
+    http.expectOne('/api/c/company-1/invoices/invoice-1').flush({
+      invoice: { ...invoice('Nuts'), documentType: 'quote', convertedInvoiceId: 'invoice-2' },
+    });
+    expect(component.convertedInvoiceId()).toBe('invoice-2');
+    for (const load of http.match('/api/c/company-1/clients/client-1')) {
+      load.flush({ client: { id: 'client-1', displayName: 'Acme Demo' } });
+    }
+    vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS);
+    for (const preview of http.match('/api/c/company-1/invoices/preview-totals')) {
+      preview.flush(totals('10.00'));
+    }
+    http.verify();
+  });
+
+  it('never navigates on a conversion answer that arrives after the editor closed', async () => {
+    const navigate = vi.fn(() => Promise.resolve(true));
+    const { fixture, http, component } = await openDocument(
+      ['invoice.draft', 'invoice.view'],
+      { ...invoice('Nuts'), documentType: 'quote' },
+      navigate,
+    );
+    component.convert();
+    const late = http.expectOne('/api/c/company-1/quotes/invoice-1/convert');
+    fixture.destroy();
+    expect(late.cancelled).toBe(true);
+    expect(navigate).not.toHaveBeenCalled();
+    http.verify();
+  });
+
+  it.each(['credit-1', 'CREDIT-1'])(
+    'shows the credit note its view saved at route %s, without loading it again',
+    async (routeId) => {
+      const credit = {
+        ...invoice('Gift box (demo)'),
+        id: routeId,
+        documentType: 'credit_note',
+        creditReason: 'One box damaged',
+        creditedInvoice: { id: 'invoice-1', number: 'INV-0007', issueDate: '2026-10-20' },
+      };
+      const { http, component } = await openDocument(CREDITOR, credit);
+      component.applySaved({
+        ...credit,
+        id: 'credit-1',
+        creditReason: 'Two boxes damaged',
+        version: 5,
+      } as never);
+      expect(component.creditNote()?.creditReason).toBe('Two boxes damaged');
+      expect(component.creditNote()?.version).toBe(5);
+      // Another document's answer is ignored.
+      component.applySaved({ ...credit, id: 'credit-9', creditReason: 'Other' } as never);
+      expect(component.creditNote()?.creditReason).toBe('Two boxes damaged');
+      http.verify();
+    },
+  );
+
+  it('links an invoice to the quote it was made from', async () => {
+    const { fixture, http } = await openDocument(ISSUER, {
+      ...invoice('Nuts'),
+      sourceQuoteId: 'quote-1',
+    });
+    expect(rootOf(fixture).querySelector('[data-testid="source-quote"]')?.textContent).toContain(
+      'Made from a quote.',
+    );
+    http.verify();
+  });
+
+  it('keeps a new invoice the user has started when the route emits again', async () => {
+    vi.useFakeTimers();
+    const { fixture, http } = await setup();
+    const component = fixture.componentInstance;
+    component.open('company-1', null);
+    flushCatalog(http);
+    fillLine(component, 0, { description: 'Demo nuts', quantity: '2', unitPrice: '10.00' });
+    component.chooseClient({
+      id: 'client-1',
+      displayName: 'Acme Demo',
+      defaultLanguage: 'en',
+      defaultCurrency: 'EUR',
+    });
+    component.open('company-1', null);
+    component.open('COMPANY-1', null);
+    expect(component.client()?.displayName).toBe('Acme Demo');
+    expect(component.lines()[0]?.description).toBe('Demo nuts');
+    expect(component.lines()[0]?.quantity).toBe('2');
+    http.verify();
+  });
+
+  it('keeps notes typed before the company id arrives', async () => {
+    vi.useFakeTimers();
+    const { fixture, http } = await setup();
+    const component = fixture.componentInstance;
+    component.setNotes(inputEvent('keep the note'));
+    component.open('', null);
+    component.open('company-1', null);
+    flushCatalog(http);
+    expect(component.notes()).toBe('keep the note');
+    expect(component.lines()).toHaveLength(1);
+    http.verify();
+  });
+
+  it('does not let a late client search clear the chosen client or the line', async () => {
+    const { fixture, http } = await setup();
+    vi.useFakeTimers();
+    const component = fixture.componentInstance;
+    component.open('company-1', null);
+    flushCatalog(http);
+    component.onClientQuery(inputEvent('Acme'));
+    await vi.advanceTimersByTimeAsync(300);
+    const pending = http.expectOne(
+      (request) => request.url === '/api/c/company-1/clients' && request.params.get('q') === 'Acme',
+    );
+    component.chooseClient({
+      id: 'client-1',
+      displayName: 'Acme Demo',
+      defaultLanguage: 'en',
+      defaultCurrency: 'EUR',
+    });
+    fillLine(component, 0, { description: 'Demo nuts' });
+    pending.flush({
+      clients: [
+        {
+          id: 'client-1',
+          displayName: 'Acme Demo',
+          defaultLanguage: 'en',
+          defaultCurrency: 'EUR',
+        },
+      ],
+    });
+    expect(component.client()?.id).toBe('client-1');
+    expect(component.clientMatches()).toEqual([]);
+    expect(component.lines()[0]?.description).toBe('Demo nuts');
+    http.verify();
+  });
+
+  it('does not replace a dirty saved invoice when the route emits the same id', async () => {
+    vi.useFakeTimers();
+    const { fixture, http } = await setup();
+    const component = fixture.componentInstance;
+    component.open('company-1', 'invoice-1');
+    http.expectOne('/api/c/company-1/invoices/invoice-1').flush({ invoice: invoice('Original') });
+    flushCatalog(http);
+    http.expectOne('/api/c/company-1/clients/client-1').flush({
+      client: {
+        id: 'client-1',
+        displayName: 'Acme Demo',
+        defaultLanguage: 'en',
+        defaultCurrency: 'EUR',
+      },
+    });
+    fillLine(component, 0, { description: 'Changed nuts' });
+    component.open('company-1', 'invoice-1');
+    expect(http.match((request) => request.url.includes('/invoices/invoice-1'))).toHaveLength(0);
+    expect(component.lines()[0]?.description).toBe('Changed nuts');
+    http.verify();
+  });
 });
+
+const ISSUER = ['invoice.draft', 'invoice.view', 'invoice.issue'];
+const CREDITOR = ['invoice.draft', 'invoice.view', 'invoice.issue', 'invoice.credit'];
+
+/** Opens one document and settles every load and any preview. */
+async function openDocument(
+  permissions: string[],
+  document: Record<string, unknown>,
+  navigate?: ReturnType<typeof vi.fn>,
+  getCurrentNavigation?: () => unknown,
+): Promise<{
+  fixture: ComponentFixture<InvoiceEditorPage>;
+  http: HttpTestingController;
+  component: InvoiceEditorPage;
+}> {
+  const { fixture, http } = await setup(permissions, {
+    ...(navigate ? { navigate } : {}),
+    ...(getCurrentNavigation ? { getCurrentNavigation } : {}),
+  });
+  vi.useFakeTimers();
+  const component = fixture.componentInstance;
+  const id = typeof document['id'] === 'string' ? document['id'] : '';
+  component.open('company-1', id);
+  http.expectOne(`/api/c/company-1/invoices/${id}`).flush({ invoice: document });
+  flushCatalog(http);
+  http.expectOne('/api/c/company-1/clients/client-1').flush({
+    client: {
+      id: 'client-1',
+      displayName: 'Acme Demo',
+      defaultLanguage: 'en',
+      defaultCurrency: 'EUR',
+    },
+  });
+  vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS);
+  for (const preview of http.match('/api/c/company-1/invoices/preview-totals')) {
+    preview.flush(totals('10.00'));
+  }
+  fixture.detectChanges();
+  return { fixture, http, component };
+}
+
+/** Opens the saved draft invoice-1 and settles every load and the first preview. */
+async function openSaved(permissions: string[]): Promise<{
+  fixture: ComponentFixture<InvoiceEditorPage>;
+  http: HttpTestingController;
+  component: InvoiceEditorPage;
+}> {
+  const { fixture, http } = await setup(permissions);
+  vi.useFakeTimers();
+  const component = fixture.componentInstance;
+  component.open('company-1', 'invoice-1');
+  http.expectOne('/api/c/company-1/invoices/invoice-1').flush({ invoice: invoice('Nuts') });
+  flushCatalog(http);
+  http.expectOne('/api/c/company-1/clients/client-1').flush({
+    client: {
+      id: 'client-1',
+      displayName: 'Acme Demo',
+      defaultLanguage: 'en',
+      defaultCurrency: 'EUR',
+    },
+  });
+  vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS);
+  http.expectOne('/api/c/company-1/invoices/preview-totals').flush(totals('10.00'));
+  fixture.detectChanges();
+  return { fixture, http, component };
+}
 
 async function setup(
   permissions: string[] = ['invoice.draft', 'invoice.view'],

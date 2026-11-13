@@ -1,5 +1,5 @@
 import { HttpClient, HttpContext } from '@angular/common/http';
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router, RouterLink, type ParamMap } from '@angular/router';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
@@ -10,6 +10,7 @@ import { CompanyContextStore } from '../core/company-context.store';
 import { canAttempt } from '../core/nav';
 import { NAVIGATE_ON_DENIED } from '../core/navigate-on-denied';
 import { fieldValue } from '../orders/field-value';
+import { ClientCsvPanel } from './client-csv-panel';
 import {
   type ClientQuery,
   clientsHttpParams,
@@ -33,7 +34,7 @@ export type ClientRow = {
 @Component({
   selector: 'bp-client-list',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, RouterLink, TableModule, Tag],
+  imports: [TranslocoPipe, RouterLink, TableModule, Tag, ClientCsvPanel],
   template: `
     <section class="screen">
       <header class="screen-heading">
@@ -42,6 +43,12 @@ export type ClientRow = {
           <a class="text-action" [routerLink]="['/c', companyId(), 'clients', 'new']">{{ 'clients.new' | transloco }}</a>
         }
       </header>
+      <bp-client-csv-panel
+        [companyId]="companyId()"
+        [importId]="query().importId"
+        (importIdChange)="setImportId($event)"
+        (imported)="load(companyId(), query())"
+      />
       @if (rejected().length > 0) {
         <p role="alert">{{ 'common.invalidFilters' | transloco: { fields: rejectedText() } }}</p>
       }
@@ -106,6 +113,7 @@ export class ClientListPage {
   private readonly context = inject(CompanyContextStore);
   private readonly transloco = inject(TranslocoService);
   private readonly searchInput = new Subject<string>();
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly companyId = signal('');
   readonly query = signal<ClientQuery>(defaultClientQuery());
@@ -172,11 +180,11 @@ export class ClientListPage {
   }
 
   load(companyId: string, params: ClientQuery): void {
+    const seq = ++this.requestSeq;
     if (companyId.length === 0) {
       this.loading.set(false);
       return;
     }
-    const seq = ++this.requestSeq;
     this.loading.set(true);
     this.error.set(false);
     this.http
@@ -184,6 +192,7 @@ export class ClientListPage {
         params: clientsHttpParams(params),
         context: new HttpContext().set(NAVIGATE_ON_DENIED, true),
       })
+      .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (body) => {
           if (seq !== this.requestSeq) {
@@ -206,10 +215,15 @@ export class ClientListPage {
     const labels: Record<string, string> = {
       q: 'clients.search',
       includeArchived: 'clients.includeArchived',
+      importId: 'clients.csv.preview',
     };
     return this.rejected()
       .map((key) => this.transloco.translate(labels[key] ?? key))
       .join(', ');
+  }
+
+  setImportId(importId: string): void {
+    this.navigate({ ...this.query(), importId });
   }
 
   private navigate(next: ClientQuery): void {
