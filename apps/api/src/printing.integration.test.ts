@@ -6,7 +6,7 @@ import { Logger } from 'nestjs-pino';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Writable } from 'node:stream';
@@ -23,6 +23,7 @@ import { AppModule } from './app.module';
 import { AuditService } from './audit/audit.service';
 import { InboxProcessor } from './automation/inbox.processor';
 import { JobRunner } from './automation/jobs/job-runner';
+import { cancelQueuedJobs } from './test/cancel-queued-jobs';
 import { PrismaService } from './database/prisma.service';
 import { configureHttp } from './http/configure-http';
 import { caseSensitiveAdapter } from './http/express-adapter';
@@ -148,15 +149,14 @@ describe('printing with the mock provider', () => {
       printersB.find((row) => stringField(row, 'id') === onlineB) ?? {},
       'locationId',
     );
-    await started()
-      .get(PrismaService)
-      .client.job.deleteMany({ where: { status: 'queued', type: 'inbox.process' } });
+    await cancelQueuedJobs(app, [companyA, companyB]);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     provider.beforeSubmit = null;
     if (app) {
       app.get(PrintProcessor).hooks = null;
+      await cancelQueuedJobs(app, [companyA, companyB]);
     }
   });
 
@@ -164,6 +164,7 @@ describe('printing with the mock provider', () => {
     await restorePrinting();
     await restoreFulfil();
     if (app) {
+      await cancelQueuedJobs(app, [companyA, companyB]);
       await app.close();
     }
     if (storageRoot) {
@@ -171,12 +172,6 @@ describe('printing with the mock provider', () => {
     }
     if (mockRoot) {
       rmSync(mockRoot, { recursive: true, force: true });
-    }
-    if (app) {
-      await app.get(PrismaService).client.job.updateMany({
-        where: { type: { in: ['print.submit', 'print.refresh_status'] }, status: 'queued' },
-        data: { status: 'cancelled', finishedAt: new Date() },
-      });
     }
   });
 
@@ -517,7 +512,7 @@ describe('printing with the mock provider', () => {
     const queued = await requestPrint(fulfil, companyA, order.id, 'gift_message', cid('hold'));
     await setPrinting(false);
     try {
-      await jobs().drainOnce();
+      await jobs().drainOnce(1_000, { companyId: companyA });
       const held = await loadPrint(fulfil, companyA, stringField(queued, 'id'));
       expect(held.status).toBe('held');
       expect(provider.submitCount).toBe(before);
@@ -562,7 +557,7 @@ describe('printing with the mock provider', () => {
     const order = await makeOrder(companyB, shopifyStoreB, shopifyConnectionB, null);
     const before = provider.submitCount;
     const queued = await requestPrint(fulfilB, companyB, order.id, 'packing_slip', cid('hold-b'));
-    await jobs().drainOnce();
+    await jobs().drainOnce(1_000, { companyId: companyB });
     const held = await loadPrint(fulfilB, companyB, stringField(queued, 'id'));
     expect(held.status).toBe('held');
     expect(provider.submitCount).toBe(before);
@@ -585,7 +580,7 @@ describe('printing with the mock provider', () => {
       created,
     );
     expect(posted.status, text(posted.response)).toBe(202);
-    await jobs().drainOnce();
+    await jobs().drainOnce(1_000, { companyId: companyA });
     const order = await orderByNumber(adminA, companyA, name);
     const orderId = stringField(order, 'id');
     const first = await requestPrint(fulfil, companyA, orderId, 'gift_message', cid('version'));
@@ -601,7 +596,7 @@ describe('printing with the mock provider', () => {
       later,
     );
     expect(updated.status, text(updated.response)).toBe(202);
-    await jobs().drainOnce();
+    await jobs().drainOnce(1_000, { companyId: companyA });
     const after = await orderByNumber(adminA, companyA, name);
     expect(numberField(after, 'version')).toBeGreaterThan(numberField(order, 'version'));
     const second = await send(
@@ -669,7 +664,7 @@ describe('printing with the mock provider', () => {
     );
     expect(suspended.status, text(suspended)).toBe(200);
     try {
-      await jobs().drainOnce();
+      await jobs().drainOnce(1_000, { companyId: companyA });
       const failed = await loadPrint(adminA, companyA, stringField(queued, 'id'));
       expect(failed.status).toBe('failed');
       expect(failed.lastError).toBe('requester_no_longer_authorised');
@@ -732,7 +727,7 @@ describe('printing with the mock provider', () => {
       'print_job.cancelled',
       'success',
     );
-    await jobs().drainOnce();
+    await jobs().drainOnce(1_000, { companyId: companyA });
     expect(provider.submitCount).toBe(before);
     expect((await loadPrint(fulfil, companyA, stringField(early, 'id'))).status).toBe('cancelled');
 
@@ -752,7 +747,7 @@ describe('printing with the mock provider', () => {
         release = done;
       });
     };
-    const draining = jobs().drainOnce();
+    const draining = jobs().drainOnce(1_000, { companyId: companyA });
     try {
       await entered.promise;
       const late = await send(
@@ -791,7 +786,7 @@ describe('printing with the mock provider', () => {
           `/api/c/${companyA}/print-jobs/${String(queued.id)}/cancel`,
           cid(`cancel-race-do-${String(index)}`),
         ),
-        jobs().drainOnce(),
+        jobs().drainOnce(1_000, { companyId: companyA }),
       ]);
       const called = provider.submittedIds.includes(String(queued.id));
       expect(cancel.status === 200 && called).toBe(false);
@@ -810,7 +805,7 @@ describe('printing with the mock provider', () => {
         release = done;
       });
     };
-    const draining = jobs().drainOnce();
+    const draining = jobs().drainOnce(1_000, { companyId: companyA });
     try {
       await entered.promise;
       await started().get(PrismaService).client.$executeRaw`
@@ -826,7 +821,7 @@ describe('printing with the mock provider', () => {
         mode: 'external',
         run: () => Promise.resolve(),
       });
-      expect(await other.reclaimExpired()).toBeGreaterThan(0);
+      expect(await other.reclaimExpired({ companyId: companyA })).toBeGreaterThan(0);
       const mid = await loadPrint(adminA, companyA, stringField(queued, 'id'));
       expect(mid.status).toBe('uncertain');
       release();
@@ -872,7 +867,7 @@ describe('printing with the mock provider', () => {
         });
       },
     };
-    const draining = jobs().drainOnce();
+    const draining = jobs().drainOnce(1_000, { companyId: companyA });
     try {
       await claimed.promise;
       await started().get(PrismaService).client.$executeRaw`
@@ -880,7 +875,7 @@ describe('printing with the mock provider', () => {
         SET locked_until = clock_timestamp() - interval '1 second'
         WHERE id = ${String(queued.queueJobId)}::uuid
       `;
-      expect(await jobs().reclaimExpired()).toBeGreaterThan(0);
+      expect(await jobs().reclaimExpired({ companyId: companyA })).toBeGreaterThan(0);
       expect((await loadPrint(adminA, companyA, stringField(queued, 'id'))).status).toBe(
         'uncertain',
       );
@@ -903,6 +898,108 @@ describe('printing with the mock provider', () => {
       processor.hooks = null;
       await draining.catch(() => undefined);
     }
+  });
+
+  it('submits nothing and audits file.integrity_failed when the stored PDF was changed', async () => {
+    const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
+    const correlationId = cid('tampered');
+    const queued = await requestPrint(fulfil, companyA, order.id, 'gift_message', correlationId);
+    const file = await printFile(companyA, stringField(queued, 'id'));
+    await tamper(file.storageKey);
+    const before = provider.submitCount;
+    await jobs().drainOnce(1_000, { companyId: companyA });
+    expect(provider.submitCount).toBe(before);
+    expect((await loadPrint(fulfil, companyA, stringField(queued, 'id'))).status).toBe('failed');
+    const events = await auditEvents(app, correlationId, companyA);
+    expect(
+      events
+        .filter((event) => event.action === 'file.integrity_failed')
+        .map((event) => [event.outcome, event.objectType, event.objectId]),
+    ).toEqual([['failure', 'stored_file', file.id]]);
+  });
+
+  it('still audits a tampered PDF when the print is cancelled while it is verified', async () => {
+    const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
+    const correlationId = cid('tampered-cancel');
+    const queued = await requestPrint(fulfil, companyA, order.id, 'gift_message', correlationId);
+    const printJobId = stringField(queued, 'id');
+    const file = await printFile(companyA, printJobId);
+    await tamper(file.storageKey);
+    const before = provider.submitCount;
+    const processor = started().get(PrintProcessor);
+    processor.hooks = {
+      afterLocate: async () => {
+        const cancelled = await send(
+          fulfil,
+          'post',
+          `/api/c/${companyA}/print-jobs/${printJobId}/cancel`,
+          cid('tampered-cancel-do'),
+        );
+        expect(cancelled.status, text(cancelled)).toBe(200);
+      },
+    };
+    try {
+      await jobs().drainOnce(1_000, { companyId: companyA });
+    } finally {
+      processor.hooks = null;
+    }
+    expect(provider.submitCount).toBe(before);
+    expect((await loadPrint(fulfil, companyA, printJobId)).status).toBe('cancelled');
+    const events = await auditEvents(app, correlationId, companyA);
+    expect(
+      events
+        .filter((event) => event.action === 'file.integrity_failed')
+        .map((event) => [event.outcome, event.objectId]),
+    ).toEqual([['failure', file.id]]);
+  });
+
+  it('audits a tampered PDF even when the attempt lost its lease while verifying it', async () => {
+    const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
+    const correlationId = cid('tampered-lease');
+    const queued = await requestPrint(fulfil, companyA, order.id, 'gift_message', correlationId);
+    const printJobId = stringField(queued, 'id');
+    const file = await printFile(companyA, printJobId);
+    await tamper(file.storageKey);
+    const before = provider.submitCount;
+    const processor = started().get(PrintProcessor);
+    // Once: the lease expires and is reclaimed while the bytes are read, and the print is
+    // cancelled, so no later attempt runs. Only the attempt that lost its lease detects.
+    let fired = false;
+    processor.hooks = {
+      afterLocate: async () => {
+        if (fired) {
+          return;
+        }
+        fired = true;
+        await started().get(PrismaService).client.$executeRaw`
+          UPDATE job
+          SET locked_until = clock_timestamp() - interval '1 second'
+          WHERE id = ${String(queued.queueJobId)}::uuid
+        `;
+        expect(await jobs().reclaimExpired({ companyId: companyA })).toBeGreaterThan(0);
+        const cancelled = await send(
+          fulfil,
+          'post',
+          `/api/c/${companyA}/print-jobs/${printJobId}/cancel`,
+          cid('tampered-lease-cancel'),
+        );
+        expect(cancelled.status, text(cancelled)).toBe(200);
+      },
+    };
+    try {
+      await jobs().drainOnce(1_000, { companyId: companyA });
+    } finally {
+      processor.hooks = null;
+    }
+    expect(fired).toBe(true);
+    expect(provider.submitCount).toBe(before);
+    expect((await loadPrint(fulfil, companyA, printJobId)).status).toBe('cancelled');
+    const events = await auditEvents(app, correlationId, companyA);
+    expect(
+      events
+        .filter((event) => event.action === 'file.integrity_failed')
+        .map((event) => [event.outcome, event.objectId, detailField(event.details, 'integrity')]),
+    ).toEqual([['failure', file.id, 'hash_mismatch']]);
   });
 
   it('hides another store print job at the same location from a store grant', async () => {
@@ -1048,7 +1145,7 @@ describe('printing with the mock provider', () => {
       });
     };
     const startedAt = Date.now();
-    const draining = jobs().drainOnce();
+    const draining = jobs().drainOnce(1_000, { companyId: companyA });
     try {
       await entered.promise;
       await draining;
@@ -1105,15 +1202,19 @@ describe('printing with the mock provider', () => {
           releaseSubmit = done;
         });
       };
+      const printId = stringField(queued, 'id');
       processor.hooks = {
-        duringRecord: () => {
+        duringRecord: (recordingId) => {
+          if (recordingId !== printId) {
+            return Promise.resolve();
+          }
           recording.resolve();
           return new Promise((done) => {
             releaseRecord = done;
           });
         },
       };
-      const draining = jobs().drainOnce();
+      const draining = jobs().drainOnce(1_000, { companyId: companyA });
       try {
         await entered.promise;
         await started().get(PrismaService).client.$executeRaw`
@@ -1121,7 +1222,8 @@ describe('printing with the mock provider', () => {
           SET locked_until = clock_timestamp() - interval '1 second'
           WHERE id = ${String(queued.queueJobId)}::uuid
         `;
-        expect(await jobs().reclaimExpired()).toBeGreaterThan(0);
+        expect(await jobs().reclaimExpired({ companyId: companyA })).toBeGreaterThan(0);
+        expect((await loadPrint(adminA, companyA, printId)).status).toBe('uncertain');
         releaseSubmit();
         await recording.promise;
         const cancelling = send(
@@ -1190,7 +1292,7 @@ describe('printing with the mock provider', () => {
     const client = started().get(PrismaService).client;
     for (let index = 0; index < 25; index += 1) {
       runner.drainDeadlineMs = 5_000;
-      await runner.drainOnce();
+      await runner.drainOnce(1_000, { companyId: companyA });
       runner.drainDeadlineMs = 1_500;
       const order = await makeOrder(companyA, shopifyStoreA, shopifyConnectionA, GREEK_GIFT);
       const queued = await requestPrint(
@@ -1200,7 +1302,7 @@ describe('printing with the mock provider', () => {
         'gift_message',
         cid(`refresh-lock-${String(index)}`),
       );
-      await runner.drainOnce();
+      await runner.drainOnce(1_000, { companyId: companyA });
       runner.drainDeadlineMs = 5_000;
       const printId = stringField(queued, 'id');
       const refresh = await client.$queryRaw<{ id: string; status: string }[]>`
@@ -1219,7 +1321,10 @@ describe('printing with the mock provider', () => {
       const recording = deferred();
       let releaseRecord = (): void => undefined;
       processor.hooks = {
-        duringRecord: () => {
+        duringRecord: (recordingId) => {
+          if (recordingId !== printId) {
+            return Promise.resolve();
+          }
           recording.resolve();
           return new Promise((done) => {
             releaseRecord = done;
@@ -1231,7 +1336,7 @@ describe('printing with the mock provider', () => {
         SET run_after = clock_timestamp()
         WHERE id = ${refreshId}::uuid
       `;
-      const draining = runner.drainOnce();
+      const draining = runner.drainOnce(1_000, { companyId: companyA });
       let reclaiming: Promise<number> | undefined;
       try {
         await recording.promise;
@@ -1249,7 +1354,7 @@ describe('printing with the mock provider', () => {
           WHERE id = ${refreshId}::uuid
             AND status = 'running'::"job_status"
         `;
-        reclaiming = runner.reclaimExpired();
+        reclaiming = runner.reclaimExpired({ companyId: companyA });
         expect(await waitForUngrantedLock()).toBe(true);
         processor.hooks = null;
         releaseRecord();
@@ -1283,7 +1388,7 @@ describe('printing with the mock provider', () => {
       created,
     );
     expect(posted.status, text(posted.response)).toBe(202);
-    await jobs().drainOnce();
+    await jobs().drainOnce(1_000, { companyId: companyA });
     const order = await orderByNumber(adminA, companyA, name);
     const orderId = stringField(order, 'id');
     const queued = await requestPrint(
@@ -1304,7 +1409,7 @@ describe('printing with the mock provider', () => {
         });
       },
     };
-    const draining = jobs().drainOnce();
+    const draining = jobs().drainOnce(1_000, { companyId: companyA });
     try {
       await held.promise;
       const mid = await withCompany(companyA, (tx) =>
@@ -1333,7 +1438,7 @@ describe('printing with the mock provider', () => {
         retryable: true,
         run: (job, tx, signal) => inbox.run(job, tx, signal),
       });
-      await other.drainOnce();
+      await other.drainOnce(1_000, { companyId: companyA });
       const flagged = await orderByNumber(adminA, companyA, name);
       expect(flagged.fulfilmentStatus).toBe('review_required');
       expect(flagged.reviewReason).toBe('gift_message_changed_after_print');
@@ -1942,15 +2047,46 @@ async function finishPrint(
   companyId: string,
   printJobId: string,
 ): Promise<PrintView> {
-  await jobs().drainOnce();
+  await jobs().drainOnce(1_000, { companyId });
   await started().get(PrismaService).client.$executeRaw`
     UPDATE job
     SET run_after = clock_timestamp()
     WHERE type = 'print.refresh_status'
       AND payload->>'printJobId' = ${printJobId}
   `;
-  await jobs().drainOnce();
+  await jobs().drainOnce(1_000, { companyId });
   return loadPrint(session, companyId, printJobId);
+}
+
+/** The stored file a print job will send. */
+async function printFile(
+  companyId: string,
+  printJobId: string,
+): Promise<{ id: string; storageKey: string }> {
+  const rows = await started()
+    .get(PrismaService)
+    .client.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.company_id', ${companyId}, true)`;
+      return tx.$queryRaw<{ id: string; storageKey: string }[]>`
+        SELECT f.id::text AS id, f.storage_key AS "storageKey"
+        FROM print_job p
+        JOIN stored_file f ON f.company_id = p.company_id AND f.id = p.file_id
+        WHERE p.company_id = ${companyId}::uuid AND p.id = ${printJobId}::uuid
+      `;
+    });
+  const file = rows[0];
+  if (rows.length !== 1 || !file) {
+    throw new Error(`expected one stored file for print job ${printJobId}`);
+  }
+  return file;
+}
+
+/** Changes one byte of a stored object, keeping its length. */
+async function tamper(storageKey: string): Promise<void> {
+  const path = join(storageRoot, storageKey);
+  const bytes = await readFile(path);
+  bytes[bytes.length - 1] = (bytes[bytes.length - 1] ?? 0) ^ 0x01;
+  await writeFile(path, bytes);
 }
 
 async function loadPrint(session: Session, companyId: string, id: string): Promise<PrintView> {

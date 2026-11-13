@@ -1,6 +1,12 @@
 import { HttpParams } from '@angular/common/http';
 import { ParamMap, Params } from '@angular/router';
-import { boundedText, dateParam, isCanonical, isRealCalendarDate, uuidParam } from '../core/url-state';
+import {
+  boundedText,
+  dateParam,
+  isCanonical,
+  isRealCalendarDate,
+  uuidParam,
+} from '../core/url-state';
 
 const STATUSES = ['draft', 'issued', 'cancelled'] as const;
 export type InvoiceStatusFilter = '' | (typeof STATUSES)[number];
@@ -14,22 +20,29 @@ function invoiceStatus(value: string | null): InvoiceStatusFilter {
   return '';
 }
 
+/** `pending`: issued documents with no delivery recorded, earliest deadline first. */
+export type DeliveryFilter = '' | 'pending';
+
 export type InvoiceQuery = {
   q: string;
   status: InvoiceStatusFilter;
+  delivery: DeliveryFilter;
+  payment: '' | 'open';
   clientId: string;
   from: string;
   to: string;
 };
 
 export function defaultInvoiceQuery(): InvoiceQuery {
-  return { q: '', status: '', clientId: '', from: '', to: '' };
+  return { q: '', status: '', delivery: '', payment: '', clientId: '', from: '', to: '' };
 }
 
 export function parseInvoiceQuery(params: ParamMap): InvoiceQuery {
   return {
     q: boundedText(params.get('q'), 200),
     status: invoiceStatus(params.get('status')),
+    payment: params.get('payment') === 'open' ? 'open' : '',
+    delivery: params.get('delivery') === 'pending' ? 'pending' : '',
     clientId: uuidParam(params.get('clientId')),
     from: dateParam(params.get('from')),
     to: dateParam(params.get('to')),
@@ -43,6 +56,12 @@ export function serializeInvoiceQuery(query: InvoiceQuery): Params {
   }
   if (query.status.length > 0) {
     params['status'] = query.status;
+  }
+  if (query.delivery.length > 0) {
+    params['delivery'] = query.delivery;
+  }
+  if (query.payment.length > 0) {
+    params['payment'] = query.payment;
   }
   if (query.clientId.length > 0) {
     params['clientId'] = query.clientId;
@@ -70,6 +89,12 @@ export function invalidInvoiceFilters(params: ParamMap): string[] {
   if (status !== null && status.length > 0 && invoiceStatus(status) === '') {
     invalid.push('status');
   }
+  const delivery = params.get('delivery');
+  if (delivery !== null && delivery.length > 0 && delivery !== 'pending') {
+    invalid.push('delivery');
+  }
+  const payment = params.get('payment');
+  if (payment !== null && payment.length > 0 && payment !== 'open') invalid.push('payment');
   const clientId = params.get('clientId');
   if (clientId !== null && clientId.length > 0 && uuidParam(clientId) === '') {
     invalid.push('clientId');
@@ -95,6 +120,10 @@ export function invoicesHttpParams(query: InvoiceQuery): HttpParams {
   if (query.status.length > 0) {
     http = http.set('status', query.status);
   }
+  if (query.delivery.length > 0) {
+    http = http.set('delivery', query.delivery);
+  }
+  if (query.payment.length > 0) http = http.set('payment', query.payment);
   if (query.clientId.length > 0) {
     http = http.set('clientId', query.clientId);
   }

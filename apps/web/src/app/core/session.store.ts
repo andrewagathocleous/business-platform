@@ -4,6 +4,7 @@ import { TranslocoService } from '@jsverse/transloco';
 import { firstValueFrom } from 'rxjs';
 import { readApiError } from './api-error';
 import { isLocale, type Locale, type MeResponse, type MeUser, type CompanySummary } from './models';
+import { clearPendingPaymentAttempts } from './pending-payment-attempts';
 
 export type SessionLoad = 'ready' | 'anonymous' | 'error';
 
@@ -81,6 +82,7 @@ export class SessionStore {
   }
 
   async logout(): Promise<void> {
+    clearPendingPaymentAttempts();
     const generation = ++this.generation;
     this.localeSaving.set(false);
     try {
@@ -136,6 +138,7 @@ export class SessionStore {
     if (generation !== this.generation) {
       return;
     }
+    clearPendingPaymentAttempts(me.user.id);
     this.user.set(me.user);
     this.companies.set(me.companies);
     await this.applyLocale(isLocale(me.user.locale) ? me.user.locale : 'en', generation);

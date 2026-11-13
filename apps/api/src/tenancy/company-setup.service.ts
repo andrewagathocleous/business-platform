@@ -108,6 +108,23 @@ export class CompanySetupService {
         if (next.fields.length === 0) {
           return current;
         }
+        // The company row is held FOR UPDATE, so no issue (FOR SHARE) runs until this commits.
+        if (next.fields.includes('defaultCurrency') && (await hasIssuedDocument(tx, current.id))) {
+          throw new CommerceError(
+            409,
+            'currency_locked',
+            'company',
+            current.id,
+            'A document was issued, so the company currency cannot change.',
+            'company.updated',
+          );
+        }
+        for (const [field, documentType] of DEFAULT_SERIES_FIELDS) {
+          const seriesId = input[field];
+          if (next.fields.includes(field) && typeof seriesId === 'string') {
+            await requireDefaultSeries(tx, current.id, seriesId, documentType);
+          }
+        }
         const updated = await tx.company.updateMany({
           where: { id: current.id, version: input.expectedVersion },
           data: { ...next.data, version: { increment: 1 } },
@@ -374,6 +391,29 @@ export class CompanySetupService {
     try {
       return await this.tenant.run(this.context(ctx, actor), async (tx) => {
         const current = await this.lockStore(tx, ctx.companyId, storeId);
+        if (
+          current.invoiceAuthority === 'platform' &&
+          input.invoiceAuthority !== undefined &&
+          input.invoiceAuthority !== 'platform' &&
+          (await tx.invoice.findFirst({
+            where: {
+              companyId: ctx.companyId,
+              documentType: 'invoice',
+              status: 'issued',
+              sourceOrder: { storeId: current.id },
+            },
+            select: { id: true },
+          }))
+        ) {
+          throw new CommerceError(
+            409,
+            'authority_locked',
+            'store',
+            current.id,
+            'authority_locked',
+            'store.updated',
+          );
+        }
         const wasArchived = current.status === 'archived';
         const archiveOn = input.archived === true && !wasArchived;
         const archiveOff = input.archived === false && wasArchived;
@@ -664,8 +704,8 @@ function toStore(row: StoreRow): StoreView {
 function companyDiff(
   current: CompanyDetails,
   input: CompanyPatch,
-): { data: Prisma.CompanyUpdateInput; fields: string[] } {
-  const data: Prisma.CompanyUpdateInput = {};
+): { data: Prisma.CompanyUncheckedUpdateManyInput; fields: string[] } {
+  const data: Prisma.CompanyUncheckedUpdateManyInput = {};
   const fields: string[] = [];
   if (input.legalName !== undefined && input.legalName !== current.legalName) {
     data.legalName = input.legalName;
@@ -714,7 +754,74 @@ function companyDiff(
     data.paymentTermsDays = input.paymentTermsDays;
     fields.push('paymentTermsDays');
   }
+  if (input.invoiceTermsEn !== undefined && input.invoiceTermsEn !== current.invoiceTermsEn) {
+    data.invoiceTermsEn = input.invoiceTermsEn;
+    fields.push('invoiceTermsEn');
+  }
+  if (input.invoiceTermsEl !== undefined && input.invoiceTermsEl !== current.invoiceTermsEl) {
+    data.invoiceTermsEl = input.invoiceTermsEl;
+    fields.push('invoiceTermsEl');
+  }
+  for (const [field] of DEFAULT_SERIES_FIELDS) {
+    const value = input[field];
+    if (value !== undefined && value !== current[field]) {
+      data[field] = value;
+      fields.push(field);
+    }
+  }
   return { data, fields };
+}
+
+const DEFAULT_SERIES_FIELDS = [
+  ['defaultInvoiceSeriesId', 'invoice'],
+  ['defaultCreditNoteSeriesId', 'credit_note'],
+  ['defaultQuoteSeriesId', 'quote'],
+] as const;
+
+async function hasIssuedDocument(tx: TenantTransaction, companyId: string): Promise<boolean> {
+  const issued = await tx.invoice.findFirst({
+    where: { companyId, status: 'issued' },
+    select: { id: true },
+  });
+  return issued !== null;
+}
+
+/** Locks the series FOR SHARE after the company row, per the R2 lock order. */
+async function requireDefaultSeries(
+  tx: TenantTransaction,
+  companyId: string,
+  seriesId: string,
+  documentType: 'invoice' | 'credit_note' | 'quote',
+): Promise<void> {
+  const rows = await tx.$queryRaw<{ document_type: string; active: boolean }[]>`
+    SELECT document_type::text AS document_type, active FROM invoice_series
+    WHERE id = ${seriesId}::uuid AND company_id = ${companyId}::uuid
+    FOR SHARE
+  `;
+  const series = rows[0];
+  if (!series) {
+    throw new CommerceError(404, 'series_not_found', 'invoice_series', seriesId, 'Not found');
+  }
+  if (series.document_type !== documentType) {
+    throw new CommerceError(
+      422,
+      'series_type_mismatch',
+      'invoice_series',
+      seriesId,
+      `This series is not for ${documentType} documents.`,
+      'company.updated',
+    );
+  }
+  if (!series.active) {
+    throw new CommerceError(
+      422,
+      'series_inactive',
+      'invoice_series',
+      seriesId,
+      'This series is not active.',
+      'company.updated',
+    );
+  }
 }
 
 function locationFields(current: LocationRow, input: LocationPatch): string[] {

@@ -59,6 +59,8 @@ Each release is done when its code is reviewed and tested, it is deployed to pro
 
 ## R2: invoicing and receivables
 
+Plan: [docs/plan/release-2.md](plan/release-2.md) (2026-10-27, local branch `r2-invoices`).
+
 | ID | Item | Blocked by |
 |---|---|---|
 | P3-01 | Review EU/Cyprus invoice requirements (mandatory fields, simplified invoices, credit notes, retention); configurable rules; accountant sign-off checklist | U1 |
@@ -69,6 +71,7 @@ Each release is done when its code is reviewed and tested, it is deployed to pro
 | P3-07 | Receivables reports (issued, collected, unpaid, ageing; cash vs invoiced labelled) and accountant export | P3-04 |
 | P3-12 | Client CSV import/export with formula-injection protection | — |
 | R2-01 | Tax codes and invoice series set up through the app (today only the seed creates them) | P3-01 |
+| R2-02 | Invoices built from shop orders, for stores whose invoice authority is `platform`. Needs the raw order line prices (today `0.3333 × 3` is stored as `0.33` with a `1.00` line total), each line's tax code or rate, discounts, and client matching; deferred from R2 by the plan review (2026-10-27) | A1, R2-C |
 
 ## R3: Shopify orders
 
@@ -118,7 +121,7 @@ Each release is done when its code is reviewed and tested, it is deployed to pro
 | P5-06 | Release process: `deploy_uat` and `deploy_prod` branches, deployment as a deliberate release action |
 | P5-07 | Recovery runbooks: lost VPS, compromised credential, broken deployment, PrintNode PC unavailable |
 | H-01 | Invitations still accept a `preferred_username` match when `email_verified` is not true (`invitationEmailMatches`). Owner enrolment no longer does (R0-A review, 2026-10-24). Decide at R0-G, with the real Entra claims, whether invitations should require a verified email or an expected object id too |
-| H-02 | Test isolation: `orders.integration.test.ts` expects `JobRunner.drainOnce()` to process exactly 1 job, but it runs every due job in the database. When `isolation`, `company-setup` or `documents` runs first (Vitest runs failed files first on the next run), a job they left due makes it 2 and 9 orders tests fail. Clear or scope due jobs before that assertion (found 2026-10-27 while fixing CI) |
+| H-05 | Orphan-object cleanup (deferred from R2-C, 2026-10-28, with the user's agreement). Issuing writes the PDF before its `stored_file` row commits, so a failure after the write leaves an object nothing points to; it is never served. A cleanup job would delete files on its own, and a mistake could delete an issued invoice that must be kept for 6 years, so it waits. When built: only objects older than a day, only when no `stored_file` row has that key (check under the key's company), a dry run that lists before anything is deleted, and a CHECK that `storage_key` starts with `companies/<company_id>/`. The storage adapter needs `list` and `delete` with the same path confinement as `get` |
 | P5-08 | Audit hash-chain or external anchoring for tamper evidence |
 | P2-10 | Order "assigned-only" view mode for stricter fulfilment roles (A2) |
 

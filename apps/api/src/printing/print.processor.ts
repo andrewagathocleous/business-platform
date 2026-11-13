@@ -1,4 +1,3 @@
-import { Readable } from 'node:stream';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { TenantTransaction } from '@bp/db';
 import { can } from '@bp/domain';
@@ -13,7 +12,7 @@ import {
   type StorageAdapter,
 } from '@bp/integrations';
 import { AuditService } from '../audit/audit.service';
-import { grantsForMembership } from '../authz/load-grants';
+import { grantsForMembership, platformOwnerGrants } from '../authz/load-grants';
 import {
   LeaseLost,
   type ClaimedJob,
@@ -23,6 +22,7 @@ import {
 import { uuidv7 } from '../correlation/correlation';
 import { orderScopes } from '../orders/order.scope';
 import { STORAGE } from '../storage/storage.module';
+import { FileIntegrityError, readVerifiedFile } from '../storage/verified-file';
 import { PrintProviderRegistry } from './print-providers';
 import { refreshDelaySeconds } from './refresh-delay';
 
@@ -41,12 +41,14 @@ const RECORD_ATTEMPTS = 3;
 
 /** Test seams. Production leaves `hooks` null. */
 export type PrintProcessorHooks = {
+  /** After the file row is located and before its bytes are read and verified. */
+  afterLocate?: () => Promise<void>;
   /** After the submitting claim commits and before the provider call. */
   afterClaim?: () => Promise<void>;
   /** Inside the recording transaction, before either row is locked. */
   beforeRecord?: () => Promise<void>;
-  /** After `print_job` is locked and before `job` is locked. */
-  duringRecord?: () => Promise<void>;
+  /** After `print_job` is locked and before `job` is locked. The id is that print job. */
+  duringRecord?: (printJobId: string) => Promise<void>;
 };
 
 type SubmitPayload = {
@@ -92,11 +94,22 @@ export class PrintProcessor {
     );
     let pdf: Buffer | null = null;
     if (located) {
+      await this.hooks?.afterLocate?.();
       try {
-        pdf = await readStream(await this.storage.get(located.storageKey));
+        pdf = await readVerifiedFile(this.storage, located);
       } catch (error) {
+        if (error instanceof FileIntegrityError) {
+          // Not fenced: a detection is recorded even when this attempt has lost its lease.
+          await external.transaction((tx) =>
+            this.recordIntegrityFailure(tx, companyId, payload.printJobId, located.id, error),
+          );
+        }
         const reason =
-          error instanceof StoragePathError || isFsMiss(error) ? 'file_missing' : 'file_unreadable';
+          error instanceof FileIntegrityError
+            ? 'file_integrity_failed'
+            : error instanceof StoragePathError || isFsMiss(error)
+              ? 'file_missing'
+              : 'file_unreadable';
         await this.failUnread(external, companyId, payload.printJobId, reason);
         return;
       }
@@ -172,7 +185,7 @@ export class PrintProcessor {
         WHERE company_id = ${companyId}::uuid AND id = ${target.printJobId}::uuid
         FOR UPDATE
       `;
-      await this.hooks?.duringRecord?.();
+      await this.hooks?.duringRecord?.(target.printJobId);
       await tx.$queryRaw`SELECT id FROM job WHERE id = ${job.id}::uuid FOR UPDATE`;
       await this.applyRefresh(tx, companyId, target, ready.provider, state, job.correlationId);
       await external.finish(tx, 'succeeded', null);
@@ -323,10 +336,11 @@ export class PrintProcessor {
     payload: SubmitPayload,
   ): Promise<SubmitStep> {
     const locked = await tx.$queryRaw<
-      { id: string; status: string; sourceId: string; documentType: string }[]
+      { id: string; status: string; sourceType: string; sourceId: string; documentType: string }[]
     >`
       SELECT id,
              status::text AS status,
+             source_type::text AS "sourceType",
              source_id AS "sourceId",
              document_type AS "documentType"
       FROM print_job
@@ -371,40 +385,15 @@ export class PrintProcessor {
       await finishOrLose(external, tx, 'held', 'printing_disabled');
       return { kind: 'stop' };
     }
-    const order = await tx.salesOrder.findFirst({
-      where: { id: print.sourceId, companyId },
-      select: { id: true, externalNumber: true, storeId: true },
-    });
-    const store = order
-      ? await tx.store.findFirst({
-          where: { id: order.storeId, companyId },
-          select: { locationId: true },
-        })
-      : null;
+    const source = await printSource(tx, companyId, print.sourceType, print.sourceId);
     const permission = payload.isReprint ? 'print.reprint' : 'print.submit';
     const requesterOk =
-      order !== null &&
-      store !== null &&
-      (await stillAuthorised(
-        tx,
-        companyId,
-        payload.requestedById,
-        permission,
-        order.storeId,
-        store.locationId,
-      ));
+      source !== null &&
+      (await stillAuthorised(tx, companyId, payload.requestedById, permission, source));
     const releaserOk =
       payload.releasedById === null ||
-      (order !== null &&
-        store !== null &&
-        (await stillAuthorised(
-          tx,
-          companyId,
-          payload.releasedById,
-          'automation.replay',
-          order.storeId,
-          store.locationId,
-        )));
+      (source !== null &&
+        (await stillAuthorised(tx, companyId, payload.releasedById, 'automation.replay', source)));
     if (!requesterOk || !releaserOk) {
       const failed = await tx.$queryRaw<{ id: string }[]>`
         UPDATE print_job
@@ -427,7 +416,7 @@ export class PrintProcessor {
           outcome: 'failure',
           details: {
             reason: 'requester_no_longer_authorised',
-            check: !order || !store ? 'order' : requesterOk ? 'releaser' : 'requester',
+            check: !source ? print.sourceType : requesterOk ? 'releaser' : 'requester',
           },
         });
       }
@@ -515,7 +504,7 @@ export class PrintProcessor {
         paperSize: row.paperSize,
         idempotencyKey: row.idempotencyKey,
         documentType: row.documentType,
-        title: `${row.documentType} ${order.externalNumber}`,
+        title: `${row.documentType} ${source.label}`,
       },
     };
   }
@@ -611,7 +600,7 @@ export class PrintProcessor {
     tx: TenantTransaction,
     companyId: string,
     printJobId: string,
-  ): Promise<{ storageKey: string } | null> {
+  ): Promise<{ id: string; storageKey: string; sizeBytes: number; sha256: string } | null> {
     const print = await tx.printJob.findFirst({
       where: { id: printJobId, companyId, status: 'queued' },
       select: { fileId: true },
@@ -621,9 +610,28 @@ export class PrintProcessor {
     }
     const file = await tx.storedFile.findFirst({
       where: { id: print.fileId, companyId },
-      select: { storageKey: true },
+      select: { id: true, storageKey: true, sizeBytes: true, sha256: true },
     });
-    return file ? { storageKey: file.storageKey } : null;
+    return file;
+  }
+
+  private async recordIntegrityFailure(
+    tx: TenantTransaction,
+    companyId: string,
+    printJobId: string,
+    fileId: string,
+    error: FileIntegrityError,
+  ): Promise<void> {
+    await this.audit.record(tx, {
+      companyId,
+      actorType: 'system',
+      actorLabel: 'job-runner',
+      action: 'file.integrity_failed',
+      objectType: 'stored_file',
+      objectId: fileId,
+      outcome: 'failure',
+      details: { printJobId, integrity: error.reason },
+    });
   }
 
   private async failUnread(
@@ -718,7 +726,7 @@ export class PrintProcessor {
         WHERE company_id = ${companyId}::uuid AND id = ${printJobId}::uuid
         FOR UPDATE
       `;
-      await this.hooks?.duringRecord?.();
+      await this.hooks?.duringRecord?.(printJobId);
       await tx.$queryRaw`SELECT id FROM job WHERE id = ${job.id}::uuid FOR UPDATE`;
       const current = locked[0]?.status ?? null;
       let applied = false;
@@ -836,33 +844,94 @@ async function switchesOn(tx: TenantTransaction, companyId: string): Promise<boo
   return outbound?.enabled === true && printing?.enabled === true;
 }
 
+/**
+ * What a print job prints, checked again when it is claimed. An order is judged at its
+ * store and location. An invoice must still be issued, is judged company-wide, and its
+ * requester must still be able to view invoices.
+ */
+type PrintSource = {
+  label: string;
+  storeId: string | null;
+  locationId: string | null;
+  alsoRequires: readonly string[];
+};
+
+async function printSource(
+  tx: TenantTransaction,
+  companyId: string,
+  sourceType: string,
+  sourceId: string,
+): Promise<PrintSource | null> {
+  if (sourceType === 'order') {
+    const order = await tx.salesOrder.findFirst({
+      where: { id: sourceId, companyId },
+      select: { externalNumber: true, storeId: true },
+    });
+    const store = order
+      ? await tx.store.findFirst({
+          where: { id: order.storeId, companyId },
+          select: { locationId: true },
+        })
+      : null;
+    if (!order || !store) {
+      return null;
+    }
+    return {
+      label: order.externalNumber,
+      storeId: order.storeId,
+      locationId: store.locationId,
+      alsoRequires: [],
+    };
+  }
+  if (sourceType === 'invoice') {
+    const invoice = await tx.invoice.findFirst({
+      where: { id: sourceId, companyId, status: 'issued' },
+      select: { number: true },
+    });
+    if (!invoice?.number) {
+      return null;
+    }
+    return { label: invoice.number, storeId: null, locationId: null, alsoRequires: ['invoice.view'] };
+  }
+  return null;
+}
+
 async function stillAuthorised(
   tx: TenantTransaction,
   companyId: string,
   userId: string,
   permission: string,
-  storeId: string,
-  locationId: string,
+  source: PrintSource,
 ): Promise<boolean> {
   const user = await tx.userAccount.findFirst({
     where: { id: userId },
-    select: { status: true },
+    select: { status: true, isPlatformOwner: true },
   });
   if (!user || user.status !== 'active') {
     return false;
   }
-  const membership = await tx.membership.findFirst({
-    where: { userId, companyId, status: 'active' },
-    select: { id: true },
-  });
-  if (!membership) {
-    return false;
+  // The request was authorised the same way: an active platform owner holds every
+  // company permission without a membership. MFA belonged to that request's session.
+  let grants = user.isPlatformOwner ? platformOwnerGrants() : null;
+  if (!grants) {
+    const membership = await tx.membership.findFirst({
+      where: { userId, companyId, status: 'active' },
+      select: { id: true },
+    });
+    if (!membership) {
+      return false;
+    }
+    grants = await grantsForMembership(tx, membership.id);
   }
-  const grants = await grantsForMembership(tx, membership.id);
   if (permission === 'automation.replay') {
     return can(grants, permission);
   }
-  return can(grants, permission, orderScopes(storeId, locationId));
+  const scopes =
+    source.storeId && source.locationId ? orderScopes(source.storeId, source.locationId) : undefined;
+  return (
+    can(grants, permission, scopes) &&
+    source.alsoRequires.every((required) => can(grants, required))
+  );
 }
 
 async function enqueueRefresh(
@@ -970,26 +1039,6 @@ async function touchProviderState(
 function failureText(state: Extract<ProviderJobStatus, { state: 'failed' }>): string {
   const text = state.message ? `${state.reason}: ${state.message}` : state.reason;
   return text.length > 240 ? text.slice(0, 240) : text;
-}
-
-async function readStream(stream: Readable): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  try {
-    for await (const chunk of stream) {
-      chunks.push(toBuffer(chunk));
-    }
-  } catch (error) {
-    stream.destroy();
-    throw error;
-  }
-  return Buffer.concat(chunks);
-}
-
-function toBuffer(chunk: unknown): Buffer {
-  if (typeof chunk === 'string' || chunk instanceof Uint8Array) {
-    return Buffer.from(chunk);
-  }
-  throw new Error('storage returned an unexpected chunk');
 }
 
 function isFsMiss(error: unknown): boolean {

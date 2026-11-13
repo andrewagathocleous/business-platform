@@ -60,11 +60,33 @@ export type PrintJobStatusName =
 
 export type PrintRequestInput = {
   documentType: PrintDocumentType;
-  sourceType: 'order';
+  sourceType: 'order' | 'invoice';
   sourceId: string;
   copies?: number;
   printerId?: string;
+  /** Invoices only: the location whose `invoice` mapping to use, when several have one. */
+  locationId?: string;
   reprint?: { ofPrintJobId: string; reason: string };
+  /**
+   * The caller's key for this one request. Sending it again (after a lost answer) returns the
+   * job it already created instead of queuing another print.
+   */
+  requestKey?: string;
+};
+
+type NewPrintJob = {
+  printJobId: string;
+  printerId: string;
+  documentType: PrintDocumentType;
+  sourceType: 'order' | 'invoice';
+  sourceId: string;
+  sourceVersion: number;
+  copies: number;
+  paperSize: string;
+  reprintOfId: string | null;
+  reprintReason: string | null;
+  requestKey: string | null;
+  requestHash: string | null;
 };
 
 export type PrintJobView = {
@@ -170,6 +192,19 @@ export class PrintService {
       );
       return { printJob };
     } catch (error) {
+      if (input.requestKey && (isRequestKeyConflict(error) || isFirstPrintConflict(error))) {
+        // An earlier attempt with this key may have committed while this one ran (either unique
+        // index can report it first): return its job.
+        const replay = await this.tenants.run(this.context(ctx, actor, correlationId), (tx) =>
+          this.byRequestKey(tx, ctx.companyId, input),
+        );
+        if (replay) {
+          return { printJob: replay };
+        }
+        if (replay === null) {
+          return this.fail(ctx, meta, requestKeyReused());
+        }
+      }
       if (isFirstPrintConflict(error)) {
         const existingId = await this.existingFirstPrint(ctx, actor, correlationId, input);
         return this.fail(
@@ -745,6 +780,18 @@ export class PrintService {
     input: PrintRequestInput,
     meta: RequestMeta,
   ): Promise<PrintJobView> {
+    if (input.requestKey) {
+      const replay = await this.byRequestKey(tx, ctx.companyId, input);
+      if (replay === null) {
+        throw requestKeyReused();
+      }
+      if (replay) {
+        return replay;
+      }
+    }
+    if (input.sourceType === 'invoice') {
+      return this.insertInvoiceRequest(tx, ctx, actor, correlationId, input, meta);
+    }
     const documentType = input.documentType;
     if (documentType !== 'packing_slip' && documentType !== 'gift_message') {
       throw new CommerceError(
@@ -894,7 +941,6 @@ export class PrintService {
     }
     const printJobId = uuidv7();
     const fileId = uuidv7();
-    const queueJobId = uuidv7();
     const at = new Date();
     const key = storageKey({
       companyId: ctx.companyId,
@@ -902,33 +948,21 @@ export class PrintService {
       id: fileId,
       at,
     });
-    const idempotencyKey = `pj_${printJobId}`;
-    await tx.$executeRaw`
-      INSERT INTO print_job (
-        id, company_id, printer_id, document_type, source_type, source_id, source_version,
-        copies, paper_size, status, is_reprint, reprint_of_id, reprint_reason, idempotency_key,
-        requested_by, correlation_id, created_at, updated_at
-      ) VALUES (
-        ${printJobId}::uuid,
-        ${ctx.companyId}::uuid,
-        ${printer.id}::uuid,
-        ${documentType}::"print_document_type",
-        'order'::"print_source_type",
-        ${order.id}::uuid,
-        ${order.version},
-        ${copies},
-        ${mapping.paperSize},
-        'queued'::"print_job_status",
-        ${input.reprint != null},
-        ${reprintOfId}::uuid,
-        ${input.reprint?.reason ?? null},
-        ${idempotencyKey},
-        ${actor}::uuid,
-        ${correlationId},
-        clock_timestamp(),
-        clock_timestamp()
-      )
-    `;
+    const job: NewPrintJob = {
+      printJobId,
+      printerId: printer.id,
+      documentType,
+      sourceType: 'order',
+      sourceId: order.id,
+      sourceVersion: order.version,
+      copies,
+      paperSize: mapping.paperSize,
+      reprintOfId,
+      reprintReason: input.reprint?.reason ?? null,
+      requestKey: input.requestKey?.toLowerCase() ?? null,
+      requestHash: input.requestKey ? requestHash(input) : null,
+    };
+    await this.insertPrintJob(tx, ctx.companyId, actor, correlationId, job);
     await this.storage.put(key, rendered.pdf);
     const digest = createHash('sha256').update(rendered.pdf).digest('hex');
     await tx.storedFile.create({
@@ -946,42 +980,7 @@ export class PrintService {
         createdById: actor,
       },
     });
-    await tx.$executeRaw`
-      UPDATE print_job
-      SET file_id = ${fileId}::uuid, updated_at = clock_timestamp()
-      WHERE company_id = ${ctx.companyId}::uuid AND id = ${printJobId}::uuid
-    `;
-    const payload = JSON.stringify({
-      printJobId,
-      requestedById: actor,
-      releasedById: null,
-      isReprint: input.reprint != null,
-    });
-    await tx.$executeRaw`
-      INSERT INTO job (
-        id, company_id, type, payload, status, attempts, max_attempts, run_after,
-        timeout_ms, correlation_id, idempotency_key, created_at, updated_at
-      ) VALUES (
-        ${queueJobId}::uuid,
-        ${ctx.companyId}::uuid,
-        'print.submit',
-        ${payload}::jsonb,
-        'queued'::"job_status",
-        0,
-        ${SUBMIT_ATTEMPTS},
-        clock_timestamp(),
-        ${SUBMIT_TIMEOUT_MS},
-        ${correlationId},
-        ${`print.submit:${printJobId}`},
-        clock_timestamp(),
-        clock_timestamp()
-      )
-    `;
-    await tx.$executeRaw`
-      UPDATE print_job
-      SET queue_job_id = ${queueJobId}::uuid, updated_at = clock_timestamp()
-      WHERE company_id = ${ctx.companyId}::uuid AND id = ${printJobId}::uuid
-    `;
+    await this.attachAndQueue(tx, ctx.companyId, actor, correlationId, job, fileId, input);
     await this.audit.record(tx, {
       companyId: ctx.companyId,
       actorType: 'user',
@@ -1006,6 +1005,307 @@ export class PrintService {
       },
     });
     return this.mustLoad(tx, ctx.companyId, printJobId);
+  }
+
+  /**
+   * Queues an issued document's sealed PDF. Nothing is rendered: the stored file is the
+   * legal document, and the processor verifies it before sending. Paper delivery (a client
+   * who has not accepted e-invoices) prints two copies by default: one for the client and
+   * one for the company's file (reg. 11Γ(4)).
+   */
+  private async insertInvoiceRequest(
+    tx: TenantTransaction,
+    ctx: RequestContext,
+    actor: string,
+    correlationId: string,
+    input: PrintRequestInput,
+    meta: RequestMeta,
+  ): Promise<PrintJobView> {
+    const invoiceId = input.sourceId.toLowerCase();
+    if (input.documentType !== 'invoice') {
+      throw new CommerceError(
+        422,
+        'document_not_printable',
+        'print_job',
+        null,
+        'document_not_printable',
+        'print_job.requested',
+        { documentType: input.documentType },
+      );
+    }
+    if (!can(ctx.grants, 'invoice.view')) {
+      throw new CommerceError(403, 'permission_missing', 'invoice', invoiceId, 'Forbidden');
+    }
+    const invoice = await tx.invoice.findFirst({
+      where: { id: invoiceId, companyId: ctx.companyId },
+      select: { id: true, status: true, version: true, pdfFileId: true, clientId: true },
+    });
+    if (!invoice) {
+      throw new CommerceError(404, 'not_found', 'invoice', invoiceId, 'Not found');
+    }
+    if (invoice.status !== 'issued' || !invoice.pdfFileId) {
+      throw new CommerceError(
+        409,
+        'not_issued',
+        'invoice',
+        invoice.id,
+        'Only an issued document is printed.',
+        'print_job.requested',
+      );
+    }
+    const mappings = await tx.printerMapping.findMany({
+      where: {
+        companyId: ctx.companyId,
+        documentType: 'invoice',
+        ...(input.locationId ? { locationId: input.locationId.toLowerCase() } : {}),
+      },
+      orderBy: { id: 'asc' },
+    });
+    const mapping = mappings[0];
+    if (!mapping) {
+      throw new CommerceError(
+        422,
+        'printer_not_mapped',
+        'printer_mapping',
+        null,
+        'printer_not_mapped',
+        'print_job.requested',
+        { documentType: 'invoice', locationId: input.locationId?.toLowerCase() ?? null },
+      );
+    }
+    if (mappings.length > 1) {
+      throw new CommerceError(
+        422,
+        'location_required',
+        'printer_mapping',
+        null,
+        'Several locations print invoices. Choose one.',
+        'print_job.requested',
+      );
+    }
+    const printer = await tx.printer.findFirst({
+      where: { id: (input.printerId ?? mapping.printerId).toLowerCase(), companyId: ctx.companyId },
+    });
+    if (!printer) {
+      throw new CommerceError(
+        404,
+        'not_found',
+        'printer',
+        input.printerId?.toLowerCase() ?? null,
+        'Not found',
+      );
+    }
+    if (!printer.paperSizes.includes(mapping.paperSize)) {
+      throw new CommerceError(
+        422,
+        'paper_size_not_supported',
+        'printer',
+        printer.id,
+        'paper_size_not_supported',
+        'print_job.requested',
+        { paperSize: mapping.paperSize, paperSizes: printer.paperSizes },
+      );
+    }
+    const client = await tx.client.findFirst({
+      where: { id: invoice.clientId, companyId: ctx.companyId },
+      select: { acceptsEInvoices: true },
+    });
+    const paperDelivery = client?.acceptsEInvoices !== true;
+    // Paper delivery: one copy for the client, one for the company's file. No more by default.
+    const copies = input.copies ?? (paperDelivery ? 2 : mapping.copies);
+    if (!Number.isInteger(copies) || copies < 1 || copies > 5) {
+      throw new CommerceError(
+        422,
+        'copies_not_allowed',
+        'print_job',
+        null,
+        'copies_not_allowed',
+        'print_job.requested',
+      );
+    }
+    let reprintOfId: string | null = null;
+    if (input.reprint) {
+      const prior = await tx.printJob.findFirst({
+        where: { id: input.reprint.ofPrintJobId.toLowerCase(), companyId: ctx.companyId },
+        select: { id: true, sourceType: true, sourceId: true, documentType: true },
+      });
+      if (
+        !prior ||
+        prior.sourceType !== 'invoice' ||
+        prior.sourceId !== invoice.id ||
+        prior.documentType !== 'invoice'
+      ) {
+        throw new CommerceError(
+          404,
+          'not_found',
+          'print_job',
+          input.reprint.ofPrintJobId.toLowerCase(),
+          'Not found',
+        );
+      }
+      reprintOfId = prior.id;
+    }
+    const printJobId = uuidv7();
+    const job: NewPrintJob = {
+      printJobId,
+      printerId: printer.id,
+      documentType: 'invoice',
+      sourceType: 'invoice',
+      sourceId: invoice.id,
+      sourceVersion: invoice.version,
+      copies,
+      paperSize: mapping.paperSize,
+      reprintOfId,
+      reprintReason: input.reprint?.reason ?? null,
+      requestKey: input.requestKey?.toLowerCase() ?? null,
+      requestHash: input.requestKey ? requestHash(input) : null,
+    };
+    await this.insertPrintJob(tx, ctx.companyId, actor, correlationId, job);
+    await this.attachAndQueue(
+      tx,
+      ctx.companyId,
+      actor,
+      correlationId,
+      job,
+      invoice.pdfFileId,
+      input,
+    );
+    await this.audit.record(tx, {
+      companyId: ctx.companyId,
+      actorType: 'user',
+      actorId: actor,
+      actorLabel: ctx.actorLabel,
+      action: 'print_job.requested',
+      objectType: 'print_job',
+      objectId: printJobId,
+      outcome: 'success',
+      ip: meta.ip,
+      userAgent: meta.userAgent,
+      details: {
+        documentType: 'invoice',
+        sourceType: 'invoice',
+        sourceId: invoice.id,
+        sourceVersion: invoice.version,
+        copies,
+        paperDelivery,
+        paperSize: mapping.paperSize,
+        printerId: printer.id,
+        isReprint: input.reprint != null,
+        reprintOfId,
+        provider: printer.provider,
+      },
+    });
+    return this.mustLoad(tx, ctx.companyId, printJobId);
+  }
+
+  /**
+   * The job an earlier request with this key created: `undefined` when there is none yet,
+   * `null` when the key belongs to a request that differs in anything (see requestHash).
+   */
+  private async byRequestKey(
+    tx: TenantTransaction,
+    companyId: string,
+    input: PrintRequestInput,
+  ): Promise<PrintJobView | null | undefined> {
+    const key = input.requestKey?.toLowerCase();
+    if (!key) {
+      return undefined;
+    }
+    const job = await tx.printJob.findFirst({
+      where: { companyId, requestKey: key },
+      select: { id: true, requestHash: true },
+    });
+    if (!job) {
+      return undefined;
+    }
+    return job.requestHash === requestHash(input) ? this.mustLoad(tx, companyId, job.id) : null;
+  }
+
+  /** One `print_job` row, queued, with no file yet. Shared by orders and invoices. */
+  private async insertPrintJob(
+    tx: TenantTransaction,
+    companyId: string,
+    actor: string,
+    correlationId: string,
+    job: NewPrintJob,
+  ): Promise<void> {
+    await tx.$executeRaw`
+      INSERT INTO print_job (
+        id, company_id, printer_id, document_type, source_type, source_id, source_version,
+        copies, paper_size, status, is_reprint, reprint_of_id, reprint_reason, idempotency_key,
+        request_key, request_hash, requested_by, correlation_id, created_at, updated_at
+      ) VALUES (
+        ${job.printJobId}::uuid,
+        ${companyId}::uuid,
+        ${job.printerId}::uuid,
+        ${job.documentType}::"print_document_type",
+        ${job.sourceType}::"print_source_type",
+        ${job.sourceId}::uuid,
+        ${job.sourceVersion},
+        ${job.copies},
+        ${job.paperSize},
+        'queued'::"print_job_status",
+        ${job.reprintOfId !== null},
+        ${job.reprintOfId}::uuid,
+        ${job.reprintReason},
+        ${`pj_${job.printJobId}`},
+        ${job.requestKey}::uuid,
+        ${job.requestHash},
+        ${actor}::uuid,
+        ${correlationId},
+        clock_timestamp(),
+        clock_timestamp()
+      )
+    `;
+  }
+
+  /** Points the job at its file and queues one `print.submit`. */
+  private async attachAndQueue(
+    tx: TenantTransaction,
+    companyId: string,
+    actor: string,
+    correlationId: string,
+    job: NewPrintJob,
+    fileId: string,
+    input: PrintRequestInput,
+  ): Promise<void> {
+    const queueJobId = uuidv7();
+    await tx.$executeRaw`
+      UPDATE print_job
+      SET file_id = ${fileId}::uuid, updated_at = clock_timestamp()
+      WHERE company_id = ${companyId}::uuid AND id = ${job.printJobId}::uuid
+    `;
+    const payload = JSON.stringify({
+      printJobId: job.printJobId,
+      requestedById: actor,
+      releasedById: null,
+      isReprint: input.reprint != null,
+    });
+    await tx.$executeRaw`
+      INSERT INTO job (
+        id, company_id, type, payload, status, attempts, max_attempts, run_after,
+        timeout_ms, correlation_id, idempotency_key, created_at, updated_at
+      ) VALUES (
+        ${queueJobId}::uuid,
+        ${companyId}::uuid,
+        'print.submit',
+        ${payload}::jsonb,
+        'queued'::"job_status",
+        0,
+        ${SUBMIT_ATTEMPTS},
+        clock_timestamp(),
+        ${SUBMIT_TIMEOUT_MS},
+        ${correlationId},
+        ${`print.submit:${job.printJobId}`},
+        clock_timestamp(),
+        clock_timestamp()
+      )
+    `;
+    await tx.$executeRaw`
+      UPDATE print_job
+      SET queue_job_id = ${queueJobId}::uuid, updated_at = clock_timestamp()
+      WHERE company_id = ${companyId}::uuid AND id = ${job.printJobId}::uuid
+    `;
   }
 
   private async loadTemplate(
@@ -1113,7 +1413,7 @@ export class PrintService {
       const row = await tx.printJob.findFirst({
         where: {
           companyId: ctx.companyId,
-          sourceType: 'order',
+          sourceType: input.sourceType,
           sourceId: input.sourceId.toLowerCase(),
           documentType: input.documentType,
           isReprint: false,
@@ -1477,6 +1777,36 @@ function scopeFilter(storeIds: string[], locationIds: string[]): Prisma.Sql {
     return Prisma.sql`FALSE`;
   }
   return Prisma.sql`(${Prisma.join(parts, ' OR ')})`;
+}
+
+function isRequestKeyConflict(error: unknown): boolean {
+  return errorText(error).includes('print_job_company_request_key');
+}
+
+/** Everything the caller asked for. A key sent again must come with exactly this request. */
+function requestHash(input: PrintRequestInput): string {
+  const canonical = JSON.stringify([
+    input.sourceType,
+    input.sourceId.toLowerCase(),
+    input.documentType,
+    input.copies ?? null,
+    input.printerId?.toLowerCase() ?? null,
+    input.locationId?.toLowerCase() ?? null,
+    input.reprint?.ofPrintJobId.toLowerCase() ?? null,
+    input.reprint?.reason ?? null,
+  ]);
+  return createHash('sha256').update(canonical).digest('hex');
+}
+
+function requestKeyReused(): CommerceError {
+  return new CommerceError(
+    409,
+    'request_key_reused',
+    'print_job',
+    null,
+    'This request key belongs to a different print request.',
+    'print_job.requested',
+  );
 }
 
 function isFirstPrintConflict(error: unknown): boolean {

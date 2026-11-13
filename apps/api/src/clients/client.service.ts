@@ -44,6 +44,7 @@ export type ClientWrite = {
   defaultCurrency?: string | null;
   defaultLanguage?: string | null;
   paymentTermsDays?: number | null;
+  acceptsEInvoices?: boolean;
   contacts?: ContactInput[];
   addresses?: AddressInput[];
 };
@@ -101,6 +102,7 @@ export type ClientView = {
   defaultCurrency: string | null;
   defaultLanguage: string | null;
   paymentTermsDays: number | null;
+  acceptsEInvoices: boolean;
   archivedAt: string | null;
   version: number;
   contacts: ContactView[];
@@ -132,6 +134,7 @@ type ClientRow = {
   defaultCurrency: string | null;
   defaultLanguage: string | null;
   paymentTermsDays: number | null;
+  acceptsEInvoices: boolean;
   archivedAt: Date | null;
   version: number;
   createdAt: Date;
@@ -201,17 +204,8 @@ export class ClientService {
     const actor = requireActor(ctx);
     try {
       return await this.tenants.run(this.context(ctx, actor), async (tx) => {
-        const data = clientData(input);
-        assertChildren(input.contacts ?? [], input.addresses ?? []);
-        const created = await tx.client.create({
-          data: {
-            companyId: ctx.companyId,
-            ...data,
-            createdById: actor,
-          },
-        });
-        await this.replaceContacts(tx, ctx.companyId, created.id, input.contacts ?? [], []);
-        await this.replaceAddresses(tx, ctx.companyId, created.id, input.addresses ?? [], []);
+        await lockClientWrites(tx, ctx.companyId);
+        const created = await this.createInTransaction(tx, ctx.companyId, actor, input);
         await this.audit.record(tx, {
           companyId: ctx.companyId,
           actorType: 'user',
@@ -223,13 +217,29 @@ export class ClientService {
           outcome: 'success',
           ip: meta.ip,
           userAgent: meta.userAgent,
-          details: { version: created.version },
+          // Agreement to electronic invoices is consent evidence (reg. 11A(1)(γ)), so it is recorded.
+          details: { version: created.version, acceptsEInvoices: created.acceptsEInvoices },
         });
         return toClient(await this.load(tx, ctx.companyId, created.id));
       });
     } catch (error) {
       return this.fail(ctx, meta, error);
     }
+  }
+
+  /** Shared by CSV confirm: the caller owns the tenant transaction and client-write lock. */
+  async createInTransaction(
+    tx: TenantTransaction,
+    companyId: string,
+    actor: string,
+    input: ClientWrite,
+  ): Promise<{ id: string; version: number; acceptsEInvoices: boolean }> {
+    const data = clientData(input);
+    assertChildren(input.contacts ?? [], input.addresses ?? []);
+    const created = await tx.client.create({ data: { companyId, ...data, createdById: actor } });
+    await this.replaceContacts(tx, companyId, created.id, input.contacts ?? [], []);
+    await this.replaceAddresses(tx, companyId, created.id, input.addresses ?? [], []);
+    return created;
   }
 
   async update(
@@ -241,6 +251,7 @@ export class ClientService {
     const actor = requireActor(ctx);
     try {
       return await this.tenants.run(this.context(ctx, actor), async (tx) => {
+        await lockClientWrites(tx, ctx.companyId);
         const current = await this.load(tx, ctx.companyId, clientId);
         if (current.version !== patch.expectedVersion) {
           throw new CommerceError(
@@ -305,7 +316,13 @@ export class ClientService {
           outcome: 'success',
           ip: meta.ip,
           userAgent: meta.userAgent,
-          details: { version: saved.version, archived: saved.archivedAt !== null },
+          details: {
+            version: saved.version,
+            archived: saved.archivedAt !== null,
+            ...(saved.acceptsEInvoices !== current.acceptsEInvoices
+              ? { acceptsEInvoices: saved.acceptsEInvoices }
+              : {}),
+          },
         });
         return toClient(saved);
       });
@@ -509,6 +526,7 @@ function clientData(input: ClientWrite) {
     defaultCurrency: input.defaultCurrency ?? null,
     defaultLanguage: input.defaultLanguage ?? null,
     paymentTermsDays: input.paymentTermsDays ?? null,
+    acceptsEInvoices: input.acceptsEInvoices ?? false,
     nameNormalized: nameKey,
     emailNormalized: duplicateKey(email),
     vatNormalized: duplicateKey(vatNumber),
@@ -532,6 +550,7 @@ function merged(current: ClientRow, patch: ClientPatch): ClientWrite {
       patch.defaultLanguage === undefined ? current.defaultLanguage : patch.defaultLanguage,
     paymentTermsDays:
       patch.paymentTermsDays === undefined ? current.paymentTermsDays : patch.paymentTermsDays,
+    acceptsEInvoices: patch.acceptsEInvoices ?? current.acceptsEInvoices,
   };
 }
 
@@ -595,6 +614,7 @@ function toClient(row: ClientRow): ClientView {
     defaultCurrency: row.defaultCurrency,
     defaultLanguage: row.defaultLanguage,
     paymentTermsDays: row.paymentTermsDays,
+    acceptsEInvoices: row.acceptsEInvoices,
     archivedAt: row.archivedAt?.toISOString() ?? null,
     version: row.version,
     contacts: row.contacts.map((contact) => ({
@@ -620,4 +640,9 @@ function toClient(row: ClientRow): ClientView {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+/** Serialise import duplicate rechecks with every client create and edit in this company. */
+export async function lockClientWrites(tx: TenantTransaction, companyId: string): Promise<void> {
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`clients:${companyId}`}, 0))::text`;
 }

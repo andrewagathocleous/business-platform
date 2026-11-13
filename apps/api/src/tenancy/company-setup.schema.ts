@@ -28,6 +28,14 @@ const currencySchema = z
   .refine(isKnownCurrency, 'defaultCurrency is invalid')
   .refine((code) => currencyMinorDigits(code) === 2, 'defaultCurrency must have two minor digits');
 
+/** Null clears the default. */
+const seriesIdSchema = z
+  .string()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, 'series id is invalid')
+  .transform((value) => value.toLowerCase())
+  .nullable()
+  .optional();
+
 const companyPatchKeys = [
   'legalName',
   'tradingName',
@@ -40,6 +48,11 @@ const companyPatchKeys = [
   'defaultLocale',
   'documentLanguage',
   'paymentTermsDays',
+  'invoiceTermsEn',
+  'invoiceTermsEl',
+  'defaultInvoiceSeriesId',
+  'defaultCreditNoteSeriesId',
+  'defaultQuoteSeriesId',
 ] as const;
 
 export const companyPatchSchema = z
@@ -56,6 +69,11 @@ export const companyPatchSchema = z
     defaultLocale: z.enum(['en', 'el']).optional(),
     documentLanguage: z.enum(['en', 'el']).optional(),
     paymentTermsDays: z.number().int().min(0).max(365).optional(),
+    invoiceTermsEn: clearableText(4000),
+    invoiceTermsEl: clearableText(4000),
+    defaultInvoiceSeriesId: seriesIdSchema,
+    defaultCreditNoteSeriesId: seriesIdSchema,
+    defaultQuoteSeriesId: seriesIdSchema,
   })
   .strict()
   .refine((body) => companyPatchKeys.some((key) => body[key] !== undefined), {

@@ -43,10 +43,12 @@ const PRINT_STATUSES = [
 const requestBody = z
   .object({
     documentType: z.enum(DOCUMENT_TYPES),
-    sourceType: z.literal('order'),
+    sourceType: z.enum(['order', 'invoice']),
     sourceId: z.uuid(),
     copies: z.number().int().min(1).max(5).optional(),
     printerId: z.uuid().optional(),
+    locationId: z.uuid().optional(),
+    requestKey: z.uuid().optional(),
     reprint: z
       .object({
         ofPrintJobId: z.uuid(),
@@ -102,7 +104,7 @@ export class PrintController {
   @RequirePermission('print.submit', { anyOf: ['print.reprint'], scope: printRequestScope })
   @ApiOperation({
     summary:
-      'Queue a packing slip or gift message. Renders now. A second first print is 409 already_printed. The provider follows the mapped printer (mock in development and test only, otherwise printnode).',
+      'Queue a packing slip or gift message (rendered now), or an issued invoice (its stored PDF; two copies by default for paper delivery). A second first print is 409 already_printed. The provider follows the mapped printer (mock in development and test only, otherwise printnode).',
   })
   async request(@Req() req: Request, @Param('companyId') companyId: string) {
     const parsed = requestBody.safeParse(unknownBody(req));
@@ -111,10 +113,12 @@ export class PrintController {
     }
     const input: PrintRequestInput = {
       documentType: parsed.data.documentType,
-      sourceType: 'order',
+      sourceType: parsed.data.sourceType,
       sourceId: parsed.data.sourceId,
       ...(parsed.data.copies !== undefined ? { copies: parsed.data.copies } : {}),
       ...(parsed.data.printerId !== undefined ? { printerId: parsed.data.printerId } : {}),
+      ...(parsed.data.locationId !== undefined ? { locationId: parsed.data.locationId } : {}),
+      ...(parsed.data.requestKey !== undefined ? { requestKey: parsed.data.requestKey } : {}),
       ...(parsed.data.reprint !== undefined ? { reprint: parsed.data.reprint } : {}),
     };
     return this.printing.request(requireContext(req, companyId), input, requestMeta(req));

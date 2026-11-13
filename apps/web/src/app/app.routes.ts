@@ -78,6 +78,12 @@ export const routes: Routes = [
         canActivate: [permissionGuard],
         data: { permission: 'invoice.view' },
       },
+      {
+        path: 'reports',
+        loadComponent: () => import('./reports/reports-page').then((module) => module.ReportsPage),
+        canActivate: [permissionGuard],
+        data: { permission: 'report.finance.view' },
+      },
       { path: 'admin', pathMatch: 'full', canActivate: [adminHomeGuard], component: EmptyPage },
       {
         path: 'admin/members',
@@ -109,6 +115,12 @@ export const routes: Routes = [
         loadComponent: () => import('./admin/company-page').then((module) => module.CompanyPage),
         canActivate: [permissionGuard],
         data: { permission: 'company.view' },
+      },
+      {
+        path: 'admin/invoicing',
+        loadComponent: () => import('./admin/invoicing-page').then((module) => module.InvoicingPage),
+        canActivate: [permissionGuard],
+        data: { permission: 'invoice.view' },
       },
       {
         path: 'admin/stores',

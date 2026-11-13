@@ -95,6 +95,25 @@ describe('ClientFormPage', () => {
     http.verify();
   });
 
+  it('sends whether the client accepts electronic invoices', async () => {
+    const { fixture, http } = await setup(['client.manage']);
+    const component = fixture.componentInstance;
+    component.open('company-1', 'client-1');
+    http.expectOne('/api/c/company-1/clients/client-1').flush({ client: clientView() });
+    expect(component.draft().acceptsEInvoices).toBe(false);
+    component.onAcceptsEInvoices(checkEvent(true));
+    component.save();
+    const patch = http.expectOne('/api/c/company-1/clients/client-1');
+    const sent: unknown = patch.request.body;
+    if (!isRecord(sent)) {
+      throw new Error('patch body is missing');
+    }
+    expect(sent['acceptsEInvoices']).toBe(true);
+    patch.flush({ client: clientView({ acceptsEInvoices: true, version: 4 }) });
+    expect(component.draft().acceptsEInvoices).toBe(true);
+    http.verify();
+  });
+
   it('keeps unsaved notes when archive completes', async () => {
     const { fixture, http } = await setup(['client.manage']);
     const component = fixture.componentInstance;
@@ -154,35 +173,40 @@ describe('ClientFormPage', () => {
     http.verify();
   });
 
-  it('keeps a carried create draft instead of the stored client', async () => {
-    const draft = { ...emptyClientDraft(), displayName: 'Acme Demo', notes: 'typed after save' };
-    const baseline = {
-      ...emptyClientDraft(),
-      displayName: 'Acme Demo',
-      notes: 'typed before save',
-    };
-    const carriedClient = { id: 'client-9', version: 1, archivedAt: null, draft, baseline };
-    const { fixture, http } = await setup(['client.manage'], {
-      getCurrentNavigation: () => ({ extras: { state: { carriedClient } } }),
-    });
-    const component = fixture.componentInstance;
-    component.open('company-1', 'client-9');
-    const loaded = http.match((request) => request.url === '/api/c/company-1/clients/client-9');
-    for (const request of loaded) {
-      request.flush({ client: clientView({ id: 'client-9', notes: 'server copy', version: 7 }) });
-    }
-    expect(component.draft().notes).toBe('typed after save');
-    component.save();
-    const checks = http.match((request) => request.url.includes('duplicate-check'));
-    for (const request of checks) {
-      request.flush({ matches: [] });
-    }
-    const patch = http.expectOne('/api/c/company-1/clients/client-9');
-    expect(patch.request.method).toBe('PATCH');
-    expect(patch.request.body).toMatchObject({ expectedVersion: 1, notes: 'typed after save' });
-    patch.flush({ client: clientView({ id: 'client-9', notes: 'typed after save', version: 2 }) });
-    http.verify();
-  });
+  it.each(['client-9', 'CLIENT-9'])(
+    'keeps a carried create draft instead of the stored client at route %s',
+    async (routeId) => {
+      const draft = { ...emptyClientDraft(), displayName: 'Acme Demo', notes: 'typed after save' };
+      const baseline = {
+        ...emptyClientDraft(),
+        displayName: 'Acme Demo',
+        notes: 'typed before save',
+      };
+      const carriedClient = { id: 'client-9', version: 1, archivedAt: null, draft, baseline };
+      const { fixture, http } = await setup(['client.manage'], {
+        getCurrentNavigation: () => ({ extras: { state: { carriedClient } } }),
+      });
+      const component = fixture.componentInstance;
+      component.open('company-1', routeId);
+      const loaded = http.match((request) => request.url === `/api/c/company-1/clients/${routeId}`);
+      for (const request of loaded) {
+        request.flush({ client: clientView({ id: 'client-9', notes: 'server copy', version: 7 }) });
+      }
+      expect(component.draft().notes).toBe('typed after save');
+      component.save();
+      const checks = http.match((request) => request.url.includes('duplicate-check'));
+      for (const request of checks) {
+        request.flush({ matches: [] });
+      }
+      const patch = http.expectOne(`/api/c/company-1/clients/${routeId}`);
+      expect(patch.request.method).toBe('PATCH');
+      expect(patch.request.body).toMatchObject({ expectedVersion: 1, notes: 'typed after save' });
+      patch.flush({
+        client: clientView({ id: 'client-9', notes: 'typed after save', version: 2 }),
+      });
+      http.verify();
+    },
+  );
 
   it('does not save a duplicate VAT when the kind changes back to organisation during the check', async () => {
     const { fixture, http } = await setup(['client.manage']);
@@ -338,6 +362,7 @@ function clientView(overrides: Record<string, unknown> = {}): Record<string, unk
     defaultCurrency: 'EUR',
     defaultLanguage: 'en',
     paymentTermsDays: null,
+    acceptsEInvoices: false,
     archivedAt: null,
     version: 3,
     contacts: [],

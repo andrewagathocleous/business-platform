@@ -63,13 +63,6 @@ const idParam = ApiParam({
 export class CatalogController {
   constructor(@Inject(CatalogService) private readonly catalog: CatalogService) {}
 
-  @Get('tax-codes')
-  @RequirePermission('catalog.view')
-  @ApiOperation({ summary: 'Tax codes for this company. Editing them is not in this phase.' })
-  async taxCodes(@Req() req: Request, @Param('companyId') companyId: string) {
-    return { taxCodes: await this.catalog.taxCodes(requireContext(req, companyId)) };
-  }
-
   @Get('products')
   @RequirePermission('catalog.view')
   @ApiOperation({ summary: 'List products and services' })

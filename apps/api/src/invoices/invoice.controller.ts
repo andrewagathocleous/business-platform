@@ -39,6 +39,7 @@ const invoiceFields = {
   pricesIncludeTax: z.boolean(),
   issueDate: z.string().nullable().optional(),
   dueDate: z.string().nullable().optional(),
+  supplyDate: z.string().nullable().optional(),
   reference: z.string().max(200).nullable().optional(),
   notes: z.string().max(20_000).nullable().optional(),
   terms: z.string().max(20_000).nullable().optional(),
@@ -58,6 +59,7 @@ const invoicePatch = z
     pricesIncludeTax: invoiceFields.pricesIncludeTax.optional(),
     issueDate: invoiceFields.issueDate,
     dueDate: invoiceFields.dueDate,
+    supplyDate: invoiceFields.supplyDate,
     reference: invoiceFields.reference,
     notes: invoiceFields.notes,
     terms: invoiceFields.terms,
@@ -66,6 +68,16 @@ const invoicePatch = z
   .refine((body) => Object.keys(body).some((key) => key !== 'expectedVersion'), {
     message: 'no changes',
   });
+
+const invoiceIssue = z.object({ expectedVersion: z.number().int().nonnegative() }).strict();
+const deliveryBody = z
+  .object({
+    method: z.enum(['handed_over', 'posted', 'emailed_outside_platform', 'other']),
+    deliveredOn: z.string(),
+    paperCopyKept: z.boolean().optional(),
+    note: z.string().max(500).nullable().optional(),
+  })
+  .strict();
 
 const companyIdParam = ApiParam({
   name: 'companyId',
@@ -110,7 +122,9 @@ export class InvoiceController {
     summary: 'Create a draft invoice or quote. Totals are calculated on the server.',
   })
   async create(@Req() req: Request, @Param('companyId') companyId: string) {
-    const parsed = invoiceCreate.safeParse(unknownBody(req));
+    const body = unknownBody(req);
+    refuseOrderLink(body);
+    const parsed = invoiceCreate.safeParse(body);
     if (!parsed.success) {
       throw new BadRequestException(issueMessage(parsed.error));
     }
@@ -124,7 +138,10 @@ export class InvoiceController {
 
   @Get()
   @RequirePermission('invoice.view')
-  @ApiOperation({ summary: 'List invoices. Filters: status, clientId, from, to, q.' })
+  @ApiOperation({
+    summary:
+      'List invoices. Filters: status, clientId, from, to, q, delivery=pending (earliest deadline first), payment=open (issued invoices with a balance, earliest due first).',
+  })
   async list(@Req() req: Request, @Param('companyId') companyId: string) {
     const invoices = await this.invoices.list(
       requireContext(req, companyId),
@@ -139,7 +156,10 @@ export class InvoiceController {
   @Header('Cache-Control', 'no-store')
   @Header('X-Content-Type-Options', 'nosniff')
   @RequirePermission('invoice.view')
-  @ApiOperation({ summary: 'Render a draft invoice PDF. Drafts are not stored.' })
+  @ApiOperation({
+    summary:
+      'The PDF. An issued document returns its stored, verified file; a draft is rendered with a watermark and not stored.',
+  })
   async pdf(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
@@ -147,7 +167,7 @@ export class InvoiceController {
     @Param('id') id: string,
   ): Promise<StreamableFile> {
     const file = await this.invoices.pdf(requireContext(req, companyId), id, requestMeta(req));
-    const disposition = `inline; filename="draft-${file.id}.pdf"`;
+    const disposition = `inline; filename="${file.fileName}"`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', disposition);
     return new StreamableFile(file.bytes, {
@@ -166,19 +186,61 @@ export class InvoiceController {
     return { invoice };
   }
 
+  @Post(':id/issue')
+  @HttpCode(200)
+  @idParam
+  @RequirePermission('invoice.issue')
+  @ApiOperation({
+    summary:
+      'Issue a draft invoice: number, frozen snapshot and stored PDF, in one transaction. Needs outbound.all and invoice.issue_real on. 409 issuance_disabled when either is off; 422 invoice_incomplete lists the missing fields.',
+  })
+  async issue(@Req() req: Request, @Param('companyId') companyId: string, @Param('id') id: string) {
+    const parsed = invoiceIssue.safeParse(unknownBody(req));
+    if (!parsed.success) {
+      throw new BadRequestException(issueMessage(parsed.error));
+    }
+    return this.invoices.issue(requireContext(req, companyId), id, parsed.data, requestMeta(req));
+  }
+
+  @Post(':id/deliveries')
+  @HttpCode(200)
+  @idParam
+  @RequirePermission('invoice.issue')
+  @ApiOperation({
+    summary:
+      'Record how and when an issued document reached the client. Append-only. Paper methods need paperCopyKept; emailing needs the client to accept e-invoices (409 e_invoice_not_accepted).',
+  })
+  async recordDelivery(
+    @Req() req: Request,
+    @Param('companyId') companyId: string,
+    @Param('id') id: string,
+  ) {
+    const parsed = deliveryBody.safeParse(unknownBody(req));
+    if (!parsed.success) {
+      throw new BadRequestException(issueMessage(parsed.error));
+    }
+    return this.invoices.recordDelivery(
+      requireContext(req, companyId),
+      id,
+      parsed.data,
+      requestMeta(req),
+    );
+  }
+
   @Patch(':id')
   @idParam
   @RequirePermission('invoice.draft')
   @ApiOperation({
-    summary:
-      'Edit a draft. expectedVersion must match. A mismatch is 409. There is no issue endpoint.',
+    summary: 'Edit a draft. expectedVersion must match. A mismatch is 409.',
   })
   async update(
     @Req() req: Request,
     @Param('companyId') companyId: string,
     @Param('id') id: string,
   ) {
-    const parsed = invoicePatch.safeParse(unknownBody(req));
+    const body = unknownBody(req);
+    refuseOrderLink(body);
+    const parsed = invoicePatch.safeParse(body);
     if (!parsed.success) {
       throw new BadRequestException(issueMessage(parsed.error));
     }
@@ -192,10 +254,31 @@ export class InvoiceController {
   }
 }
 
+function refuseOrderLink(body: unknown): void {
+  if (
+    typeof body === 'object' &&
+    body !== null &&
+    (Object.hasOwn(body, 'sourceOrderId') || Object.hasOwn(body, 'source_order_id'))
+  ) {
+    throw new BadRequestException({
+      code: 'order_link_not_supported',
+      message: 'Order-to-invoice conversion is not supported yet.',
+    });
+  }
+}
+
 function parseInvoiceQuery(query: Record<string, unknown>): InvoiceQuery {
   const status = query.status;
   if (status !== undefined && status !== 'draft' && status !== 'issued' && status !== 'cancelled') {
     throw new BadRequestException('status is invalid');
+  }
+  const delivery = query.delivery;
+  if (delivery !== undefined && delivery !== 'pending') {
+    throw new BadRequestException('delivery is invalid');
+  }
+  const payment = query.payment;
+  if (payment !== undefined && payment !== 'open') {
+    throw new BadRequestException('payment is invalid');
   }
   const clientId = query.clientId;
   if (clientId !== undefined && (typeof clientId !== 'string' || !isUuid(clientId))) {
@@ -209,6 +292,8 @@ function parseInvoiceQuery(query: Record<string, unknown>): InvoiceQuery {
   }
   return {
     status,
+    delivery,
+    payment,
     clientId: typeof clientId === 'string' ? clientId : undefined,
     from,
     to,

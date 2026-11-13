@@ -20,6 +20,11 @@ export type CompanyDetails = {
   defaultLocale: 'en' | 'el';
   documentLanguage: 'en' | 'el';
   paymentTermsDays: number;
+  invoiceTermsEn: string | null;
+  invoiceTermsEl: string | null;
+  defaultInvoiceSeriesId: string | null;
+  defaultCreditNoteSeriesId: string | null;
+  defaultQuoteSeriesId: string | null;
   countryCode: string;
   status: string;
 };
@@ -38,6 +43,11 @@ export function companyDetails(company: {
   defaultLocale: 'en' | 'el';
   documentLanguage: 'en' | 'el';
   paymentTermsDays: number;
+  invoiceTermsEn: string | null;
+  invoiceTermsEl: string | null;
+  defaultInvoiceSeriesId: string | null;
+  defaultCreditNoteSeriesId: string | null;
+  defaultQuoteSeriesId: string | null;
   countryCode: string;
   status: string;
 }): CompanyDetails {
@@ -55,6 +65,11 @@ export function companyDetails(company: {
     defaultLocale: company.defaultLocale,
     documentLanguage: company.documentLanguage,
     paymentTermsDays: company.paymentTermsDays,
+    invoiceTermsEn: company.invoiceTermsEn,
+    invoiceTermsEl: company.invoiceTermsEl,
+    defaultInvoiceSeriesId: company.defaultInvoiceSeriesId,
+    defaultCreditNoteSeriesId: company.defaultCreditNoteSeriesId,
+    defaultQuoteSeriesId: company.defaultQuoteSeriesId,
     countryCode: company.countryCode,
     status: company.status,
   };

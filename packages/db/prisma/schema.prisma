@@ -83,6 +83,14 @@ enum ClientKind {
   @@map("client_kind")
 }
 
+enum ClientImportStatus {
+  previewed
+  applied
+  expired
+
+  @@map("client_import_status")
+}
+
 enum AddressKind {
   billing
   shipping
@@ -99,6 +107,14 @@ enum TaxKind {
   out_of_scope
 
   @@map("tax_kind")
+}
+
+/// When an invoice must reach the customer (Cyprus VAT reg. 11(5) and 11(6)).
+enum TaxDeadlineRule {
+  days_30
+  next_month_15
+
+  @@map("tax_deadline_rule")
 }
 
 enum ProductKind {
@@ -125,11 +141,38 @@ enum InvoiceStatus {
   @@map("invoice_status")
 }
 
+/// How an issued document reached the customer (Cyprus VAT reg. 11(5) and 11(6) concern delivery).
+enum InvoiceDeliveryMethod {
+  handed_over
+  posted
+  emailed_outside_platform
+  other
+
+  @@map("invoice_delivery_method")
+}
+
 enum InvoiceLineKind {
   item
   shipping
 
   @@map("invoice_line_kind")
+}
+
+enum PaymentMethod {
+  bank_transfer
+  card
+  cash
+  store
+  other
+
+  @@map("payment_method")
+}
+
+enum PaymentRecordStatus {
+  recorded
+  voided
+
+  @@map("payment_record_status")
 }
 
 enum PaymentStatus {
@@ -300,16 +343,26 @@ model UserAccount {
   invitationsAccepted    Invitation[]       @relation("InvitationAcceptedBy")
   serviceIdentities      ServiceIdentity[]  @relation("ServiceIdentityCreatedBy")
   switchesUpdated        AutomationSwitch[] @relation("SwitchUpdatedBy")
+  clientImportsCreated   ClientImport[] @relation("ClientImportCreatedBy")
+  clientImportsApplied   ClientImport[] @relation("ClientImportAppliedBy")
   clientsCreated         Client[]           @relation("ClientCreatedBy")
   invoicesCreated        Invoice[]          @relation("InvoiceCreatedBy")
   invoicesUpdated        Invoice[]          @relation("InvoiceUpdatedBy")
   invoicesIssued         Invoice[]          @relation("InvoiceIssuedBy")
+  invoiceDeliveries      InvoiceDelivery[]  @relation("InvoiceDeliveryRecordedBy")
   ordersAssigned         SalesOrder[]       @relation("OrderAssignedTo")
   orderNotes             OrderNote[]
   filesCreated           StoredFile[]       @relation("FileCreatedBy")
   credentialsCreated     IntegrationCredential[] @relation("CredentialCreatedBy")
   printJobsRequested     PrintJob[]         @relation("PrintRequestedBy")
   printJobsConfirmed     PrintJob[]         @relation("PrintConfirmedBy")
+  paymentsCreated        Payment[]          @relation("PaymentCreatedBy")
+  paymentsVoided         Payment[]          @relation("PaymentVoidedBy")
+  allocationsCreated     Allocation[]       @relation("AllocationCreatedBy")
+  allocationsReversed    Allocation[]       @relation("AllocationReversedBy")
+  refundsCreated         Refund[]           @relation("RefundCreatedBy")
+  refundsVoided          Refund[]           @relation("RefundVoidedBy")
+  idempotencyRecords     IdempotencyRecord[]
   ownerEnrolments        PlatformOwnerEnrolment[]
 
   @@map("user_account")
@@ -404,6 +457,13 @@ model Company {
   defaultLocale      Locale   @default(en) @map("default_locale")
   documentLanguage   Locale   @default(en) @map("document_language")
   paymentTermsDays   Int      @default(30) @map("payment_terms_days")
+  invoiceTermsEn     String?  @map("invoice_terms_en")
+  invoiceTermsEl     String?  @map("invoice_terms_el")
+  /// Default series per document type. A trigger (company_default_series_guard) checks that each
+  /// one is this company's series of the right type; Prisma cannot model a key that reuses `id`.
+  defaultInvoiceSeriesId    String? @map("default_invoice_series_id") @db.Uuid
+  defaultCreditNoteSeriesId String? @map("default_credit_note_series_id") @db.Uuid
+  defaultQuoteSeriesId      String? @map("default_quote_series_id") @db.Uuid
   version            Int      @default(1)
   status             String   @default("active")
   isFictional        Boolean  @default(false) @map("is_fictional")
@@ -423,6 +483,7 @@ model Company {
   credentials        IntegrationCredential[]
   connections        StoreConnection[]
   inboxEvents        IntegrationInbox[]
+  clientImports      ClientImport[]
   clients            Client[]
   contacts           ClientContact[]
   addresses          ClientAddress[]
@@ -432,6 +493,11 @@ model Company {
   invoices           Invoice[]
   invoiceLines       InvoiceLine[]
   invoiceTaxSummaries InvoiceTaxSummary[]
+  invoiceDeliveries  InvoiceDelivery[]
+  payments           Payment[]
+  allocations        Allocation[]
+  refunds            Refund[]
+  idempotencyRecords IdempotencyRecord[]
   salesOrders        SalesOrder[]
   salesOrderLines    SalesOrderLine[]
   orderNotes         OrderNote[]
@@ -593,7 +659,10 @@ model CompanyBankAccount {
   iban          String
   bic           String?
   accountHolder String  @map("account_holder")
-  isDefault     Boolean @default(false) @map("is_default")
+  /// At most one per company (partial unique index in SQL), and only while active.
+  shownOnInvoices Boolean @default(false) @map("shown_on_invoices")
+  active        Boolean @default(true)
+  version       Int     @default(0)
 
   @@map("company_bank_account")
 }
@@ -747,6 +816,8 @@ model Client {
   defaultCurrency    String?    @map("default_currency")
   defaultLanguage    String?    @map("default_language")
   paymentTermsDays   Int?       @map("payment_terms_days")
+  /// The client agreed to receive invoices electronically (Cyprus VAT reg. 11A(1)(γ)).
+  acceptsEInvoices   Boolean    @default(false) @map("accepts_e_invoices")
   nameNormalized     String?    @map("name_normalized")
   emailNormalized    String?    @map("email_normalized")
   vatNormalized      String?    @map("vat_normalized")
@@ -760,9 +831,31 @@ model Client {
   contacts  ClientContact[]
   addresses ClientAddress[]
   invoices  Invoice[]
+  payments  Payment[]
 
   @@unique([companyId, id])
   @@map("client")
+}
+
+model ClientImport {
+  id           String             @id @default(uuid(7)) @db.Uuid
+  companyId    String             @map("company_id") @db.Uuid
+  company      Company            @relation(fields: [companyId], references: [id])
+  status       ClientImportStatus @default(previewed)
+  fileName     String             @map("file_name")
+  sha256       String
+  rowCount     Int                @map("row_count")
+  rows         Json               @db.JsonB
+  createdById  String             @map("created_by") @db.Uuid
+  createdBy    UserAccount        @relation("ClientImportCreatedBy", fields: [createdById], references: [id])
+  createdAt    DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  appliedById  String?            @map("applied_by") @db.Uuid
+  appliedBy    UserAccount?       @relation("ClientImportAppliedBy", fields: [appliedById], references: [id], onDelete: Restrict)
+  appliedAt    DateTime?          @map("applied_at") @db.Timestamptz(6)
+  appliedCount Int?               @map("applied_count")
+
+  @@unique([companyId, id])
+  @@map("client_import")
 }
 
 model ClientContact {
@@ -811,6 +904,8 @@ model TaxCode {
   noteEl      String?  @map("note_el")
   isExample   Boolean  @default(false) @map("is_example")
   active      Boolean  @default(true)
+  deadlineRule TaxDeadlineRule @default(days_30) @map("deadline_rule")
+  version     Int      @default(0)
 
   products      Product[]
   invoiceLines  InvoiceLine[]
@@ -852,6 +947,7 @@ model InvoiceSeries {
   nextNumber   Int                 @default(1) @map("next_number")
   padding      Int                 @default(4)
   active       Boolean             @default(true)
+  version      Int                 @default(0)
 
   invoices Invoice[]
 
@@ -873,6 +969,10 @@ model Invoice {
   pricesIncludeTax Boolean             @map("prices_include_tax")
   issueDate        DateTime?           @map("issue_date") @db.Date
   dueDate          DateTime?           @map("due_date") @db.Date
+  /// Time of supply, Cyprus VAT reg. 12(1)(β). Defaults to the issue date at issue; never after it.
+  supplyDate       DateTime?           @map("supply_date") @db.Date
+  /// The date the issued document must reach the customer by (reg. 11(5) or 11(6)).
+  deliveryDeadline DateTime?           @map("delivery_deadline") @db.Date
   seriesId         String?             @map("series_id") @db.Uuid
   series           InvoiceSeries?      @relation(fields: [companyId, seriesId], references: [companyId, id])
   number           String?
@@ -887,6 +987,16 @@ model Invoice {
   terms            String?
   sourceOrderId    String?             @map("source_order_id") @db.Uuid
   sourceOrder      SalesOrder?         @relation(fields: [companyId, sourceOrderId], references: [companyId, id])
+  /// A credit note credits this issued invoice (R2-D). Set exactly when document_type is credit_note.
+  creditedInvoiceId String?            @map("credited_invoice_id") @db.Uuid
+  creditedInvoice  Invoice?            @relation("CreditNotes", fields: [companyId, creditedInvoiceId], references: [companyId, id])
+  creditNotes      Invoice[]           @relation("CreditNotes")
+  /// Why the credit note was made. Required on a credit note.
+  creditReason     String?             @map("credit_reason")
+  /// The quote this invoice was converted from. A quote converts once (partial unique index).
+  sourceQuoteId    String?             @map("source_quote_id") @db.Uuid
+  sourceQuote      Invoice?            @relation("QuoteConversion", fields: [companyId, sourceQuoteId], references: [companyId, id])
+  convertedInvoices Invoice[]          @relation("QuoteConversion")
   createdById      String              @map("created_by") @db.Uuid
   createdBy        UserAccount         @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
   updatedById      String?             @map("updated_by") @db.Uuid
@@ -894,14 +1004,28 @@ model Invoice {
   issuedById       String?             @map("issued_by") @db.Uuid
   issuedBy         UserAccount?        @relation("InvoiceIssuedBy", fields: [issuedById], references: [id])
   issuedAt         DateTime?           @map("issued_at") @db.Timestamptz(6)
+  /// Frozen at issue: later edits to the company, client, bank account or terms never change the document.
+  sellerSnapshot   Json?               @map("seller_snapshot") @db.JsonB
+  buyerSnapshot    Json?               @map("buyer_snapshot") @db.JsonB
+  bankSnapshot     Json?               @map("bank_snapshot") @db.JsonB
+  termsSnapshot    String?             @map("terms_snapshot")
+  renderVersion    Int?                @map("render_version")
+  /// The issued PDF, the legal document. Same company by construction.
+  pdfFileId        String?             @map("pdf_file_id") @db.Uuid
+  pdfFile          StoredFile?         @relation(fields: [companyId, pdfFileId], references: [companyId, id])
   version          Int                 @default(0)
   createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   lines      InvoiceLine[]
   taxSummary InvoiceTaxSummary[]
+  deliveries InvoiceDelivery[]
+  allocations Allocation[] @relation("AllocationTarget")
+  creditAllocations Allocation[] @relation("AllocationCreditNote")
+  refunds Refund[]
 
   @@unique([companyId, id])
+  @@unique([companyId, number])
   @@map("invoice")
 }
 
@@ -927,7 +1051,14 @@ model InvoiceLine {
   lineDiscount    Decimal         @map("line_discount") @db.Decimal(19, 2)
   lineNet         Decimal         @map("line_net") @db.Decimal(19, 2)
   lineGross       Decimal         @map("line_gross") @db.Decimal(19, 2)
+  /// Frozen at issue: the tax code's code, name, kind and legal notes in both languages.
+  taxSnapshot     Json?           @map("tax_snapshot") @db.JsonB
+  /// On a credit note: the original invoice line this line credits.
+  creditedLineId  String?         @map("credited_line_id") @db.Uuid
+  creditedLine    InvoiceLine?    @relation("CreditedLines", fields: [companyId, creditedLineId], references: [companyId, id])
+  creditLines     InvoiceLine[]   @relation("CreditedLines")
 
+  @@unique([companyId, id])
   @@map("invoice_line")
 }
 
@@ -943,8 +1074,140 @@ model InvoiceTaxSummary {
   net            Decimal  @db.Decimal(19, 2)
   tax            Decimal  @db.Decimal(19, 2)
   gross          Decimal  @db.Decimal(19, 2)
+  taxSnapshot    Json?    @map("tax_snapshot") @db.JsonB
 
+  /// One row per tax code: credit-note limits compare groups by code.
+  @@unique([companyId, invoiceId, taxCodeId])
   @@map("invoice_tax_summary")
+}
+
+/// Append-only: bp_app may insert and read, never update or delete.
+model InvoiceDelivery {
+  id            String                @id @default(uuid(7)) @db.Uuid
+  companyId     String                @map("company_id") @db.Uuid
+  company       Company               @relation(fields: [companyId], references: [id])
+  invoiceId     String                @map("invoice_id") @db.Uuid
+  invoice       Invoice               @relation(fields: [companyId, invoiceId], references: [companyId, id])
+  method        InvoiceDeliveryMethod
+  /// Business date in the company's timezone.
+  deliveredOn   DateTime              @map("delivered_on") @db.Date
+  /// Paper delivery keeps a second printed copy for the company's file (reg. 11Γ(4)).
+  paperCopyKept Boolean               @default(false) @map("paper_copy_kept")
+  note          String?
+  recordedById  String                @map("recorded_by") @db.Uuid
+  recordedBy    UserAccount           @relation("InvoiceDeliveryRecordedBy", fields: [recordedById], references: [id])
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([companyId, invoiceId])
+  @@map("invoice_delivery")
+}
+
+model Payment {
+  id           String              @id @default(uuid(7)) @db.Uuid
+  companyId    String              @map("company_id") @db.Uuid
+  company      Company             @relation(fields: [companyId], references: [id])
+  clientId     String              @map("client_id") @db.Uuid
+  client       Client              @relation(fields: [companyId, clientId], references: [companyId, id])
+  /// Business date in the company's timezone.
+  receivedOn   DateTime            @map("received_on") @db.Date
+  amount       Decimal             @db.Decimal(19, 2)
+  currency     String
+  method       PaymentMethod
+  reference    String?
+  notes        String?
+  status       PaymentRecordStatus @default(recorded)
+  /// Business date in the company's timezone.
+  voidedOn     DateTime?           @map("voided_on") @db.Date
+  voidReason   String?             @map("void_reason")
+  createdById  String              @map("created_by") @db.Uuid
+  createdBy    UserAccount         @relation("PaymentCreatedBy", fields: [createdById], references: [id])
+  voidedById   String?             @map("voided_by") @db.Uuid
+  voidedBy     UserAccount?        @relation("PaymentVoidedBy", fields: [voidedById], references: [id])
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version      Int                 @default(0)
+
+  allocations Allocation[]
+  refunds     Refund[]
+
+  @@unique([companyId, id])
+  @@index([companyId, clientId])
+  @@map("payment")
+}
+
+model Allocation {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  companyId      String       @map("company_id") @db.Uuid
+  company        Company      @relation(fields: [companyId], references: [id])
+  paymentId      String?      @map("payment_id") @db.Uuid
+  payment        Payment?     @relation(fields: [companyId, paymentId], references: [companyId, id])
+  creditNoteId   String?      @map("credit_note_id") @db.Uuid
+  creditNote     Invoice?     @relation("AllocationCreditNote", fields: [companyId, creditNoteId], references: [companyId, id])
+  invoiceId      String       @map("invoice_id") @db.Uuid
+  invoice        Invoice      @relation("AllocationTarget", fields: [companyId, invoiceId], references: [companyId, id])
+  amount         Decimal      @db.Decimal(19, 2)
+  /// Business date in the company's timezone.
+  effectiveOn    DateTime     @map("effective_on") @db.Date
+  /// Business date in the company's timezone.
+  reversedOn     DateTime?    @map("reversed_on") @db.Date
+  reversalReason String?      @map("reversal_reason")
+  createdById    String       @map("created_by") @db.Uuid
+  createdBy      UserAccount  @relation("AllocationCreatedBy", fields: [createdById], references: [id])
+  reversedById   String?      @map("reversed_by") @db.Uuid
+  reversedBy     UserAccount? @relation("AllocationReversedBy", fields: [reversedById], references: [id])
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([companyId, invoiceId])
+  @@index([companyId, paymentId])
+  @@index([companyId, creditNoteId])
+  @@map("allocation")
+}
+
+model Refund {
+  id           String              @id @default(uuid(7)) @db.Uuid
+  companyId    String              @map("company_id") @db.Uuid
+  company      Company             @relation(fields: [companyId], references: [id])
+  paymentId    String?             @map("payment_id") @db.Uuid
+  payment      Payment?            @relation(fields: [companyId, paymentId], references: [companyId, id])
+  creditNoteId String?             @map("credit_note_id") @db.Uuid
+  creditNote   Invoice?            @relation(fields: [companyId, creditNoteId], references: [companyId, id])
+  amount       Decimal             @db.Decimal(19, 2)
+  /// Business date in the company's timezone.
+  refundedOn   DateTime            @map("refunded_on") @db.Date
+  method       PaymentMethod
+  reference    String?
+  notes        String?
+  status       PaymentRecordStatus @default(recorded)
+  /// Business date in the company's timezone.
+  voidedOn     DateTime?           @map("voided_on") @db.Date
+  voidReason   String?             @map("void_reason")
+  createdById  String              @map("created_by") @db.Uuid
+  createdBy    UserAccount         @relation("RefundCreatedBy", fields: [createdById], references: [id])
+  voidedById   String?             @map("voided_by") @db.Uuid
+  voidedBy     UserAccount?        @relation("RefundVoidedBy", fields: [voidedById], references: [id])
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  version      Int                 @default(0)
+
+  @@index([companyId, paymentId])
+  @@index([companyId, creditNoteId])
+  @@map("refund")
+}
+
+model IdempotencyRecord {
+  id          String      @id @default(uuid(7)) @db.Uuid
+  companyId   String      @map("company_id") @db.Uuid
+  company     Company     @relation(fields: [companyId], references: [id])
+  operation   String
+  key         String
+  requestHash String      @map("request_hash")
+  statusCode  Int         @map("status_code")
+  response    Json        @db.JsonB
+  createdById String      @map("created_by") @db.Uuid
+  createdBy   UserAccount @relation(fields: [createdById], references: [id])
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([companyId, operation, key])
+  @@map("idempotency_record")
 }
 
 model SalesOrder {
@@ -1040,8 +1303,11 @@ model StoredFile {
   createdById   String         @map("created_by") @db.Uuid
   createdBy     UserAccount    @relation("FileCreatedBy", fields: [createdById], references: [id])
   createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// Set when an issued document adopts this file. A trigger then refuses every update and delete.
+  sealed        Boolean        @default(false)
 
   printJobs PrintJob[]
+  invoices  Invoice[]
 
   @@unique([companyId, id])
   @@map("stored_file")
@@ -1132,6 +1398,10 @@ model PrintJob {
   reprints        PrintJob[]        @relation("Reprint")
   reprintReason   String?           @map("reprint_reason")
   idempotencyKey  String            @map("idempotency_key")
+  /// The caller's key for one request (R2-C3c). Unique per company when present (partial index
+  /// print_job_company_request_key in SQL). request_hash fingerprints that request.
+  requestKey      String?           @map("request_key") @db.Uuid
+  requestHash     String?           @map("request_hash")
   providerJobId   String?           @map("provider_job_id")
   providerState   String?           @map("provider_state")
   requestedById   String            @map("requested_by") @db.Uuid

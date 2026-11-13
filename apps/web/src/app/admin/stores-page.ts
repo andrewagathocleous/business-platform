@@ -357,6 +357,7 @@ type Platform = 'prestashop' | 'shopify' | 'manual';
                     </option>
                   }
                 </select>
+                <small>{{ 'storesAdmin.authorityHelp.' + storeAuthority() | transloco }}</small>
               </label>
               <div class="form-actions">
                 <p-button
@@ -409,6 +410,7 @@ type Platform = 'prestashop' | 'shopify' | 'manual';
                     </option>
                   }
                 </select>
+                <small>{{ 'storesAdmin.authorityHelp.' + editAuthority() | transloco }}</small>
               </label>
               <div class="form-actions">
                 <p-button
@@ -999,6 +1001,9 @@ export class StoresPage {
     const body = readApiError(error);
     if (body.code === 'location_in_use') {
       return this.transloco.translate('storesAdmin.locationInUse');
+    }
+    if (body.code === 'authority_locked') {
+      return this.transloco.translate('storesAdmin.authorityLocked');
     }
     if (body.code === 'name_taken') {
       return this.transloco.translate('storesAdmin.nameTaken');
